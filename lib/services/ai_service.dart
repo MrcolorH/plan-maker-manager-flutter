@@ -1,0 +1,292 @@
+/// AI 服务（OpenAI 兼容）：计划文档转 JSON / 食物热量查询 / 运动消耗估算 / 余额查询
+/// 与旧版 ai.js 逻辑对齐，HTTP 层改用 dio
+library;
+
+import 'dart:convert';
+
+import 'package:dio/dio.dart';
+
+import '../data/templates.dart';
+import '../models/onboarding.dart';
+import '../models/settings.dart';
+import '../utils/date_utils.dart';
+
+const String kCalorieSys = '''你是食物热量估算助手。用户描述一份食物或套餐，请估算总热量。
+严格只返回一个 JSON 对象，不要输出任何其他文字：
+{"name":"食物名","calories":总热量整数kcal,"unit":"份量描述","confidence":0到1}
+描述含多种食物时合并估算总值。无法判断时 confidence 给低值。''';
+
+const String kMealEstSys = '''你是营养估算助手。用户描述某一餐实际吃了什么——通常是"计划的餐食 + 今天少了/换了/多了什么"（例如：计划是两个包子一杯豆浆，今天没买到豆浆）。
+请根据中国常见食物热量常识，估算这一餐的实际总热量。
+严格只返回一个 JSON 对象，不要输出任何其他文字：
+{"calories":实际总热量整数kcal,"detail":"一句话拆解，如：包子2个≈440，豆浆没喝0，合计440"}
+描述模糊时按常见份量估。''';
+
+const String kBurnEstSys = '''你是运动消耗估算助手。用户描述一次实际做的运动（项目+时长或强度），请估算总消耗热量；如提供体重请按体重计算，否则按 65kg 成人估算。
+严格只返回一个 JSON 对象，不要输出任何其他文字：
+{"name":"运动名（10字内）","calories":消耗整数kcal,"detail":"一句话拆解，如：慢跑30分钟≈300 kcal"}
+描述模糊时按常见强度估。''';
+
+const String kGuidePlanSys = '''你是减脂计划生成助手。用户会描述想吃的餐食和想做的运动（可能是一整段大白话，也可能是逐条列表），请把它生成为结构化计划 JSON。
+
+只输出一个 JSON 对象，不要输出任何解释文字，不要 markdown 代码块围栏。
+
+JSON 结构：
+{
+  "version": "1.0",
+  "meta": { "planName": "我的减脂计划", "dailyCalorieTarget": 每日目标摄入kcal数字 },
+  "meals": [
+    { "type": "breakfast/lunch/dinner/snack四选一", "name": "餐名", "time": "HH:mm", "calories": 热量kcal数字或null, "days": [1,2,3], "note": "" }
+  ],
+  "exercises": [
+    { "name": "训练名", "time": "HH:mm", "duration": 总分钟数字, "caloriesBurned": 消耗kcal数字, "days": [1,3,5], "note": "" }
+  ]
+}
+
+生成规则：
+1. 按用户描述拆分条目：早/午/晚/加餐分别一条；计划外运动放 exercises。不遗漏用户提到的任何内容，也不要凭空添加用户没提的条目
+2. days 用数字表示星期几：1=周一 … 7=周日；「每天」或未提及 = [1,2,3,4,5,6,7]；「周一到周五」= [1,2,3,4,5]
+3. 用户已给出的时间/热量/星期等信息必须原样保留；未给出的按常识补全：早餐07:30、午餐12:00、加餐16:00、晚餐18:00、运动18:30
+4. 热量/消耗按中国常见食物与运动强度估算，给合理整数；用户明确说热量不固定（如自由餐/作弊餐）calories 填 null
+5. 用户提供了体重时，运动消耗按该体重估算
+6. name 用简洁中文（20字内）；meta.dailyCalorieTarget 填用户给定的目标摄入，未给定则省略''';
+
+/// HTTP 状态码 → 中文提示
+String httpErrorMsg(int code) {
+  const map = {
+    400: '请求被拒绝（400）：请检查模型名是否正确',
+    401: 'API Key 无效或已过期（401）：请检查 Key 是否复制完整',
+    402: '账户余额不足（402）：请到服务商官网充值',
+    403: '无访问权限（403）：请检查 Key 的权限',
+    404: '接口地址或模型名不存在（404）：请检查接口地址与模型名',
+    429: '请求过于频繁（429）：请稍后再试',
+    500: 'AI 服务内部错误（500）：请稍后再试',
+    503: 'AI 服务繁忙（503）：请稍后再试',
+  };
+  return map[code] ?? 'AI 服务返回异常状态码 $code';
+}
+
+String netErrorMsg(Object? err) {
+  final m = err?.toString() ?? '';
+  if (m.contains('timeout') || m.contains('TimedOut')) return '网络超时：请检查网络后重试';
+  if (m.contains('cancel')) return '请求已取消，请重试';
+  return '网络异常：$m';
+}
+
+/// 从 AI 回复文本中容错提取 JSON 对象（剥离围栏/杂文字）
+Map<String, dynamic>? extractJsonObj(String? text) {
+  if (text is! String) return null;
+  var t = text.trim();
+  final fence = RegExp(r'```(?:json)?\s*([\s\S]*?)```', caseSensitive: false).firstMatch(t);
+  if (fence != null) t = fence.group(1)!.trim();
+  final s = t.indexOf('{');
+  final e = t.lastIndexOf('}');
+  if (s < 0 || e <= s) return null;
+  try {
+    final v = jsonDecode(t.substring(s, e + 1));
+    return (v is Map) ? Map<String, dynamic>.from(v) : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+class AiService {
+  AiService._();
+  static final AiService instance = AiService._();
+
+  /// 通用 chat/completions 调用 → 返回助手回复文本
+  Future<String> chat(AiConfig config, List<Map<String, String>> messages,
+      {int timeoutMs = 20000, void Function(Map<String, dynamic> usage)? onUsage}) async {
+    if (config.apiKey.isEmpty || config.endpoint.isEmpty) {
+      throw Exception('未配置 AI：请到「设置 → AI 服务」填写 API Key');
+    }
+    final dio = Dio(BaseOptions(
+      baseUrl: config.endpoint.replaceAll(RegExp(r'/+$'), ''),
+      connectTimeout: Duration(milliseconds: timeoutMs),
+      receiveTimeout: Duration(milliseconds: timeoutMs),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ${config.apiKey}',
+      },
+    ));
+    try {
+      final res = await dio.post('/chat/completions', data: {
+        'model': config.model.isEmpty ? 'deepseek-v4-flash' : config.model,
+        'temperature': 0.2,
+        'messages': messages,
+      });
+      if (res.statusCode != 200) throw Exception(httpErrorMsg(res.statusCode ?? 0));
+      final data = (res.data is Map) ? Map<String, dynamic>.from(res.data as Map) : {};
+      // 累计本 App 的 API 用量（tokens/次数）
+      final usage = data['usage'];
+      if (usage is Map) {
+        onUsage?.call(Map<String, dynamic>.from(usage));
+      }
+      final choices = data['choices'];
+      if (choices is! List || choices.isEmpty) throw Exception('AI 未返回内容，请重试');
+      final ch = choices[0];
+      final content = (ch is Map) ? (ch['message'] is Map ? (ch['message'] as Map)['content'] : null) : null;
+      if (content is! String || content.isEmpty) throw Exception('AI 未返回内容，请重试');
+      return content;
+    } on DioException catch (e) {
+      final code = e.response?.statusCode;
+      if (code != null && code >= 400) throw Exception(httpErrorMsg(code));
+      if (e.type == DioExceptionType.connectionTimeout || e.type == DioExceptionType.receiveTimeout) {
+        throw Exception('网络超时：请检查网络后重试');
+      }
+      if (e.type == DioExceptionType.cancel) throw Exception('请求已取消，请重试');
+      throw Exception('网络异常：${e.message ?? '请检查网络'}');
+    } catch (e) {
+      if (e is Exception && e.toString().contains('网络超时')) rethrow;
+      if (e is Exception && e.toString().contains('请求已取消')) rethrow;
+      rethrow;
+    }
+  }
+
+  bool hasConfig(AiConfig config) => config.hasConfig;
+
+  /// 食物热量查询
+  Future<Map<String, dynamic>> queryCalorie(AiConfig config, String foodDesc,
+      {void Function(Map<String, dynamic>)? onUsage}) async {
+    final content = await chat(
+      config,
+      [
+        {'role': 'system', 'content': kCalorieSys},
+        {'role': 'user', 'content': '食物描述：$foodDesc'},
+      ],
+      onUsage: onUsage,
+    );
+    final obj = extractJsonObj(content);
+    if (obj == null) throw Exception('AI 返回格式异常，请手动录入热量');
+    final cal = num.tryParse('${obj['calories']}');
+    if (cal == null || cal < 0 || cal > 20000) throw Exception('AI 返回的热量数值异常，请手动录入');
+    return {
+      'name': (obj['name'] is String && (obj['name'] as String).isNotEmpty) ? obj['name'] : '食物',
+      'calories': cal.round(),
+      'unit': obj['unit'] is String ? obj['unit'] : '',
+      'confidence': obj['confidence'] is num ? obj['confidence'] : 0.5,
+    };
+  }
+
+  /// 计划文档 → 计划 JSON（AI 导入）
+  Future<Map<String, dynamic>> generatePlan(AiConfig config, String docText,
+      {void Function(Map<String, dynamic>)? onUsage}) async {
+    final content = await chat(
+      config,
+      [
+        {'role': 'system', 'content': kPlanConvertPrompt},
+        {'role': 'user', 'content': '今天是 ${dateCn(todayStr())}（${todayStr()}）。计划文档：\n$docText'},
+      ],
+      timeoutMs: 90000,
+      onUsage: onUsage,
+    );
+    final obj = extractJsonObj(content);
+    if (obj == null) throw Exception('AI 未返回有效的 JSON，请重试；多次失败可换更完整的计划文档');
+    // AI 偶尔漏写或写错 version，直接修正
+    obj['version'] = '1.0';
+    return obj;
+  }
+
+  /// 测试连接
+  Future<void> testAI(AiConfig config, {void Function(Map<String, dynamic>)? onUsage}) async {
+    await queryCalorie(config, '一个水煮蛋', onUsage: onUsage);
+  }
+
+  /// 一餐实际热量估算（支持"计划+少了什么"的口语描述），resolve { calories, detail }
+  Future<Map<String, dynamic>> estimateMeal(AiConfig config, String desc,
+      {void Function(Map<String, dynamic>)? onUsage}) async {
+    final content = await chat(
+      config,
+      [
+        {'role': 'system', 'content': kMealEstSys},
+        {'role': 'user', 'content': '这一餐的描述：$desc'},
+      ],
+      onUsage: onUsage,
+    );
+    final obj = extractJsonObj(content);
+    if (obj == null) throw Exception('AI 返回格式异常，请手动填写热量');
+    final cal = num.tryParse('${obj['calories']}');
+    if (cal == null || cal < 0 || cal > 5000) throw Exception('AI 估算的热量超出合理范围，请手动填写');
+    return {
+      'calories': cal.round(),
+      'detail': obj['detail'] is String ? obj['detail'] : '',
+    };
+  }
+
+  /// 一次运动的消耗估算（支持"项目+时长"的口语描述），resolve { name, calories, detail }
+  Future<Map<String, dynamic>> estimateBurn(AiConfig config, String desc, num? weight,
+      {void Function(Map<String, dynamic>)? onUsage}) async {
+    final w = weight;
+    final user =
+        '运动的描述：$desc${(w != null && w > 20 && w < 300) ? '；用户体重约 ${w.round()} kg' : ''}';
+    final content = await chat(
+      config,
+      [
+        {'role': 'system', 'content': kBurnEstSys},
+        {'role': 'user', 'content': user},
+      ],
+      onUsage: onUsage,
+    );
+    final obj = extractJsonObj(content);
+    if (obj == null) throw Exception('AI 返回格式异常，请手动填写消耗');
+    final cal = num.tryParse('${obj['calories']}');
+    if (cal == null || cal < 0 || cal > 5000) throw Exception('AI 估算的消耗超出合理范围，请手动填写');
+    return {
+      'name': (obj['name'] is String && (obj['name'] as String).isNotEmpty) ? obj['name'] : '运动',
+      'calories': cal.round(),
+      'detail': obj['detail'] is String ? obj['detail'] : '',
+    };
+  }
+
+  /// 余额查询（DeepSeek /user/balance 接口）
+  Future<Map<String, dynamic>> queryBalance(AiConfig config) async {
+    if (config.apiKey.isEmpty) throw Exception('未配置 API Key，请先到「设置 → AI 服务」填写');
+    final isDeepSeek = config.provider == 'deepseek' || RegExp(r'deepseek', caseSensitive: false).hasMatch(config.endpoint);
+    if (!isDeepSeek) throw Exception('当前服务商暂不支持余额查询（仅 DeepSeek 支持）');
+    final dio = Dio(BaseOptions(
+      baseUrl: config.endpoint.replaceAll(RegExp(r'/+$'), ''),
+      connectTimeout: const Duration(seconds: 10),
+      receiveTimeout: const Duration(seconds: 10),
+      headers: {'Authorization': 'Bearer ${config.apiKey}'},
+    ));
+    try {
+      final res = await dio.get('/user/balance');
+      if (res.statusCode != 200) throw Exception(httpErrorMsg(res.statusCode ?? 0));
+      final data = (res.data is Map) ? Map<String, dynamic>.from(res.data as Map) : <String, dynamic>{};
+      final infos = data['balance_infos'];
+      if (infos is! List || infos.isEmpty) throw Exception('服务未返回余额信息');
+      return data;
+    } on DioException catch (e) {
+      final code = e.response?.statusCode;
+      if (code != null && code >= 400) throw Exception(httpErrorMsg(code));
+      throw Exception(netErrorMsg(e.message));
+    }
+  }
+
+  /// 引导页「AI 创造计划」：把用户的描述/条目列表生成为计划 JSON
+  Future<Map<String, dynamic>> generatePlanFromInput(AiConfig config, String inputText, UserProfile profile,
+      {void Function(Map<String, dynamic>)? onUsage}) async {
+    final p = profile;
+    final meta = <String>[];
+    if (p.gender.isNotEmpty) meta.add(p.gender == 'male' ? '男性' : '女性');
+    if (p.age != null) meta.add('${p.age}岁');
+    if (p.height != null) meta.add('身高${p.height}cm');
+    if (p.weight != null) meta.add('体重约${p.weight}kg');
+    final user = '今天是 ${dateCn(todayStr())}（${todayStr()}）。'
+        '${meta.isNotEmpty ? '用户资料：${meta.join('，')}。' : ''}'
+        '用户的需求描述：\n$inputText';
+    final content = await chat(
+      config,
+      [
+        {'role': 'system', 'content': kGuidePlanSys},
+        {'role': 'user', 'content': user},
+      ],
+      timeoutMs: 90000,
+      onUsage: onUsage,
+    );
+    final obj = extractJsonObj(content);
+    if (obj == null) throw Exception('AI 未返回有效的 JSON，请重试或改用手动模式');
+    obj['version'] = '1.0';
+    return obj;
+  }
+}

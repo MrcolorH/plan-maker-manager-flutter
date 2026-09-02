@@ -1,0 +1,180 @@
+# JSON 导入格式规范（v1.0）
+
+本文件定义「计划导入」功能的 JSON 格式，同时提供：
+1. 字段规范表（供开发实现校验逻辑）
+2. 完整示例（见同目录 [template.json](template.json)，即 App 内置模板内容）
+3. AI 生成提示词（供用户复制给其他 AI 生成符合格式的计划）
+
+---
+
+## 1. 顶层结构
+
+```json
+{
+  "version": "1.0",
+  "meta": { ... },
+  "meals": [ ... ],
+  "exercises": [ ... ]
+}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| version | string | 是 | 格式版本，当前固定 `"1.0"`，不匹配则拒绝导入并提示 |
+| meta | object | 否 | 计划元信息，导入后写入设置 |
+| meals | array | 否 | 减脂餐计划项。**存在则整体替换**现有餐食计划 |
+| exercises | array | 否 | 运动计划项。**存在则整体替换**现有运动计划 |
+
+> `meals` 与 `exercises` 至少存在其一，否则导入失败。允许只导入餐食计划或只导入运动计划。
+
+## 2. meta（计划元信息）
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| planName | string | 否 | 计划名称，显示在计划页/今日页顶部 |
+| startDate | string | 否 | 计划开始日期 `YYYY-MM-DD` |
+| endDate | string | 否 | 计划结束日期 `YYYY-MM-DD` |
+| baseWeight | number | 否 | 起始体重 kg（仅展示用） |
+| targetWeight | number | 否 | 目标体重 kg（仅展示用） |
+| dailyCalorieTarget | number | 否 | 每日目标摄入热量 kcal，写入设置 |
+| tdee | number | 否 | 每日总消耗 kcal（久坐代谢×活动系数），写入设置，参与热量缺口计算 |
+
+## 3. meals[]（餐食计划项）
+
+| 字段 | 类型 | 必填 | 默认 | 说明 |
+|------|------|------|------|------|
+| id | string | 否 | 自动生成 | 唯一标识，建议 `lunch-weekday` 这类语义 id；重复时自动去重重写 |
+| type | string | 是 | - | `breakfast` / `lunch` / `dinner` / `snack`（早餐/午餐/晚餐/加餐） |
+| name | string | 是 | - | 名称，如「冻豆腐虾仁荞麦面 + 焦边煎蛋」 |
+| time | string | 是 | - | 提醒时间 `HH:mm`（24小时制），如 `"12:00"` |
+| calories | number \| null | 否 | null | 该餐热量 kcal。**null 表示自由餐（不固定热量）**，不计入计划摄入，打卡后通过「加餐记录」补录实际热量 |
+| days | number[] | 否 | [1-7] | 每周几执行。**1=周一 … 7=周日**。缺省表示每天。传 `[6]` 表示仅周六 |
+| dates | string[] | 否 | - | 具体执行日期 `["2026-09-05","2026-09-19"]`。**填写后仅在这些日期生效，days/startDate/endDate 忽略**。适合「某一天吃什么」「第1、3周周六吃KFC」这类单日或轮换安排 |
+| reminder | boolean | 否 | true | 是否对该项发本地通知提醒 |
+| note | string | 否 | - | 备注（如进食顺序、喝汤原则），卡片上可展开 |
+| details | array | 否 | - | 食材清单 `[{item, amount}]` |
+| steps | array | 否 | - | 做法步骤，字符串数组 |
+| startDate / endDate | string | 否 | - | 日期范围（餐食一般不需要，留作扩展） |
+
+`details` 元素结构：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| item | string | 是 | 食材名，如 `荞麦面(干)` |
+| amount | string | 否 | 用量，如 `35克` |
+
+## 4. exercises[]（运动计划项）
+
+| 字段 | 类型 | 必填 | 默认 | 说明 |
+|------|------|------|------|------|
+| id | string | 否 | 自动生成 | 唯一标识 |
+| name | string | 是 | - | 名称，如「适应期·快走训练」 |
+| time | string | 是 | - | 提醒/开始时间 `HH:mm` |
+| duration | number | 是 | - | 时长（分钟），用于展示 |
+| caloriesBurned | number | 否 | 0 | 预估消耗 kcal，打卡后计入「运动消耗」 |
+| days | number[] | 否 | [1-7] | 每周几执行，1=周一 … 7=周日 |
+| dates | string[] | 否 | - | 具体执行日期数组（同 meals.dates），优先于 days/阶段范围 |
+| startDate / endDate | string | 否 | - | **阶段日期范围**（表达「第一阶段 9月」等），为空表示不限 |
+| reminder | boolean | 否 | true | 是否提醒 |
+| note | string | 否 | - | 备注（如动作要领、强度原则） |
+| content | array | 否 | - | 训练内容 `[{item, detail, minutes}]` |
+
+`content` 元素结构：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| item | string | 是 | 环节名，如 `热身` / `有氧` / `力量A组` |
+| detail | string | 否 | 具体内容，如 `徒手深蹲 10个×3组` |
+| minutes | number | 否 | 该环节分钟数 |
+
+## 5. 校验规则（导入时逐条执行，错误信息中文展示）
+
+| 规则 | 错误提示示例 |
+|------|--------------|
+| 必须是合法 JSON | 「JSON 格式错误：第 X 行附近有语法错误」 |
+| version 必须为 "1.0" | 「版本不支持：当前仅支持 1.0 格式」 |
+| meals / exercises 至少一项 | 「导入内容为空：meals 或 exercises 至少需要一项」 |
+| 每项必须有 name 和 time | 「第 3 条餐食缺少 name 字段」 |
+| time 匹配 `^([01]\d|2[0-3]):[0-5]\d$` | 「第 2 条运动时间格式错误，应为 HH:mm（如 18:30）」 |
+| days 元素 ∈ 1..7 | 「第 1 条餐食 days 含非法值 8（1=周一…7=周日）」 |
+| dates 元素为合法 YYYY-MM-DD | 「第 2 条餐食 dates 含非法日期 2026-02-30，应为 YYYY-MM-DD」 |
+| type ∈ 四种枚举 | 「第 4 条餐食 type 无效：只能是 breakfast/lunch/dinner/snack」 |
+| calories ∈ 0..5000 | 「第 2 条餐食热量超出合理范围（0-5000 kcal）」 |
+| startDate ≤ endDate | 「第 5 条运动日期范围无效：开始日期晚于结束日期」 |
+
+校验通过后进入**预览页**：显示餐食 N 项 / 运动 M 项、计划时间段、每日热量目标，用户确认后执行替换导入。
+
+## 6. AI 生成提示词（App 模板页可一键复制）
+
+用户把下面这段提示词连同格式说明发给任意 AI，替换【】内为自己的情况即可：
+
+```text
+你是专业的减脂营养师和健身教练。请根据我的个人情况，生成我的减脂计划，并严格按照下面的 JSON 格式输出。
+要求：只输出一个完整的 JSON 代码块，不要输出任何其他解释文字。
+
+我的情况：
+【身高/体重/年龄/性别，如：175cm / 74kg / 30岁 / 男】
+【目标，如：5个月减到65kg】
+【饮食习惯偏好，如：自己做饭为主，周六允许一顿自由餐（如KFC）】
+【运动基础，如：久坐办公，几乎不运动，只能晚上和周末安排】
+【可用时间，如：工作日晚18:30后，每次不超过50分钟】
+
+JSON 格式要求：
+{
+  "version": "1.0",
+  "meta": {
+    "planName": "计划名称",
+    "startDate": "YYYY-MM-DD",
+    "endDate": "YYYY-MM-DD",
+    "baseWeight": 起始体重数字,
+    "targetWeight": 目标体重数字,
+    "dailyCalorieTarget": 每日目标摄入kcal,
+    "tdee": 每日总消耗kcal估算
+  },
+  "meals": [
+    {
+      "id": "唯一英文id",
+      "type": "lunch（breakfast/lunch/dinner/snack 四选一）",
+      "name": "餐名",
+      "time": "HH:mm（24小时制）",
+      "calories": 热量数字或不固定则填null,
+      "days": [1,2,3,4,5],
+      "reminder": true,
+      "note": "备注如进食顺序",
+      "details": [{"item": "食材", "amount": "用量"}],
+      "steps": ["步骤1", "步骤2"]
+    }
+  ],
+  "exercises": [
+    {
+      "id": "唯一英文id",
+      "name": "训练名",
+      "time": "HH:mm",
+      "duration": 总分钟数,
+      "caloriesBurned": 预估消耗kcal,
+      "days": [1,3,5],
+      "startDate": "YYYY-MM-DD",
+      "endDate": "YYYY-MM-DD",
+      "reminder": true,
+      "note": "强度原则/注意事项",
+      "content": [{"item": "热身", "detail": "具体内容", "minutes": 3}]
+    }
+  ]
+}
+
+额外要求：
+1. days 用数字表示星期几：1=周一 … 7=周日；不填表示每天
+2. 运动计划按阶段划分，用 startDate/endDate 表达各阶段（如适应期/启动期/巩固期），不同阶段可以有不同 days 频率
+3. 每周安排至少1天完全休息（建议周日）
+4. 热量为合理估算值；自由餐（如周六KFC）calories 填 null
+5. 计划要循序渐进、安全第一，关节疼痛时降强度的原则写入 note
+```
+
+## 7. 设计说明（为什么这样设计）
+
+- **餐食按「周节奏」而非具体日期**：减脂餐是周期性重复的（周一到周五相同），用 `days` 表达最简洁；个别餐支持 `startDate/endDate` 留作扩展。
+- **`dates` 表达单日/轮换安排**：「某天吃什么」「第1、3周周六KFC、第2、4周日式」这类无法用周几表达的场景，用具体日期数组；命中优先级高于 days/阶段范围，AI 导入时根据今天日期自动把"第N周/单双周"换算展开。
+- **运动用「日期范围 + 周几」双维度**：正好表达样例中「9月每周一三五快走、10月每周一二四五走跑」的分阶段结构。
+- **`calories: null` 表达自由餐**：周六快乐日吃 KFC 热量不固定，不硬编数值；用户吃完通过 App 的食物库/AI 查询补录实际热量，自然融入热量缺口计算。
+- **details / steps / note 可选**：App 打卡提醒只需要 name/time/calories，详细做法是锦上添花，AI 生成的计划可以丰简由人。
+- **meals/exercises 整体替换而非合并**：避免合并去重的复杂度和脏数据，用户重新让 AI 生成一版直接覆盖即可。

@@ -1,0 +1,177 @@
+{
+  "version": "1.0",
+  "meta": {
+    "planName": "我的减脂计划（2026.9 - 2027.1）",
+    "startDate": "2026-09-01",
+    "endDate": "2027-01-31",
+    "baseWeight": 74,
+    "targetWeight": 65,
+    "dailyCalorieTarget": 1400,
+    "tdee": 2000
+  },
+  "meals": [
+    {
+      "id": "lunch-weekday",
+      "type": "lunch",
+      "name": "冻豆腐虾仁荞麦面 + 焦边煎蛋",
+      "time": "12:00",
+      "calories": 500,
+      "days": [1, 2, 3, 4, 5],
+      "reminder": true,
+      "note": "进食顺序：白菜→虾仁→冻豆腐→面→煎蛋；不喝汤",
+      "details": [
+        { "item": "荞麦面(干)", "amount": "35克" },
+        { "item": "冻豆腐", "amount": "80克" },
+        { "item": "虾仁", "amount": "80克" },
+        { "item": "白菜", "amount": "200克" },
+        { "item": "鸡蛋", "amount": "1个" },
+        { "item": "食用油", "amount": "5-8克" }
+      ],
+      "steps": [
+        "不粘锅5-8克油，中小火煎蛋至底面焦脆、蛋黄半凝固",
+        "水开后先煮冻豆腐和白菜梗1分钟",
+        "放荞麦面和虾仁煮3-4分钟，最后放白菜叶",
+        "碗底：1勺生抽+半勺蚝油+1勺香醋+少许胡椒粉，舀少量面汤化开",
+        "捞出拌匀，煎蛋铺顶"
+      ]
+    },
+    {
+      "id": "dinner-weekday",
+      "type": "dinner",
+      "name": "青椒洋葱炒鸡胸肉（无主食）",
+      "time": "18:00",
+      "calories": 400,
+      "days": [1, 2, 3, 4, 5],
+      "reminder": true,
+      "note": "先吃青椒洋葱，再吃鸡胸肉",
+      "details": [
+        { "item": "鸡胸肉", "amount": "150克" },
+        { "item": "青椒", "amount": "150克" },
+        { "item": "洋葱", "amount": "100克" },
+        { "item": "食用油", "amount": "10克" }
+      ],
+      "steps": [
+        "鸡胸肉切片：1勺生抽+半勺淀粉+黑胡椒腌好，周末分装备好",
+        "热锅10克油爆香蒜末，炒鸡胸肉至断生盛出",
+        "底油炒软洋葱，再下青椒",
+        "倒回鸡胸肉，加半勺蚝油大火翻炒1分钟"
+      ]
+    },
+    {
+      "id": "snack-afternoon",
+      "type": "snack",
+      "name": "下午加餐（二选一）",
+      "time": "16:00",
+      "calories": 100,
+      "days": [1, 2, 3, 4, 5, 6, 7],
+      "reminder": true,
+      "note": "黑咖啡（不加糖奶） 或 水煮蛋1个/纯牛奶1盒"
+    },
+    {
+      "id": "lunch-saturday",
+      "type": "lunch",
+      "name": "周六快乐日·自由餐（如KFC）",
+      "time": "12:00",
+      "calories": null,
+      "days": [6],
+      "reminder": true,
+      "note": "热量不固定，吃完后在「加餐」里查询实际热量并记录"
+    },
+    {
+      "id": "dinner-saturday",
+      "type": "dinner",
+      "name": "周六晚餐·清淡简餐",
+      "time": "18:00",
+      "calories": 300,
+      "days": [6],
+      "reminder": true,
+      "note": "热牛奶 + 黄瓜/水煮青菜 + 水煮蛋"
+    },
+    {
+      "id": "lunch-sunday",
+      "type": "lunch",
+      "name": "周日午餐·正常吃面（面条减到20-25克）",
+      "time": "12:00",
+      "calories": 450,
+      "days": [7],
+      "reminder": true
+    },
+    {
+      "id": "dinner-sunday",
+      "type": "dinner",
+      "name": "周日晚餐·清蒸鱼/虾 + 凉拌黄瓜",
+      "time": "18:00",
+      "calories": 350,
+      "days": [7],
+      "reminder": true
+    }
+  ],
+  "exercises": [
+    {
+      "id": "phase1-cardio",
+      "name": "适应期·快走训练",
+      "time": "18:30",
+      "duration": 40,
+      "caloriesBurned": 180,
+      "days": [1, 3, 5],
+      "startDate": "2026-09-01",
+      "endDate": "2026-09-30",
+      "reminder": true,
+      "note": "全程能正常说话；微微出汗即可；腿部酸痛则休息一天",
+      "content": [
+        { "item": "热身", "detail": "原地踏步或慢走", "minutes": 3 },
+        { "item": "有氧", "detail": "户外快走（公园/小区/河边）", "minutes": 30 },
+        { "item": "拉伸", "detail": "肩颈 + 大腿后侧 + 小腿，每个动作15-20秒", "minutes": 7 }
+      ]
+    },
+    {
+      "id": "phase2-mix",
+      "name": "启动期·走跑结合 + 基础力量",
+      "time": "18:30",
+      "duration": 45,
+      "caloriesBurned": 250,
+      "days": [1, 2, 4, 5],
+      "startDate": "2026-10-01",
+      "endDate": "2026-10-31",
+      "reminder": true,
+      "note": "深蹲/平板支撑二选一交替；关节疼立即停止",
+      "content": [
+        { "item": "热身", "detail": "慢速高抬腿或慢速开合跳", "minutes": 3 },
+        { "item": "有氧", "detail": "走3分钟→慢跑1分钟，循环6组", "minutes": 24 },
+        { "item": "力量A", "detail": "徒手深蹲 10个×3组，组间休息30秒（或平板支撑30秒×3组）", "minutes": 8 },
+        { "item": "拉伸", "detail": "大腿前后侧、小腿、臀部", "minutes": 7 }
+      ]
+    },
+    {
+      "id": "phase3-shape",
+      "name": "巩固塑形期·慢跑 + 力量AB组",
+      "time": "18:30",
+      "duration": 50,
+      "caloriesBurned": 300,
+      "days": [1, 2, 4, 5, 6],
+      "startDate": "2026-11-01",
+      "endDate": "2026-12-31",
+      "reminder": true,
+      "note": "AB两组单次选一组；运动后30分钟内补牛奶或水煮蛋",
+      "content": [
+        { "item": "热身", "detail": "慢速开合跳或原地小跑", "minutes": 4 },
+        { "item": "有氧", "detail": "走2分钟→慢跑3分钟，循环6组", "minutes": 30 },
+        { "item": "力量A组", "detail": "臀腿核心：深蹲12个×3组 + 平板支撑45秒×3组", "minutes": 11 },
+        { "item": "力量B组", "detail": "上肢核心：俯身划船12个×3组 + 跪姿俯卧撑8-10个×3组", "minutes": 11 },
+        { "item": "拉伸", "detail": "全身拉伸（肩背臀腿小腿）", "minutes": 6 }
+      ]
+    },
+    {
+      "id": "sunday-stretch",
+      "name": "周日·全身拉伸（休息日）",
+      "time": "10:00",
+      "duration": 10,
+      "caloriesBurned": 30,
+      "days": [7],
+      "startDate": "2026-09-01",
+      "endDate": "2027-01-31",
+      "reminder": true,
+      "note": "周日完全休息，仅做10分钟拉伸"
+    }
+  ]
+}
