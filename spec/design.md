@@ -54,7 +54,7 @@ app/
 ├── App.vue                      # onLaunch/onShow：store 水合 + 提醒调度 + push 点击监听
 ├── main.js
 ├── pages.json                   # 无原生 tabBar（用自定义组件，免 PNG 图标资产）
-├── manifest.json                # 名称「减肥搭子」、Push 模块、Android 权限
+├── manifest.json                # 名称「知轻」、Push 模块、Android 权限
 ├── uni.scss                     # 设计变量（见第 11 节）
 ├── pages/
 │   ├── index/index.vue          # 主容器：v-show 挂 4 个 tab 组件 + tab-bar（切 tab 不重载）；onShow 首启判断 → redirectTo 引导（15.2，约 5 行）
@@ -109,7 +109,7 @@ app/
     { "path": "pages/onboarding/onboarding", "style": { "navigationBarTitleText": "欢迎使用", "navigationStyle": "custom" } },
     { "path": "pages/guide/guide" }
   ],
-  "globalStyle": { "navigationBarTitleText": "减肥搭子", "navigationBarBackgroundColor": "#F6F7FB", "navigationBarTextStyle": "black" }
+  "globalStyle": { "navigationBarTitleText": "知轻", "navigationBarBackgroundColor": "#F6F7FB", "navigationBarTextStyle": "black" }
 }
 ```
 
@@ -475,7 +475,7 @@ $bg: #F6F7FB; $card: #FFFFFF; $line: #EEF0F4;
 
 ```jsonc
 {
-  "name": "减肥搭子",
+  "name": "知轻",
   "appid": "",                      // HBuilderX 打开项目时生成（需登录 DCloud 账号）
   "versionName": "1.0.0",
   "vueVersion": "3",

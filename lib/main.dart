@@ -1,4 +1,4 @@
-/// 减肥搭子 — Flutter 重构版入口
+/// 知轻 — Flutter 重构版入口（卡路里 / 饮食记录 / 单机离线）
 /// 与原 uni-app 版 1:1 兼容数据格式与交互
 library;
 
@@ -65,7 +65,7 @@ class _JianfeiDaziAppState extends State<JianfeiDaziApp> {
         ChangeNotifierProvider.value(value: onboardingProvider),
       ],
       child: MaterialApp(
-        title: '减肥搭子',
+        title: '知轻',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.light,
         home: const MainShell(),

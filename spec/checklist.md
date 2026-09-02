@@ -167,16 +167,16 @@
 
 ### 10.1 导出（FR9.1/9.2）
 
-- [ ] 设置页「导出历史数据备份」→ 确认弹窗含隐私提示（备份含 AI API Key）→ 生成 `减肥搭子备份-*.dat` 于系统 Download 目录，时间戳文件名唯一
-- [ ] 用文本编辑器打开 .dat → 内容为合法 JSON，`app:'jianfeidazi'` / `type:'backup'` / `formatVersion:1` / `exportedAt` 正确，`data` 含全部 8 项（planData/checkRecords/mealAdjust/tempTasks/extraFoods/settings/onboardingState/apiUsage）
+- [ ] 设置页「导出历史数据备份」→ 确认弹窗含隐私提示（备份含 AI API Key）→ 生成 `zhiqing-backup-*.txt` 于系统 Download 目录，时间戳文件名唯一（文件名全 ASCII，zhiqing 为「知轻」拼音）
+- [ ] 用文本编辑器打开 .txt → 内容为合法 JSON，`app:'jianfeidazi'` / `type:'backup'` / `formatVersion:1` / `exportedAt` 正确，`data` 含全部 8 项（planData/checkRecords/mealAdjust/tempTasks/extraFoods/settings/onboardingState/apiUsage）
 - [ ] 有打卡/加餐/调整/临时任务数据时，导出内容与实际数据一致（抽 1 天比对）
 - [ ] 导出成功弹窗展示文件路径；「分享文件」按钮调起系统分享（可选微信），接收方文件完整可读
 - [ ] 空数据（全新安装）导出不报错，文件结构完整
 
 ### 10.2 导入与校验（FR9.3/9.4）
 
-- [ ] 选择 .dat 文件可导入（dat 按纯文本读取，无需改名）
-- [ ] 选择 .txt 文件（内容为备份 JSON）同样可导入
+- [ ] 选择旧版 .dat 备份文件可导入（内容同为 JSON 文本，按纯文本读取，无需改名）
+- [ ] 选择新版 .txt 备份文件（当前导出格式）同样可导入
 - [ ] 选非备份文件（任意文本）→ 中文报错「备份文件格式错误」，本机数据不变
 - [ ] 损坏 JSON（截断/乱码）→ 中文报错，本机数据不变
 - [ ] 校验通过后概要弹层：导出时间、餐食/运动条数、打卡天数与条数、临时任务条数、是否含 AI Key 均正确

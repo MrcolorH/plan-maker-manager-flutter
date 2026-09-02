@@ -4,6 +4,8 @@ library;
 
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/data/latest_all.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
@@ -101,7 +103,7 @@ class ReminderService {
           date: date,
           type: entry.type,
           id: id,
-          title: entry.type == 'meal' ? '用餐提醒 · 减肥搭子' : '运动提醒 · 减肥搭子',
+          title: entry.type == 'meal' ? '用餐提醒 · 知轻' : '运动提醒 · 知轻',
           body: name + (note.isNotEmpty ? '｜${note.length > 20 ? note.substring(0, 20) : note}' : ''),
           fireAt: fire,
           payload: '{"focus":"${entry.type}:$id"}',
@@ -182,7 +184,16 @@ class ReminderService {
   /// 全量重排：取消全部 + 清 keys + 重新调度（导入计划/修改提醒设置时用）
   Future<void> fullReschedule(PlanData plan, AppSettings settings) async {
     if (!_inited) await init();
-    await _plugin.cancelAll();
+    try {
+      await _plugin.cancelAll();
+    } on PlatformException catch (e) {
+      // 旧版插件残留的坏 JSON（Missing type parameter）导致 cancelAll 读 scheduled
+      // 列表时反序列化失败。坏数据本身 cancel 不到也无所谓——后续 ensureScheduled
+      // 用相同 id 调 zonedSchedule 会直接覆盖。兜底：吞掉异常，不阻塞主流程。
+      debugPrint('[reminder] cancelAll 失败，已忽略：$e');
+    } catch (_) {
+      // 其他异常也吞掉，保证 ensureScheduled 一定跑
+    }
     _scheduledKeys.clear();
     if (settings.reminderEnabled) {
       await ensureScheduled(plan, settings);

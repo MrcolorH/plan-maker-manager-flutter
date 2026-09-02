@@ -1,6 +1,6 @@
 # plan-maker-manager-flutter
 
-「减肥搭子（jianfei_dazi）」—— 卡路里 / 饮食记录应用的 **Flutter 客户端**。
+「知轻」—— 卡路里 / 饮食记录应用的 **Flutter 客户端**。
 
 ## 仓库结构
 

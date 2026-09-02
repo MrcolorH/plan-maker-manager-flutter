@@ -119,10 +119,10 @@ class AppRoutes {
   }
 }
 
-/// 页面顶部居中标题（对应旧版每页的「减肥搭子」标题栏）
+/// 页面顶部居中标题（默认显示「知轻」，各页面如需不同标题可传 title 覆盖）
 class AppPageTitle extends StatelessWidget {
   final String title;
-  const AppPageTitle({super.key, this.title = '减肥搭子'});
+  const AppPageTitle({super.key, this.title = '知轻'});
 
   @override
   Widget build(BuildContext context) {

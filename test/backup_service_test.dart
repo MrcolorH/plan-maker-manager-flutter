@@ -51,7 +51,7 @@ void main() {
   group('backupFileName', () {
     test('扩展名为 .txt 且时间戳补齐', () {
       final name = backupFileName(DateTime(2026, 9, 2, 16, 5, 8));
-      expect(name, 'jianfeidazi-backup-20260902-160508.txt');
+      expect(name, 'zhiqing-backup-20260902-160508.txt');
     });
 
     test('纯 ASCII（中文名在传输端易被截断/乱码）', () {
@@ -121,7 +121,7 @@ void main() {
       final r = BackupService.instance.parseBackupText(
           jsonEncode({'app': 'other', 'type': 'backup', 'formatVersion': 1, 'data': {}}));
       expect(r.ok, false);
-      expect(r.error, contains('减肥搭子'));
+      expect(r.error, contains('知轻'));
     });
 
     test('formatVersion 不支持被拒', () {

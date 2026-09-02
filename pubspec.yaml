@@ -1,5 +1,5 @@
 name: jianfei_dazi
-description: "减肥搭子 — 减脂计划导入/提醒/打卡/热量缺口 单机 App（Flutter 重构版）"
+description: "知轻 — 知止而后有定。把日子过轻一点，单机离线优先的减脂记录小助手。"
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -102,5 +102,5 @@ flutter:
   #       - asset: fonts/TrajanPro_Bold.ttf
   #         weight: 700
   #
-  # For details regarding fonts from package dependencies,
-  # see https://flutter.dev/to/font-from-package
+# For details regarding fonts from package dependencies,
+# see https://flutter.dev/to/font-from-package

@@ -98,7 +98,7 @@ const List<GuideArticle> kGuideArticles = [
     summary: '通知权限、省电白名单、重启恢复说明',
     steps: [
       GuideStep(text: 'Android 13+ 首次使用会申请通知权限，也可以在「设置 → 到点提醒 → 通知权限」手动检查 / 申请。未授权时提醒无法显示。'),
-      GuideStep(text: '国产 ROM（小米 / 华为 / OPPO 等）需要给 App 加白名单：设置 → 应用管理 → 减肥搭子 → 省电策略选「无限制」、开启「自启动」、通知类别全部开启；最近任务里下拉加锁防止被清理。'),
+      GuideStep(text: '国产 ROM（小米 / 华为 / OPPO 等）需要给 App 加白名单：设置 → 应用管理 → 知轻 → 省电策略选「无限制」、开启「自启动」、通知类别全部开启；最近任务里下拉加锁防止被清理。'),
       GuideStep(text: '已迁移 Flutter 版本：提醒改为系统级精确调度（flutter_local_notifications），手机重启后调度自动恢复，无需手动打开 App。提前提醒时间（0~30 分钟）和总开关都在设置页调整。'),
     ],
   ),

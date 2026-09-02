@@ -3,8 +3,10 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../../models/onboarding.dart';
 import '../../models/settings.dart';
 import '../../providers/onboarding_provider.dart';
 import '../../providers/plan_provider.dart';
@@ -58,9 +60,11 @@ class SettingsPage extends StatelessWidget {
             }),
             const _GroupLabel('关于'),
             const _Row('版本', '1.0.0'),
+            const _Row('作者', '听风闻人语'),
+            _Row('QQ', '1419046431', onTap: () => _copyQQ(context, '1419046431')),
             const SizedBox(height: 12),
             const Center(
-              child: Text('减肥搭子 · 单机离线优先，数据仅存本机',
+              child: Text('知轻 · 单机离线优先，数据仅存本机',
                   style: TextStyle(fontSize: 11, color: AppColors.textSub)),
             ),
           ],
@@ -78,167 +82,14 @@ class SettingsPage extends StatelessWidget {
 
   void _openCalorieDialog(BuildContext context) {
     final sp = context.read<SettingsProvider>();
-    final settings = sp.settings;
-    final tdeeCtrl = TextEditingController(text: '${settings.tdee}');
-    final targetCtrl = TextEditingController(text: '${settings.dailyCalorieTarget}');
+    final profile = context.read<OnboardingProvider>().state.profile;
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('热量设置', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
-              const SizedBox(height: 12),
-              _numField(tdeeCtrl, '基础消耗 TDEE（kcal）'),
-              const SizedBox(height: 8),
-              _numField(targetCtrl, '每日目标摄入（kcal）'),
-              const SizedBox(height: 12),
-              const Text('或用 Mifflin-St Jeor 公式估算', style: TextStyle(fontSize: 12, color: AppColors.textSub)),
-              const SizedBox(height: 8),
-              _bmrEstimator(ctx, settings, tdeeCtrl, targetCtrl),
-              const SizedBox(height: 14),
-              ElevatedButton(
-                onPressed: () async {
-                  final tdee = int.tryParse(tdeeCtrl.text.trim());
-                  final target = int.tryParse(targetCtrl.text.trim());
-                  if (tdee == null || target == null || tdee <= 0 || target <= 0) {
-                    ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text('请输入有效的数字')));
-                    return;
-                  }
-                  await sp.update({'tdee': tdee, 'dailyCalorieTarget': target});
-                  if (ctx.mounted) Navigator.pop(ctx);
-                },
-                style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary, foregroundColor: Colors.white, minimumSize: const Size.fromHeight(44)),
-                child: const Text('保存'),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _bmrEstimator(BuildContext ctx, AppSettings settings,
-      TextEditingController tdeeCtrl, TextEditingController targetCtrl) {
-    final genderCtrl = ValueNotifier<String>(settings.bmr > 0 ? 'male' : 'male');
-    final ageCtrl = TextEditingController();
-    final heightCtrl = TextEditingController();
-    final weightCtrl = TextEditingController();
-    final activityCtrl = ValueNotifier<double>(1.2);
-    return ValueListenableBuilder<String>(
-      valueListenable: genderCtrl,
-      builder: (ctx, gender, _) {
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                ChoiceChip(
-                  label: const Text('男'),
-                  selected: gender == 'male',
-                  onSelected: (_) => genderCtrl.value = 'male',
-                  selectedColor: AppColors.primaryBg,
-                  labelStyle: TextStyle(color: gender == 'male' ? AppColors.primary : AppColors.textSub, fontSize: 12),
-                ),
-                const SizedBox(width: 8),
-                ChoiceChip(
-                  label: const Text('女'),
-                  selected: gender == 'female',
-                  onSelected: (_) => genderCtrl.value = 'female',
-                  selectedColor: AppColors.primaryBg,
-                  labelStyle: TextStyle(color: gender == 'female' ? AppColors.primary : AppColors.textSub, fontSize: 12),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(child: _numField(ageCtrl, '年龄')),
-                const SizedBox(width: 8),
-                Expanded(child: _numField(heightCtrl, '身高cm')),
-                const SizedBox(width: 8),
-                Expanded(child: _numField(weightCtrl, '体重kg')),
-              ],
-            ),
-            const SizedBox(height: 8),
-            ValueListenableBuilder<double>(
-              valueListenable: activityCtrl,
-              builder: (ctx, activity, _) {
-                return Wrap(
-                  spacing: 6,
-                  children: [
-                    _activityChip(activityCtrl, 1.2, '久坐'),
-                    _activityChip(activityCtrl, 1.375, '轻度'),
-                    _activityChip(activityCtrl, 1.55, '中度'),
-                    _activityChip(activityCtrl, 1.725, '高强度'),
-                  ],
-                );
-              },
-            ),
-            const SizedBox(height: 10),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton(
-                onPressed: () {
-                  final age = int.tryParse(ageCtrl.text.trim());
-                  final h = int.tryParse(heightCtrl.text.trim());
-                  final w = int.tryParse(weightCtrl.text.trim());
-                  if (age == null || h == null || w == null) {
-                    ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text('请完整填写年龄/身高/体重')));
-                    return;
-                  }
-                  final bmr = estimateBmr(gender: gender, height: h, weight: w, age: age);
-                  final tdee = estimateTdee(gender: gender, height: h, weight: w, age: age, activity: activityCtrl.value);
-                  final target = recommendTarget(bmr, activityCtrl.value, gender);
-                  tdeeCtrl.text = '$tdee';
-                  targetCtrl.text = '$target';
-                  ScaffoldMessenger.of(ctx).showSnackBar(
-                      SnackBar(content: Text('BMR=$bmr · TDEE=$tdee · 推荐目标=$target')));
-                },
-                style: OutlinedButton.styleFrom(foregroundColor: AppColors.primary, side: const BorderSide(color: AppColors.primary)),
-                child: const Text('估算并填入 ↑'),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Widget _activityChip(ValueNotifier<double> notifier, double value, String label) {
-    return ValueListenableBuilder<double>(
-      valueListenable: notifier,
-      builder: (ctx, cur, _) {
-        return ChoiceChip(
-          label: Text(label, style: const TextStyle(fontSize: 12)),
-          selected: cur == value,
-          onSelected: (_) => notifier.value = value,
-          selectedColor: AppColors.primaryBg,
-          labelStyle: TextStyle(color: cur == value ? AppColors.primary : AppColors.textSub),
-        );
-      },
-    );
-  }
-
-  Widget _numField(TextEditingController ctrl, String hint) {
-    return TextField(
-      controller: ctrl,
-      keyboardType: TextInputType.number,
-      decoration: InputDecoration(
-        hintText: hint,
-        filled: true,
-        fillColor: AppColors.bg,
-        border: const OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(8)), borderSide: BorderSide.none),
-        isDense: true,
-        contentPadding: const EdgeInsets.all(10),
-      ),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (ctx) => _CalorieSheet(settings: sp.settings, profile: profile),
     );
   }
 
@@ -300,6 +151,11 @@ class SettingsPage extends StatelessWidget {
     } else {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('通知权限已开启')));
     }
+  }
+
+  void _copyQQ(BuildContext context, String qq) {
+    Clipboard.setData(ClipboardData(text: qq));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('已复制 QQ：$qq')));
   }
 
   void _openBackup(BuildContext context, String mode) {
@@ -428,6 +284,269 @@ class _SwitchRow extends StatelessWidget {
             activeThumbColor: AppColors.primary,
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// 热量设置弹层：手填 TDEE / 目标摄入，或用 Mifflin-St Jeor 公式估算。
+/// 与旧实现的差异（修复「点了没反应 / 保存不了」）：
+/// 1. 结果/错误就地显示在弹层内 —— SnackBar 会被 bottom sheet 面板盖住，永远看不见；
+/// 2. 内容可滚动，估算/保存按钮固定在底部，键盘弹出也不会被遮挡；
+/// 3. 数字输入只允许 0-9，杜绝全角/小数点导致 int.tryParse 静默失败；
+/// 4. 性别/年龄/身高/体重/活动量自动带入首次引导（onboarding profile）填过的值；
+/// 5. 导入数据中 TDEE/目标摄入为 0 时留空并就地引导先估算，而不是无提示拦截；
+/// 6. 估算出的 BMR 随保存一并写入（与引导页口径一致，统计页按 BMR×1.2 计基础消耗）。
+class _CalorieSheet extends StatefulWidget {
+  final AppSettings settings;
+  final UserProfile profile;
+  const _CalorieSheet({required this.settings, required this.profile});
+
+  @override
+  State<_CalorieSheet> createState() => _CalorieSheetState();
+}
+
+class _CalorieSheetState extends State<_CalorieSheet> {
+  late final TextEditingController _tdeeCtrl;
+  late final TextEditingController _targetCtrl;
+  late final TextEditingController _ageCtrl;
+  late final TextEditingController _heightCtrl;
+  late final TextEditingController _weightCtrl;
+  late String _gender;
+  late double _activity;
+
+  /// 就地提示（成功绿 / 失败红），不依赖会被弹层遮挡的 SnackBar
+  String _msg = '';
+  bool _msgError = false;
+
+  /// 最近一次估算的 BMR；>0 时保存随 patch 写入（估算过才写，手填不覆盖旧值）
+  int? _lastBmr;
+
+  @override
+  void initState() {
+    super.initState();
+    final s = widget.settings;
+    final p = widget.profile;
+    // 历史数据里 TDEE/目标摄入为 0（未设置过）时留空，交估算或手填
+    _tdeeCtrl = TextEditingController(text: s.tdee > 0 ? '${s.tdee}' : '');
+    _targetCtrl =
+        TextEditingController(text: s.dailyCalorieTarget > 0 ? '${s.dailyCalorieTarget}' : '');
+    _ageCtrl = TextEditingController(text: p.age?.toString() ?? '');
+    _heightCtrl = TextEditingController(text: p.height?.toString() ?? '');
+    _weightCtrl = TextEditingController(text: p.weight?.toString() ?? '');
+    _gender = p.gender == 'female' ? 'female' : 'male';
+    _activity = p.activity > 0 ? p.activity : 1.2;
+  }
+
+  @override
+  void dispose() {
+    _tdeeCtrl.dispose();
+    _targetCtrl.dispose();
+    _ageCtrl.dispose();
+    _heightCtrl.dispose();
+    _weightCtrl.dispose();
+    super.dispose();
+  }
+
+  void _estimate() {
+    FocusScope.of(context).unfocus(); // 收起键盘，让结果行可见可点保存
+    final age = int.tryParse(_ageCtrl.text.trim());
+    final h = int.tryParse(_heightCtrl.text.trim());
+    final w = int.tryParse(_weightCtrl.text.trim());
+    if (age == null || age <= 0 || h == null || h <= 0 || w == null || w <= 0) {
+      setState(() {
+        _msg = '请先完整填写年龄 / 身高 / 体重（数字即可）';
+        _msgError = true;
+      });
+      return;
+    }
+    final bmr = estimateBmr(gender: _gender, height: h, weight: w, age: age);
+    final tdee =
+        estimateTdee(gender: _gender, height: h, weight: w, age: age, activity: _activity);
+    final target = recommendTarget(bmr, _activity, _gender);
+    _tdeeCtrl.text = '$tdee';
+    _targetCtrl.text = '$target';
+    _lastBmr = bmr;
+    setState(() {
+      _msg = '已估算并填入：BMR = $bmr kcal · 基础消耗 = $tdee kcal · 推荐目标摄入 = $target kcal';
+      _msgError = false;
+    });
+  }
+
+  Future<void> _save() async {
+    FocusScope.of(context).unfocus();
+    final tdee = int.tryParse(_tdeeCtrl.text.trim());
+    final target = int.tryParse(_targetCtrl.text.trim());
+    if (tdee == null || target == null || tdee <= 0 || target <= 0) {
+      setState(() {
+        _msg = 'TDEE 与目标摄入需为大于 0 的数字：可直接手填，或先点「估算并填入」自动生成';
+        _msgError = true;
+      });
+      return;
+    }
+    try {
+      final sp = context.read<SettingsProvider>();
+      final patch = <String, dynamic>{'tdee': tdee, 'dailyCalorieTarget': target};
+      if (_lastBmr != null && _lastBmr! > 0) patch['bmr'] = _lastBmr;
+      await sp.update(patch);
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _msg = '保存失败：$e';
+        _msgError = true;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      // 键盘弹出时把弹层整体顶起，固定按钮区始终在键盘上方
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(20, 16, 20, 0),
+            child: Text('热量设置', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+          ),
+          // 输入区可滚动：小屏 + 键盘弹出时不会溢出/遮挡
+          Flexible(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _numField(_tdeeCtrl, '基础消耗 TDEE（kcal）'),
+                  const SizedBox(height: 8),
+                  _numField(_targetCtrl, '每日目标摄入（kcal）'),
+                  const SizedBox(height: 12),
+                  const Text('或用 Mifflin-St Jeor 公式估算',
+                      style: TextStyle(fontSize: 12, color: AppColors.textSub)),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      _genderChip('male', '男'),
+                      const SizedBox(width: 8),
+                      _genderChip('female', '女'),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(child: _numField(_ageCtrl, '年龄')),
+                      const SizedBox(width: 8),
+                      Expanded(child: _numField(_heightCtrl, '身高cm')),
+                      const SizedBox(width: 8),
+                      Expanded(child: _numField(_weightCtrl, '体重kg')),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 6,
+                    children: [
+                      _activityChip(1.2, '久坐'),
+                      _activityChip(1.375, '轻度'),
+                      _activityChip(1.55, '中度'),
+                      _activityChip(1.725, '高强度'),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // 固定操作区：估算 / 就地提示 / 保存，键盘弹出时仍然可达
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+            child: SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                onPressed: _estimate,
+                style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.primary,
+                    side: const BorderSide(color: AppColors.primary),
+                    minimumSize: const Size.fromHeight(40)),
+                child: const Text('估算并填入 ↑'),
+              ),
+            ),
+          ),
+          if (_msg.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: _msgError ? AppColors.dangerBg : AppColors.primaryBg,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  _msg,
+                  style: TextStyle(
+                      fontSize: 12,
+                      height: 1.5,
+                      color: _msgError ? AppColors.danger : AppColors.primary),
+                ),
+              ),
+            ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _save,
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size.fromHeight(44)),
+                child: const Text('保存'),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _genderChip(String value, String label) {
+    final selected = _gender == value;
+    return ChoiceChip(
+      label: Text(label),
+      selected: selected,
+      onSelected: (_) => setState(() => _gender = value),
+      selectedColor: AppColors.primaryBg,
+      labelStyle: TextStyle(
+          color: selected ? AppColors.primary : AppColors.textSub, fontSize: 12),
+    );
+  }
+
+  Widget _activityChip(double value, String label) {
+    final selected = _activity == value;
+    return ChoiceChip(
+      label: Text(label, style: const TextStyle(fontSize: 12)),
+      selected: selected,
+      onSelected: (_) => setState(() => _activity = value),
+      selectedColor: AppColors.primaryBg,
+      labelStyle: TextStyle(color: selected ? AppColors.primary : AppColors.textSub),
+    );
+  }
+
+  Widget _numField(TextEditingController ctrl, String hint) {
+    return TextField(
+      controller: ctrl,
+      keyboardType: TextInputType.number,
+      // 只允许 0-9：全角数字/小数点/空格会在输入时被过滤，杜绝 int.tryParse 静默失败
+      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+      decoration: InputDecoration(
+        hintText: hint,
+        filled: true,
+        fillColor: AppColors.bg,
+        border: const OutlineInputBorder(
+            borderRadius: BorderRadius.all(Radius.circular(8)), borderSide: BorderSide.none),
+        isDense: true,
+        contentPadding: const EdgeInsets.all(10),
       ),
     );
   }

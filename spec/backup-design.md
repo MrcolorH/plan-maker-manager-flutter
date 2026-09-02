@@ -9,12 +9,12 @@
 
 | 场景 | 描述 | 期望结果 |
 |------|------|----------|
-| B1 换新手机 | 旧机导出 .dat → 发给新机（微信/QQ/网盘均可）→ 新机导入 | 计划 + 打卡 + 设置全部迁移，即导即用 |
+| B1 换新手机 | 旧机导出备份（.txt）→ 发给新机（微信/QQ/网盘均可）→ 新机导入 | 计划 + 打卡 + 设置全部迁移，即导即用 |
 | B2 卸载重装 | 重装前导出 → 重装后导入 | 数据不丢，无需重新生成计划 |
 | B3 双设备并存 | 两台手机交替使用，偶尔互相补充数据 | 增量导入合并，不互相覆盖丢失 |
 | B4 误删恢复 | 误清空数据后 | 覆盖导入回到导出时的状态 |
 
-**核心原则**：导出文件是一个 `.dat` 文件（内容即 JSON 文本，`.dat` 仅为外壳，用于防误读/系统拦截），大小控制在几百 KB 内（符合非功能需求「单键数据量 ≤ 几百 KB」）。
+**核心原则**：导出文件是一个 `.txt` 纯文本文件（内容即 JSON 文本），文件名全 ASCII（zhiqing = 「知轻」拼音 + 时间戳），避免中文名在微信/网盘等传输链路截断或乱码；大小控制在几百 KB 内（符合非功能需求「单键数据量 ≤ 几百 KB」）。
 
 ## 2. 数据范围（导出 = 全量快照）
 
@@ -33,7 +33,7 @@
 
 ## 3. 备份文件格式
 
-文件名：`减肥搭子备份-YYYYMMDD-HHmmss.dat`（写入系统 Download 目录，便于用户查找与分享）。
+文件名：`zhiqing-backup-YYYYMMDD-HHmmss.txt`（写入系统 Download 目录，便于用户查找与分享）。
 
 ```json
 {
@@ -62,7 +62,7 @@
 
 ## 4. 导入校验与容错
 
-1. 选择文件（App 端 `pickBackupFile(['dat','txt'])` 走 SAF 系统文件选择器，见 6.2；H5/小程序端降级提示）→ 按**纯文本**读取（`.dat` 为外壳、内容即 JSON 文本，`FileReader.readAsText` 与扩展名无关，等价于将 dat 视为 txt 读取；无需真改文件名，文件系统里不存在 .txt 副本）。
+1. 选择文件（App 端 `pickBackupFile(['txt','dat','json'])` 走 SAF 系统文件选择器，见 6.2；H5/小程序端降级提示）→ 按**纯文本**读取（当前导出格式为 .txt，旧版 .dat 备份内容同为 JSON 文本，`FileReader.readAsText` 与扩展名无关，按纯文本读取即可兼容旧文件）。
 2. `JSON.parse` 失败 → 中文报错「备份文件格式错误，请确认选择了正确的备份文件」。
 3. 结构校验：根对象 + `app==='jianfeidazi'` + `type==='backup'` + `formatVersion===1` + `data` 为对象；任一不满足 → 报错并中止。
 4. 容错归一（防御老版本/手工编辑）：`data.planData.meals/exercises` 非数组视为空数组；`meta` 缺失补 `{}`；`settings` 用 DEFAULTS 深度合并补缺字段；`onboardingState` 补默认；`checkRecords/mealAdjust/tempTasks/extraFoods` 非对象视为 `{}`。
@@ -149,7 +149,7 @@ plus.io.requestFileSystem(plus.io.PUBLIC_DOWNLOADS, fs => {
 
 ```
 数据与计划
-├── 导出历史数据备份        (.dat 文件)     ›
+├── 导出历史数据备份        (.txt 文件)     ›
 ├── 导入历史数据备份        (增量 / 覆盖)   ›
 ├── 清空打卡与加餐记录      ›
 ├── 清空餐食计划（N 项）    ›
@@ -162,7 +162,7 @@ plus.io.requestFileSystem(plus.io.PUBLIC_DOWNLOADS, fs => {
 ```
 导出：点「导出历史数据备份」→ showModal 确认（内容说明 + 隐私提示含 API Key）
       → 写入 Download → 成功弹窗：文件路径 + 「分享文件」+「完成」
-导入：点「导入历史数据备份」→ 选择 .dat/.txt → 读取+校验
+导入：点「导入历史数据备份」→ 选择 .txt/.dat/.json → 读取+校验
       → 失败：showModal 报错
       → 成功：模式选择弹层（备份概要 + 三按钮：增量导入 / 覆盖导入 / 取消）
         ├── 增量导入 → showModal 风险提示（热量统计变化 + 建议分版本导出备份）→ 确认 → 合并 → toast 成功
@@ -199,7 +199,7 @@ plus.io.requestFileSystem(plus.io.PUBLIC_DOWNLOADS, fs => {
 
 ## 10. 验收要点（速览）
 
-1. 导出生成 `减肥搭子备份-*.dat`，内容为合法 JSON，`app/type/formatVersion` 正确，data 含全部 8 项。
+1. 导出生成 `zhiqing-backup-*.txt`，内容为合法 JSON，`app/type/formatVersion` 正确，data 含全部 8 项。
 2. 文件可通过微信发送并在另一设备导入（覆盖）→ 计划/打卡/设置/用量与导出时一致；提醒正常调度。
 3. 增量导入：同 id 计划更新不重复；打卡按 checkedAt 取新；tempTasks 按 id 合并；settings 不被覆盖。
 4. 导入前必见备份概要；增量前必见热量风险提示；覆盖前必见强确认。

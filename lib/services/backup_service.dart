@@ -104,8 +104,8 @@ String backupStamp([DateTime? now]) {
   return '${d.year}${p(d.month)}${p(d.day)}-${p(d.hour)}${p(d.minute)}${p(d.second)}';
 }
 
-/// 备份文件名：ASCII（拼音+时间戳），中文名在传输端易截断/乱码；扩展名 .txt
-String backupFileName([DateTime? now]) => 'jianfeidazi-backup-${backupStamp(now)}.txt';
+/// 备份文件名：ASCII（zhiqing = 「知轻」拼音 + 时间戳），中文名在传输端易截断/乱码；扩展名 .txt
+String backupFileName([DateTime? now]) => 'zhiqing-backup-${backupStamp(now)}.txt';
 
 /// 备份文件正文（JSON，缩进 2 空格）
 /// 公开以便单元测试直接校验格式，与旧版 backup.js 兼容
@@ -187,7 +187,7 @@ class BackupService {
   Future<void> shareBackup(String path) async {
     final localPath = path.replaceFirst(RegExp(r'^file://'), '');
     await Share.shareXFiles([XFile(localPath, mimeType: 'text/plain')],
-        text: '减肥搭子数据备份');
+        text: '知轻数据备份');
   }
 
   /// 选择并读取备份文件文本（默认落在 Download 目录，找不到时由系统兜底）
@@ -217,7 +217,7 @@ class BackupService {
     }
     if (obj is! Map) return const ParseResult.fail('备份文件格式错误：根节点必须是对象');
     if (obj['app'] != 'jianfeidazi' || obj['type'] != 'backup') {
-      return const ParseResult.fail('这不是「减肥搭子」的备份文件，请重新选择');
+      return const ParseResult.fail('这不是「知轻」的备份文件，请重新选择');
     }
     if (obj['formatVersion'] != 1) {
       return const ParseResult.fail('备份版本不支持：formatVersion 必须为 1');

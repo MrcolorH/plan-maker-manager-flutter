@@ -421,7 +421,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
       children: [
         const Text('🥗', style: TextStyle(fontSize: 64)),
         const SizedBox(height: 16),
-        const Text('欢迎使用减肥搭子',
+        const Text('欢迎使用知轻',
             style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppColors.text)),
         const SizedBox(height: 10),
         const Text('填 3 步信息，就能算出你的基础代谢；\n再把想吃的餐食和运动告诉它，一键生成减脂计划。\n数据只存本机，离线可用。',

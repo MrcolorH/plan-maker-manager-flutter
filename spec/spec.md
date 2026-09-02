@@ -1,6 +1,6 @@
 # 需求规格说明书（spec.md）
 
-项目名称：**减肥搭子**
+项目名称：**知轻**
 版本：v1.1 ｜ 编写日期：2026-08-27 ｜ v1.1 增补：2026-09-01 首次使用引导与使用指引（F7/F8）
 v1.2 增补：2026-09-01 历史数据导入导出（F9）
 配套文档：[design.md](design.md) ｜ [tasks.md](tasks.md) ｜ [checklist.md](checklist.md) ｜ [import-format.md](import-format.md) ｜ [guide-design.md](guide-design.md) ｜ [backup-design.md](backup-design.md)
@@ -157,9 +157,9 @@ v1.2 增补：2026-09-01 历史数据导入导出（F9）
 
 | 编号 | 需求 | 验收标准 |
 |------|------|----------|
-| FR9.1 | 导出备份 | 设置页「导出历史数据备份」→ 二次确认（说明导出内容 + 提示含 AI API Key 需妥善保管）→ 生成 `减肥搭子备份-YYYYMMDD-HHmmss.dat` 写入系统 Download 目录（内容为 JSON 文本，`.dat` 仅为外壳）→ 成功弹窗展示文件路径 + 「分享文件」按钮（调系统分享） |
+| FR9.1 | 导出备份 | 设置页「导出历史数据备份」→ 二次确认（说明导出内容 + 提示含 AI API Key 需妥善保管）→ 生成 `zhiqing-backup-YYYYMMDD-HHmmss.txt` 写入系统 Download 目录（内容为 JSON 文本；文件名全 ASCII，zhiqing 为「知轻」拼音，防中文名在传输端截断/乱码）→ 成功弹窗展示文件路径 + 「分享文件」按钮（调系统分享） |
 | FR9.2 | 导出数据范围 | 全量快照 8 项：planData（含 meta.startedAt）、checkRecords、mealAdjust、tempTasks、extraFoods、settings（含 AI 配置）、onboardingState、apiUsage；顶层含 `app:'jianfeidazi'`/`type:'backup'`/`formatVersion:1`/`exportedAt` 标识 |
-| FR9.3 | 导入与文件读取 | 设置页「导入历史数据备份」→ 系统文件选择器（App 端 `pickBackupFile` 走 SAF/ACTION_OPEN_DOCUMENT，setType('*/*') 全量展示 dat/txt/json）→ 按纯文本读取（`readBackupFile` 兼容本地路径 / file:// / content://；dat 为壳，内容即 JSON 文本，等价于将 dat 视为 txt 读取）→ JSON 解析 + 结构校验（app/type/formatVersion/data）→ 失败中文报错且本机数据不变 |
+| FR9.3 | 导入与文件读取 | 设置页「导入历史数据备份」→ 系统文件选择器（App 端 `pickBackupFile` 走 SAF/ACTION_OPEN_DOCUMENT，setType('*/*') 全量展示 dat/txt/json）→ 按纯文本读取（`readBackupFile` 兼容本地路径 / file:// / content://；当前导出格式为 .txt，旧版 .dat 备份内容同为 JSON 文本，扩展名与读取无关，按纯文本读取即可兼容）→ JSON 解析 + 结构校验（app/type/formatVersion/data）→ 失败中文报错且本机数据不变 |
 | FR9.4 | 导入概要展示 | 校验通过后弹层展示备份概要（导出时间、餐食/运动条数、打卡天数与条数、临时任务条数、是否含 AI Key），再选导入方式（增量 / 覆盖 / 取消） |
 | FR9.5 | 增量导入 | 合并计划（复用 importPlan：同 id 更新、新 id 追加、另一模块不受影响；startedAt 保留本机值，为空才回填）；打卡按 checkedAt 取较新（不把已打卡倒回未打卡）；mealAdjust/tempTasks/extraFoods 按 id 合并（导入优先）；**不覆盖** settings/onboardingState/apiUsage；确认弹窗必须提示「可能导致历史日期热量统计变化（计划项热量被备份覆盖），建议将不同版本数据分别导出备份」；完成后当日/次日提醒重新调度 |
 | FR9.6 | 覆盖导入 | 强确认（「清空并替换本机全部数据，当前数据不可恢复，建议先导出备份」+「备份含 AI API Key 将一并恢复，请确认来源可信」）→ 全量替换 8 项（settings 用默认值深度合并补缺）→ 提醒重新调度 → toast 导入成功 |

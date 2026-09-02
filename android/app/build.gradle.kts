@@ -24,6 +24,13 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        ndk {
+            // 默认只保留真机 ABI：arm64-v8a（现代 64 位）+ armeabi-v7a（老 32 位）。
+            // 剔除 x86_64（Intel 模拟器/Intel 平板专用），让默认 release 包从 ~55M 瘦到 ~35M。
+            // 注：Apple Silicon 模拟器跑 arm64-v8a，不受此过滤影响；若确需 x86_64 包，
+            // 临时把 abiFilters 行改为只含 "x86_64" 或整段注释后重新构建即可。
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
     }
 
     buildTypes {
