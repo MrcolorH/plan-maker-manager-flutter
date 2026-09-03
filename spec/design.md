@@ -390,7 +390,8 @@ uni-app 时代的 plus.push 本地消息与插件市场方案（v1.x 方案 A/B�
 ```
 POST {endpoint}/chat/completions
 Authorization: Bearer {apiKey}
-{ "model": model, "temperature": 0.2, "messages": [...], "stream": false }
+{ "model": model, "temperature": 0.2, "messages": [...], "stream": false,
+  "thinking": { "type": "disabled" } }   // 仅 DeepSeek 服务商附加（原因见 9.2 思考模式注记）
 ```
 
 提示词组（常量内置于 ai_service.dart）：热量查询（kCalQuerySys，返回 `{name, calories, unit, confidence}`）、运动消耗估算（kBurnEstSys，按体重/时长估算并返回拆解）、计划生成（复用 templates.dart 的 kAiPrompt + 格式说明）、文档转计划（generatePlan）。所有响应过统一容错解析：剥离 markdown 围栏 → 正则提取首个 JSON → 数值范围校验（热量 0-20000）。
@@ -405,7 +406,17 @@ Authorization: Bearer {apiKey}
 | MiniMax | `https://api.minimaxi.com/v1` | `MiniMax-M3` |
 | 自定义 | 用户填 | 用户填 |
 
-退役模型自动迁移（`kRetiredModelMap`）：`deepseek-chat → deepseek-v4-flash`、`deepseek-reasoner → deepseek-v4-pro`。
+退役模型自动迁移（`kRetiredModelMap`）：`deepseek-chat → deepseek-v4-flash`、`deepseek-reasoner → deepseek-v4-flash`。
+
+> **思考模式注记（2026-09-03 真机排障）**：DeepSeek V4（v4-flash / v4-pro）**默认开启思考模式**（effort=high），
+> 非流式小任务（热量/消耗估算、单餐 JSON）会被内部链式推理拖慢到 20~40s。App 内所有 DeepSeek 请求显式携带
+> OpenAI 格式开关 `thinking: {type: disabled}`（ai_service.chat() 按 provider/endpoint 判定，非 DeepSeek 不传）。
+>
+> 官方别名映射：旧 `deepseek-chat` = v4-flash 非思考模式、旧 `deepseek-reasoner` = v4-flash **思考模式**，两者均落在
+> **v4-flash 而非 v4-pro**（v4-pro 输出单价约 3.1 倍：$0.87 vs $0.28 /M token）。reasoner 老用户迁移到 v4-pro 是常见误区；
+> 本 App 因强制非思考，迁移到 v4-flash 即保留可用性且不白付 pro 差价。旧别名 `deepseek-chat` / `deepseek-reasoner`
+> 已于 2026-07-24 停用（请求直接报错）。另：thinking 模式下 temperature/top_p 等参数无效（不报错）；高峰 surge 定价
+> （北京 09:00–12:00 / 14:00–18:00 翻倍）已宣布、未激活。
 
 ### 9.3 函数面与容错
 

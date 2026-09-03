@@ -5,6 +5,7 @@ library;
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 
 import '../data/templates.dart';
 import '../models/onboarding.dart';
@@ -69,7 +70,7 @@ String httpErrorMsg(int code) {
 
 String netErrorMsg(Object? err) {
   final m = err?.toString() ?? '';
-  if (m.contains('timeout') || m.contains('TimedOut')) return '网络超时：请检查网络后重试';
+  if (m.contains('timeout') || m.contains('TimedOut')) return 'AI 请求超时：服务端生成较慢或网络波动，请稍后重试';
   if (m.contains('cancel')) return '请求已取消，请重试';
   // 域名解析失败：设备断网 / 无网络权限（旧安装包缺 INTERNET 权限时也会这样）
   if (m.contains('Failed host lookup') ||
@@ -123,19 +124,30 @@ class AiService {
   }
 
   /// 通用 chat/completions 调用 → 返回助手回复文本
+  /// 默认接收超时 60s：DeepSeek 高峰期非流式生成经常 >20s，20s 过紧会误报「网络超时」
   Future<String> chat(AiConfig config, List<Map<String, String>> messages,
-      {int timeoutMs = 20000, void Function(Map<String, dynamic> usage)? onUsage}) async {
+      {int timeoutMs = 60000, void Function(Map<String, dynamic> usage)? onUsage}) async {
     if (config.apiKey.isEmpty || config.endpoint.isEmpty) {
       throw Exception('未配置 AI：请到「设置 → AI 服务」填写 API Key');
     }
     final base = normalizeEndpoint(config.endpoint);
+    final model = config.model.isEmpty ? 'deepseek-v4-flash' : config.model;
+    final sw = Stopwatch()..start();
+    debugPrint('[AiService] >>> $base/chat/completions model=$model '
+        'msg=${messages.map((m) => '${m['role']}:${(m['content'] ?? '').length}字').join(' | ')}');
     try {
+      final isDeepSeek = config.provider == 'deepseek' ||
+          RegExp(r'deepseek', caseSensitive: false).hasMatch(base);
       final res = await _client().post(
         '$base/chat/completions',
         data: {
-          'model': config.model.isEmpty ? 'deepseek-v4-flash' : config.model,
+          'model': model,
           'temperature': 0.2,
           'messages': messages,
+          // deepseek-v4-flash / v4-pro 默认开启思考模式（effort=high）：
+          // 估算热量/消耗这类结构化小任务会被内部链式推理拖慢到数十秒，
+          // 显式禁用思考模式换取秒级响应（非 DeepSeek 服务商不传此字段）
+          if (isDeepSeek) 'thinking': {'type': 'disabled'},
         },
         options: Options(
           headers: {'Authorization': 'Bearer ${config.apiKey}'},
@@ -143,6 +155,7 @@ class AiService {
           receiveTimeout: Duration(milliseconds: timeoutMs),
         ),
       );
+      debugPrint('[AiService] <<< HTTP ${res.statusCode} 耗时 ${sw.elapsedMilliseconds}ms');
       if (res.statusCode != 200) throw Exception(httpErrorMsg(res.statusCode ?? 0));
       final data = (res.data is Map) ? Map<String, dynamic>.from(res.data as Map) : {};
       // 累计本 App 的 API 用量（tokens/次数）
@@ -158,13 +171,20 @@ class AiService {
       return content;
     } on DioException catch (e) {
       final code = e.response?.statusCode;
+      debugPrint('[AiService] !!! DioException type=${e.type} '
+          'status=$code 耗时 ${sw.elapsedMilliseconds}ms err=${e.error} msg=${e.message}');
+      if (e.response?.data != null) debugPrint('[AiService] !!! body=${e.response?.data}');
       if (code != null && code >= 400) throw Exception(httpErrorMsg(code));
-      if (e.type == DioExceptionType.connectionTimeout || e.type == DioExceptionType.receiveTimeout) {
-        throw Exception('网络超时：请检查网络后重试');
+      if (e.type == DioExceptionType.connectionTimeout) {
+        throw Exception('连接 AI 服务超时：请检查网络后重试');
+      }
+      if (e.type == DioExceptionType.receiveTimeout) {
+        throw Exception('AI 响应超时：服务端生成较慢，请稍后重试或手动填写');
       }
       if (e.type == DioExceptionType.cancel) throw Exception('请求已取消，请重试');
       throw Exception(netErrorMsg(e.error ?? e.message));
     } catch (e) {
+      debugPrint('[AiService] ??? 未知异常 耗时 ${sw.elapsedMilliseconds}ms: $e');
       if (e is Exception && e.toString().contains('网络超时')) rethrow;
       if (e is Exception && e.toString().contains('请求已取消')) rethrow;
       rethrow;

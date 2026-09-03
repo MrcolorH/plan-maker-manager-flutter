@@ -54,7 +54,10 @@ const List<AiProviderPreset> kAiProviders = [
 /// 已退役的 DeepSeek 旧模型名 → 当前可用模型名
 const Map<String, String> kRetiredModelMap = {
   'deepseek-chat': 'deepseek-v4-flash',
-  'deepseek-reasoner': 'deepseek-v4-pro',
+  // 官方映射：deepseek-reasoner = v4-flash 的思考模式（并非 v4-pro）；
+  // 本 App 所有 DeepSeek 请求显式关闭思考（thinking disabled），迁到 v4-flash
+  // 即保留原别名可用性且输出单价约 1/3.1（v4-pro $0.87 vs v4-flash $0.28 /M token）
+  'deepseek-reasoner': 'deepseek-v4-flash',
 };
 
 /// 全部设置
