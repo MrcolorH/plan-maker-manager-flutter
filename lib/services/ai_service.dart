@@ -70,7 +70,21 @@ String netErrorMsg(Object? err) {
   final m = err?.toString() ?? '';
   if (m.contains('timeout') || m.contains('TimedOut')) return '网络超时：请检查网络后重试';
   if (m.contains('cancel')) return '请求已取消，请重试';
-  return '网络异常：$m';
+  // 域名解析失败：设备断网 / 无网络权限（旧安装包缺 INTERNET 权限时也会这样）
+  if (m.contains('Failed host lookup') ||
+      m.contains('Connection failed') ||
+      m.contains('errno = 13')) {
+    return '无法连接 AI 服务：请检查网络是否可用，若网络正常仍报此错，请重新安装最新打包';
+  }
+  return '网络异常：请检查网络后重试';
+}
+
+/// 规范化接口地址：去首尾空白与斜杠，剥离误粘贴的 /chat/completions 后缀
+String normalizeEndpoint(String raw) {
+  var e = raw.trim();
+  e = e.replaceAll(RegExp(r'/chat/completions/?$', caseSensitive: false), '');
+  e = e.replaceAll(RegExp(r'/+$'), '');
+  return e;
 }
 
 /// 从 AI 回复文本中容错提取 JSON 对象（剥离围栏/杂文字）
@@ -94,27 +108,40 @@ class AiService {
   AiService._();
   static final AiService instance = AiService._();
 
+  /// 全局单例 Dio：底层 HttpClient 复用连接池（keep-alive），
+  /// 避免每次调用重新 DNS + TCP + TLS 握手（移动网络下可省几百毫秒）
+  Dio? _dio;
+  Dio _client() {
+    if (_dio != null) return _dio!;
+    _dio = Dio(BaseOptions(
+      contentType: 'application/json',
+      // 连接建立上限：与接收超时分离，避免黑洞连接（如 IPv6 不通）长时间挂住
+      connectTimeout: const Duration(seconds: 15),
+    ));
+    return _dio!;
+  }
+
   /// 通用 chat/completions 调用 → 返回助手回复文本
   Future<String> chat(AiConfig config, List<Map<String, String>> messages,
       {int timeoutMs = 20000, void Function(Map<String, dynamic> usage)? onUsage}) async {
     if (config.apiKey.isEmpty || config.endpoint.isEmpty) {
       throw Exception('未配置 AI：请到「设置 → AI 服务」填写 API Key');
     }
-    final dio = Dio(BaseOptions(
-      baseUrl: config.endpoint.replaceAll(RegExp(r'/+$'), ''),
-      connectTimeout: Duration(milliseconds: timeoutMs),
-      receiveTimeout: Duration(milliseconds: timeoutMs),
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ${config.apiKey}',
-      },
-    ));
+    final base = normalizeEndpoint(config.endpoint);
     try {
-      final res = await dio.post('/chat/completions', data: {
-        'model': config.model.isEmpty ? 'deepseek-v4-flash' : config.model,
-        'temperature': 0.2,
-        'messages': messages,
-      });
+      final res = await _client().post(
+        '$base/chat/completions',
+        data: {
+          'model': config.model.isEmpty ? 'deepseek-v4-flash' : config.model,
+          'temperature': 0.2,
+          'messages': messages,
+        },
+        options: Options(
+          headers: {'Authorization': 'Bearer ${config.apiKey}'},
+          // 接收超时按调用场景定（如生成计划 90s），连接超时全局固定 15s
+          receiveTimeout: Duration(milliseconds: timeoutMs),
+        ),
+      );
       if (res.statusCode != 200) throw Exception(httpErrorMsg(res.statusCode ?? 0));
       final data = (res.data is Map) ? Map<String, dynamic>.from(res.data as Map) : {};
       // 累计本 App 的 API 用量（tokens/次数）
@@ -135,7 +162,7 @@ class AiService {
         throw Exception('网络超时：请检查网络后重试');
       }
       if (e.type == DioExceptionType.cancel) throw Exception('请求已取消，请重试');
-      throw Exception('网络异常：${e.message ?? '请检查网络'}');
+      throw Exception(netErrorMsg(e.error ?? e.message));
     } catch (e) {
       if (e is Exception && e.toString().contains('网络超时')) rethrow;
       if (e is Exception && e.toString().contains('请求已取消')) rethrow;
@@ -243,14 +270,15 @@ class AiService {
     if (config.apiKey.isEmpty) throw Exception('未配置 API Key，请先到「设置 → AI 服务」填写');
     final isDeepSeek = config.provider == 'deepseek' || RegExp(r'deepseek', caseSensitive: false).hasMatch(config.endpoint);
     if (!isDeepSeek) throw Exception('当前服务商暂不支持余额查询（仅 DeepSeek 支持）');
-    final dio = Dio(BaseOptions(
-      baseUrl: config.endpoint.replaceAll(RegExp(r'/+$'), ''),
-      connectTimeout: const Duration(seconds: 10),
-      receiveTimeout: const Duration(seconds: 10),
-      headers: {'Authorization': 'Bearer ${config.apiKey}'},
-    ));
+    final base = normalizeEndpoint(config.endpoint);
     try {
-      final res = await dio.get('/user/balance');
+      final res = await _client().get(
+        '$base/user/balance',
+        options: Options(
+          headers: {'Authorization': 'Bearer ${config.apiKey}'},
+          receiveTimeout: const Duration(seconds: 10),
+        ),
+      );
       if (res.statusCode != 200) throw Exception(httpErrorMsg(res.statusCode ?? 0));
       final data = (res.data is Map) ? Map<String, dynamic>.from(res.data as Map) : <String, dynamic>{};
       final infos = data['balance_infos'];
@@ -259,7 +287,7 @@ class AiService {
     } on DioException catch (e) {
       final code = e.response?.statusCode;
       if (code != null && code >= 400) throw Exception(httpErrorMsg(code));
-      throw Exception(netErrorMsg(e.message));
+      throw Exception(netErrorMsg(e.error ?? e.message));
     }
   }
 

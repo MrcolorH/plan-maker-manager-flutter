@@ -1,4 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- AI 服务网络请求（release 包必须声明，debug 包由 debug manifest 自动附带） -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <!-- Android 9 及以下：备份导出到公共 Download 目录需要写存储权限（Android 10+ 走 MediaStore，无需权限） -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 
