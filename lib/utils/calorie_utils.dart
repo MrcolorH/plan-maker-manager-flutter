@@ -1,11 +1,14 @@
 /// 热量缺口计算与统计聚合（与旧版 uni-app calorie.js 1:1 对齐）
 /// 口径：当日消耗 = 基础消耗（BMR × 生活系数，不含刻意运动）+ 当日实际运动（打卡的计划运动 + 临时/补录运动）
 /// 已摄入 = 已打卡计划餐(实际值) + 临时加餐(全计) + 旧加餐记录(兼容)
+/// F11 快照路径：历史固化——该日已有当日条目快照（dayEntries）时只读快照统计，
+/// 与当前计划无关（删除/清空/覆盖计划不影响历史）；无快照的日期走旧口径 fallback
 library;
 
 import '../models/plan_data.dart';
 import '../models/records.dart';
 import '../models/settings.dart';
+import '../models/weight.dart';
 import 'date_utils.dart';
 import 'plan_utils.dart';
 
@@ -14,12 +17,62 @@ const double kLifeFactor = 1.2;
 
 num _sum(Iterable<num?> arr) => arr.fold<num>(0, (a, b) => a + (b ?? 0));
 
+/// 快照条目打卡键（与 RecordProvider.checkKeyOf 同构）：计划沿用 meal:/exercise:，计划外 temp:
+String entryCheckKey(DayEntry e) =>
+    e.isPlan ? '${e.kind == 'meal' ? 'meal' : 'exercise'}:${e.planItemId}' : 'temp:${e.id}';
+
+/// 某天计划任务进度（完成度口径：只统计计划来源条目，含脱钩）
+/// 快照日走快照；无快照日按当前计划投影（fallback，用于未来/未生成快照的天）
+(int, int) taskProgress(PlanData plan, RecordStore records, String dateStr) {
+  final entries = records.dayEntries[dateStr];
+  if (entries != null) {
+    final planEs = entries.where((e) => e.isPlan).toList();
+    final rec = records.checkRecords[dateStr] ?? {};
+    final done = planEs.where((e) => rec.containsKey(entryCheckKey(e))).length;
+    return (planEs.length, done);
+  }
+  final tasks = getTasksForDate(plan, dateStr);
+  final rec = records.checkRecords[dateStr] ?? {};
+  final done = tasks.meals.where((m) => rec.containsKey('meal:${m.id}')).length +
+      tasks.exercises.where((e) => rec.containsKey('exercise:${e.id}')).length;
+  return (tasks.total, done);
+}
+
 /// 基础消耗（不含运动）：优先用已存的 BMR × 生活系数；未存 BMR 时沿用 tdee（旧数据兼容）
+/// F10 后仅作「沿用链兜底」与基线固化取值使用；逐日统计请用 [baseBurnForDate]
 int baseBurn(AppSettings settings) {
   final bmr = settings.bmr;
   if (bmr > 0) return (bmr * kLifeFactor).round();
   return settings.tdee;
 }
+
+/// 按日基础消耗（F10 沿用链，历史固化）：
+/// ① 最近 ≤date 且 bmr>0 的体重记录 → bmr×1.2；记录 bmr==0（录入时基础信息不全）跳过继续沿链
+/// ② 历史基准 baseline：date < baseline.date → 固化值（历史缺口稳定锚点）
+/// ③ 兜底现状口径 baseBurn(settings)
+int baseBurnForDate(AppSettings settings, RecordStore records, String dateStr) {
+  final w = records.weightRecords;
+  WeightEntry? hit;
+  String? hitDate;
+  for (final e in w.records.entries) {
+    if (e.key.compareTo(dateStr) <= 0 && e.value.bmr > 0) {
+      if (hitDate == null || e.key.compareTo(hitDate) > 0) {
+        hitDate = e.key;
+        hit = e.value;
+      }
+    }
+  }
+  if (hit != null) return (hit.bmr * kLifeFactor).round();
+  final b = w.baseline;
+  if (b != null && b.base > 0 && b.date.isNotEmpty && dateStr.compareTo(b.date) < 0) {
+    return b.base;
+  }
+  return baseBurn(settings);
+}
+
+/// 某天生效体重（展示用；与 [baseBurnForDate] 同一沿用链），无任何来源返回 null
+double? weightForDate(RecordStore records, String dateStr) =>
+    records.weightRecords.entryFor(dateStr)?.weight;
 
 /// 计划餐计入热量的值：优先当日覆盖，其次计划值；自由餐(null)无覆盖时为 0
 int _mealCal(MealItem m, RecordStore records, String dateStr) {
@@ -72,6 +125,65 @@ DailySummary dailySummary(
   RecordStore records,
   String dateStr,
 ) {
+  // F11 快照路径：该日已有快照 → 只读快照（历史固化）
+  final entries = records.dayEntries[dateStr];
+  if (entries != null) return _snapshotSummary(settings, records, dateStr, entries);
+  // 旧口径 fallback（未来日 / 理论上的未迁移日）
+  return _legacySummary(plan, settings, records, dateStr);
+}
+
+/// 快照路径：只读当日条目（计划=模板时实例化后的当天事实）
+DailySummary _snapshotSummary(
+    AppSettings settings, RecordStore records, String dateStr, List<DayEntry> entries) {
+  final rec = records.checkRecords[dateStr] ?? {};
+  bool checked(DayEntry e) => rec.containsKey(entryCheckKey(e));
+  final planMeals = entries.where((e) => e.isPlan && e.kind == 'meal').toList();
+  final planExs = entries.where((e) => e.isPlan && e.kind == 'exercise').toList();
+  final extraSnacks = entries.where((e) => !e.isPlan && e.kind == 'meal').toList();
+  final extraExs = entries.where((e) => !e.isPlan && e.kind == 'exercise').toList();
+
+  final plannedIntake = _sum(planMeals.map((e) => e.calories ?? 0));
+  final mealIntake = _sum(planMeals.where(checked).map((e) => e.calories ?? 0));
+  final tempIntake = _sum(extraSnacks.map((e) => e.calories ?? 0)); // 加餐即计
+  final planBurn = _sum(planExs.where(checked).map((e) => e.calories ?? 0));
+  final tempBurn = _sum(extraExs.map((e) => e.calories ?? 0)); // 加练即计
+  const extraIntake = 0; // 旧 extraFoods 已并入快照
+
+  final intake = mealIntake + tempIntake;
+  final exerciseBurn = planBurn + tempBurn;
+  final base = baseBurnForDate(settings, records, dateStr);
+  final burn = base + exerciseBurn;
+  final deficit = burn - intake;
+
+  final planEntries = [...planMeals, ...planExs];
+  final taskCount = planEntries.length;
+  final doneCount = planEntries.where(checked).length;
+
+  return DailySummary(
+    plannedIntake: plannedIntake,
+    mealIntake: mealIntake,
+    tempIntake: tempIntake,
+    tempBurn: tempBurn,
+    extraIntake: extraIntake,
+    planBurn: planBurn,
+    exerciseBurn: exerciseBurn,
+    baseBurn: base,
+    burn: burn,
+    intake: intake,
+    tdee: base,
+    deficit: deficit,
+    taskCount: taskCount,
+    doneCount: doneCount,
+  );
+}
+
+/// 旧口径（fallback）：实时按当前计划投影
+DailySummary _legacySummary(
+  PlanData plan,
+  AppSettings settings,
+  RecordStore records,
+  String dateStr,
+) {
   final tasks = getTasksForDate(plan, dateStr);
   final temps = records.getTempTasks(dateStr);
   final rec = records.checkRecords[dateStr] ?? {};
@@ -90,7 +202,8 @@ DailySummary dailySummary(
 
   final intake = mealIntake + tempIntake + extraIntake;
   final exerciseBurn = planBurn + tempBurn;
-  final burn = baseBurn(settings) + exerciseBurn;
+  final base = baseBurnForDate(settings, records, dateStr);
+  final burn = base + exerciseBurn;
   final deficit = burn - intake;
 
   // 完成度只看计划任务（临时加餐不打卡，不影响完成率）
@@ -105,10 +218,10 @@ DailySummary dailySummary(
     extraIntake: extraIntake,
     planBurn: planBurn,
     exerciseBurn: exerciseBurn,
-    baseBurn: baseBurn(settings),
+    baseBurn: base,
     burn: burn,
     intake: intake,
-    tdee: baseBurn(settings),
+    tdee: base,
     deficit: deficit,
     taskCount: taskCount,
     doneCount: doneCount,
@@ -124,10 +237,11 @@ String deficitLevel(num v) {
 }
 
 // ---------- 打卡天口径（连续打卡 / 累计打卡共用）----------
-/// 「打卡天」= 当天存在任一记录就算：打卡/临时任务/旧加餐/实际热量覆盖
+/// 「打卡天」= 当天存在任一记录就算：打卡/临时任务/旧加餐/实际热量覆盖/当日快照
 bool dayActive(RecordStore records, String dateStr) {
   final rec = records.checkRecords[dateStr];
   if (rec != null && rec.isNotEmpty) return true;
+  if ((records.dayEntries[dateStr] ?? const []).isNotEmpty) return true;
   if (records.getTempTasks(dateStr).isNotEmpty) return true;
   if ((records.extraFoods[dateStr] ?? []).isNotEmpty) return true;
   final adj = records.mealAdjust[dateStr];
@@ -278,11 +392,57 @@ class DayDetail {
 }
 
 DayDetail dayDetail(PlanData plan, AppSettings settings, RecordStore records, String dateStr) {
-  final tasks = getTasksForDate(plan, dateStr);
-  final temps = records.getTempTasks(dateStr);
   final rec = records.checkRecords[dateStr] ?? {};
   final s = dailySummary(plan, settings, records, dateStr);
   final start = plan.meta.startedAt;
+
+  final entries = records.dayEntries[dateStr];
+  if (entries != null) {
+    // F11 快照路径：某日详情只读当日快照（历史固化；计划外条目即加餐/加练）
+    final planMeals = entries.where((e) => e.isPlan && e.kind == 'meal').toList();
+    final planExs = entries.where((e) => e.isPlan && e.kind == 'exercise').toList();
+    final snacks = entries
+        .where((e) => !e.isPlan && e.kind == 'meal')
+        .map((e) => DaySnack(e.id, e.content, e.time, e.calories ?? 0))
+        .toList();
+    final tempExs = entries
+        .where((e) => !e.isPlan && e.kind == 'exercise')
+        .map((e) => DaySnack(e.id, e.content, e.time, e.calories ?? 0))
+        .toList();
+    return DayDetail(
+      summary: s,
+      future: dateStr.compareTo(todayStr()) > 0,
+      beforeStart: start.isNotEmpty ? dateStr.compareTo(start) < 0 : false,
+      meals: planMeals
+          .map((e) => DayDetailItem(
+                e.id,
+                e.content,
+                e.slot,
+                e.time,
+                null,
+                e.calories,
+                e.note,
+                rec.containsKey(entryCheckKey(e)),
+              ))
+          .toList(),
+      exercises: planExs
+          .map((e) => DayDetailExercise(
+                e.id,
+                e.content,
+                e.time,
+                0,
+                e.calories ?? 0,
+                rec.containsKey(entryCheckKey(e)),
+              ))
+          .toList(),
+      snacks: snacks,
+      tempExercises: tempExs,
+    );
+  }
+
+  // 旧口径 fallback（未来日 / 理论上的未迁移日）
+  final tasks = getTasksForDate(plan, dateStr);
+  final temps = records.getTempTasks(dateStr);
 
   final meals = tasks.meals.map((m) {
     final adj = records.getAdjust(dateStr, 'meal', m.id);
@@ -373,13 +533,7 @@ MonthReview monthReview(PlanData plan, AppSettings settings, RecordStore records
     final date = fmtDate(DateTime(year, month, d));
     if (date.compareTo(t) > 0) break;
     if (start.isNotEmpty && date.compareTo(start) < 0) continue;
-    final tasks = getTasksForDate(plan, date);
-    final total = tasks.total;
-    final rec = records.checkRecords[date] ?? {};
-    final done = total != 0
-        ? tasks.meals.where((m) => rec.containsKey('meal:${m.id}')).length +
-            tasks.exercises.where((e) => rec.containsKey('exercise:${e.id}')).length
-        : 0;
+    final (total, done) = taskProgress(plan, records, date);
     if (total > 0 && done >= total) doneDays++;
     final s = dailySummary(plan, settings, records, date);
     if (!s.hasData) continue;
@@ -459,13 +613,7 @@ MonthData monthData(PlanData plan, RecordStore records, int year, int month) {
   final start = plan.meta.startedAt;
   for (var d = 1; d <= daysInMonth; d++) {
     final date = fmtDate(DateTime(year, month, d));
-    final tasks = getTasksForDate(plan, date);
-    final total = tasks.total;
-    final rec = records.checkRecords[date] ?? {};
-    final done = total != 0
-        ? tasks.meals.where((m) => rec.containsKey('meal:${m.id}')).length +
-            tasks.exercises.where((e) => rec.containsKey('exercise:${e.id}')).length
-        : 0;
+    final (total, done) = taskProgress(plan, records, date);
     cells.add(MonthCell(
       date: date,
       day: d,

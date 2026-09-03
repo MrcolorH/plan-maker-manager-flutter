@@ -8,13 +8,18 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../models/plan_data.dart';
+import '../../models/records.dart';
+import '../../providers/onboarding_provider.dart';
 import '../../providers/plan_provider.dart';
 import '../../providers/record_provider.dart';
 import '../../providers/settings_provider.dart';
+import '../../providers/usage_provider.dart';
+import '../../services/ai_service.dart';
 import '../../theme/app_theme.dart';
 import '../../utils/calorie_utils.dart';
 import '../../utils/date_utils.dart';
 import '../../utils/plan_utils.dart';
+import '../../widgets/ai_config_sheet.dart';
 import '../../widgets/meal_card.dart';
 
 class StatsPage extends StatefulWidget {
@@ -72,7 +77,7 @@ class _StatsPageState extends State<StatsPage> {
             _streakCard(streak, totalDays),
             // 三张图表各自隔离重绘：打卡引起的重建不会互相传播
             RepaintBoundary(child: _weekCard(context, week)),
-            RepaintBoundary(child: _monthCard(context, plan, monthD)),
+            RepaintBoundary(child: _monthCard(context, plan, monthD, records.store)),
             RepaintBoundary(child: _trendCard(context, trend)),
           ],
         ),
@@ -235,7 +240,7 @@ class _StatsPageState extends State<StatsPage> {
   }
 
   // ---------- 月历卡 ----------
-  Widget _monthCard(BuildContext context, PlanData plan, MonthData monthD) {
+  Widget _monthCard(BuildContext context, PlanData plan, MonthData monthD, RecordStore records) {
     return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -287,9 +292,14 @@ class _StatsPageState extends State<StatsPage> {
             mainAxisSpacing: 6,
             children: monthD.cells.map((cell) {
               if (cell == null) return const SizedBox();
+              // F10：有体重录入的格子显示小字体重（未录入的天不显示沿用值，避免满屏噪音）
+              final w = records.weightRecords.records[cell.date];
+              final weightText = (w == null)
+                  ? null
+                  : (w.weight == w.weight.roundToDouble() ? '${w.weight.round()}' : '${w.weight}');
               return GestureDetector(
                 onTap: () => _openDayDetail(context, cell.date),
-                child: _monthCell(cell),
+                child: _monthCell(cell, weightText: weightText),
               );
             }).toList(),
           ),
@@ -324,8 +334,8 @@ class _StatsPageState extends State<StatsPage> {
   static const double _monthCircleScale = 0.7;
 
   /// 月历格子（对照 stats.vue calClass + 开始日绿点）：
-  /// 状态判定走 [monthCellKind]（与单测共用同一逻辑）
-  Widget _monthCell(MonthCell cell) {
+  /// 状态判定走 [monthCellKind]（与单测共用同一逻辑）；weightText 为当天体重小字（仅录入日显示）
+  Widget _monthCell(MonthCell cell, {String? weightText}) {
     final kind = monthCellKind(cell);
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -377,6 +387,12 @@ class _StatsPageState extends State<StatsPage> {
               color: AppColors.primary,
               shape: BoxShape.circle,
             ),
+          ),
+        if (weightText != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(weightText,
+                style: const TextStyle(fontSize: 8, color: AppColors.textSub, height: 1)),
           ),
       ],
     );
@@ -590,6 +606,20 @@ class _DayDetailSheet extends StatelessWidget {
     return AppColors.primary;
   }
 
+  // F10 体重格：未来「—」；沿用链生效体重；无任何来源「未记录」
+  String _weightText(RecordStore store) {
+    if (detail.future) return '—';
+    final wt = weightForDate(store, date);
+    if (wt == null) return '未记录';
+    return wt == wt.roundToDouble() ? '${wt.round()} kg' : '$wt kg';
+  }
+
+  Color _weightColor(RecordStore store) {
+    if (detail.future) return AppColors.textSub;
+    final wt = weightForDate(store, date);
+    return wt == null ? AppColors.textSub : AppColors.text;
+  }
+
   @override
   Widget build(BuildContext context) {
     final records = context.read<RecordProvider>();
@@ -625,8 +655,17 @@ class _DayDetailSheet extends StatelessWidget {
                   Expanded(child: _stat('计划完成', '${s.doneCount}/${s.taskCount}', AppColors.text)),
                   Expanded(child: _stat('已摄入', detail.future ? '—' : '${s.intake.round()}', detail.future ? AppColors.textSub : AppColors.orange)),
                   Expanded(child: _stat('热量缺口', _defText(), _defColor())),
+                  Expanded(child: _stat('体重', _weightText(records.store), _weightColor(records.store))),
                 ],
               ),
+              if (!detail.future && !detail.beforeStart && s.hasData)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    '基础消耗 ${s.baseBurn} kcal（BMR×1.2，不含运动）· 运动消耗 ${s.exerciseBurn.round()} kcal',
+                    style: const TextStyle(fontSize: 11, color: AppColors.textSub),
+                  ),
+                ),
               if (detail.future)
                 const _DetailHint('还没到这天，以下是计划安排')
               else if (detail.beforeStart)
@@ -730,7 +769,7 @@ class _DayDetailSheet extends StatelessWidget {
           ),
           Text('${t.calories} kcal', style: const TextStyle(fontSize: 12, color: AppColors.orange)),
           IconButton(
-            onPressed: () => records.removeTempTask(date, t.id),
+            onPressed: () => records.removeDayEntry(date, t.id),
             icon: const Icon(Icons.close, size: 16, color: AppColors.textSub),
           ),
         ],
@@ -751,7 +790,7 @@ class _DayDetailSheet extends StatelessWidget {
           Expanded(
             child: Text(e.name, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
           ),
-          Text('${e.duration}min · ≈-${e.burn}', style: const TextStyle(fontSize: 12, color: AppColors.primary)),
+          Text('${e.duration > 0 ? '${e.duration}min · ' : ''}≈-${e.burn}', style: const TextStyle(fontSize: 12, color: AppColors.primary)),
         ],
       ),
     );
@@ -767,7 +806,7 @@ class _DayDetailSheet extends StatelessWidget {
           Expanded(child: Text(t.name, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500))),
           Text('≈-${t.calories}', style: const TextStyle(fontSize: 12, color: AppColors.primary)),
           IconButton(
-            onPressed: () => records.removeTempTask(date, t.id),
+            onPressed: () => records.removeDayEntry(date, t.id),
             icon: const Icon(Icons.close, size: 16, color: AppColors.textSub),
           ),
         ],
@@ -819,7 +858,7 @@ class _DetailHint extends StatelessWidget {
   }
 }
 
-/// 补录弹窗（加餐/锻炼）
+/// 补录弹窗（加餐/锻炼）：AI 估算 + 手动录入
 class _RecordSheet extends StatefulWidget {
   final String date;
   final String type;
@@ -830,14 +869,81 @@ class _RecordSheet extends StatefulWidget {
 }
 
 class _RecordSheetState extends State<_RecordSheet> {
+  final TextEditingController _descCtrl = TextEditingController();
   final TextEditingController _nameCtrl = TextEditingController();
   final TextEditingController _calCtrl = TextEditingController();
+  bool _loading = false;
+  bool _aiUsed = false;
+  String? _aiDetail;
+
+  bool get _isSnack => widget.type == 'snack';
 
   @override
   void dispose() {
+    _descCtrl.dispose();
     _nameCtrl.dispose();
     _calCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _aiEstimate() async {
+    final desc = _descCtrl.text.trim();
+    if (desc.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(_isSnack ? '请先描述吃了什么，如「一杯大杯珍珠奶茶」' : '请先描述做了什么运动，如「慢跑 40 分钟」')));
+      return;
+    }
+    // 未配置 AI → 先弹配置层，配好后再继续估算
+    final ok = await ensureAiConfigured(
+      context,
+      message:
+          'AI 估算${_isSnack ? '热量' : '运动消耗'}需要你自己的 API Key（DeepSeek 等），配置后立即继续。',
+    );
+    if (!ok || !mounted) return;
+    setState(() => _loading = true);
+    try {
+      final settings = context.read<SettingsProvider>().settings;
+      final usage = context.read<UsageProvider>();
+      String? detail;
+      if (_isSnack) {
+        final r = await AiService.instance.queryCalorie(settings.ai, desc, onUsage: usage.addUsage);
+        if (!mounted) return;
+        _nameCtrl.text = r['name'] as String;
+        _calCtrl.text = '${r['calories']}';
+        final unit = (r['unit'] as String?) ?? '';
+        final conf = ((r['confidence'] as num?) ?? 0);
+        detail = 'AI 估算 · 置信度 ${(conf * 100).round()}%${unit.isNotEmpty ? ' · $unit' : ''}';
+      } else {
+        // F10：运动消耗结合个人资料 —— 补录日生效体重（记录链）优先，profile 兜底；信息完整才传性别/年龄/身高
+        final ob = context.read<OnboardingProvider>();
+        final p = ob.state.profile;
+        final wd = weightForDate(context.read<RecordProvider>().store, widget.date);
+        final r = await AiService.instance.estimateBurn(
+          settings.ai,
+          desc,
+          weight: wd ?? p.weight,
+          gender: p.complete ? p.gender : null,
+          age: p.complete ? p.age : null,
+          height: p.complete ? p.height : null,
+          onUsage: usage.addUsage,
+        );
+        if (!mounted) return;
+        _nameCtrl.text = r['name'] as String;
+        _calCtrl.text = '${r['calories']}';
+        final d = r['detail'] as String?;
+        if (d != null && d.isNotEmpty) detail = 'AI 拆解：$d';
+      }
+      setState(() {
+        _aiUsed = true;
+        _aiDetail = detail;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))));
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   Future<void> _save() async {
@@ -847,12 +953,13 @@ class _RecordSheetState extends State<_RecordSheet> {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('请填写名称和 0-5000 的热量')));
       return;
     }
-    await context.read<RecordProvider>().addTempTask(
+    await context.read<RecordProvider>().addDayEntry(
           widget.date,
-          type: widget.type,
-          name: name,
+          kind: _isSnack ? 'meal' : 'exercise',
+          slot: _isSnack ? 'snack' : '',
+          content: name,
           calories: cal,
-          source: 'manual',
+          source: _aiUsed ? 'ai' : 'manual',
         );
     if (mounted) Navigator.pop(context);
   }
@@ -862,19 +969,20 @@ class _RecordSheetState extends State<_RecordSheet> {
     final pad = MediaQuery.of(context).viewInsets.bottom;
     return Padding(
       padding: EdgeInsets.only(bottom: pad),
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(widget.type == 'snack' ? '补录加餐' : '补录锻炼',
+            Text(_isSnack ? '补录加餐' : '补录锻炼',
                 style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
             const SizedBox(height: 12),
             TextField(
-              controller: _nameCtrl,
+              controller: _descCtrl,
+              maxLines: _isSnack ? 2 : 1,
               decoration: InputDecoration(
-                hintText: widget.type == 'snack' ? '吃了什么' : '做了什么运动',
+                hintText: _isSnack ? '一句话描述：如「一杯大杯珍珠奶茶全糖」' : '一句话描述：如「慢跑 40 分钟」',
                 filled: true,
                 fillColor: AppColors.bg,
                 border: const OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(8)), borderSide: BorderSide.none),
@@ -883,11 +991,41 @@ class _RecordSheetState extends State<_RecordSheet> {
               ),
             ),
             const SizedBox(height: 8),
+            Row(
+              children: [
+                OutlinedButton.icon(
+                  onPressed: _loading ? null : _aiEstimate,
+                  icon: _loading
+                      ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Text('✨'),
+                  label: const Text('AI 估算'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.orange,
+                    side: const BorderSide(color: AppColors.orange),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextField(
+                    controller: _nameCtrl,
+                    decoration: InputDecoration(
+                      hintText: _isSnack ? '名称' : '运动名',
+                      filled: true,
+                      fillColor: AppColors.bg,
+                      border: const OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(8)), borderSide: BorderSide.none),
+                      isDense: true,
+                      contentPadding: const EdgeInsets.all(10),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
             TextField(
               controller: _calCtrl,
               keyboardType: TextInputType.number,
               decoration: InputDecoration(
-                hintText: widget.type == 'snack' ? '热量 kcal' : '消耗 kcal',
+                hintText: _isSnack ? '热量 kcal' : '消耗 kcal',
                 filled: true,
                 fillColor: AppColors.bg,
                 border: const OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(8)), borderSide: BorderSide.none),
@@ -895,6 +1033,11 @@ class _RecordSheetState extends State<_RecordSheet> {
                 contentPadding: const EdgeInsets.all(10),
               ),
             ),
+            if (_aiDetail != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(_aiDetail!, style: const TextStyle(fontSize: 12, color: AppColors.textSub)),
+              ),
             const SizedBox(height: 12),
             ElevatedButton(
               onPressed: _save,

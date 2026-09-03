@@ -1,7 +1,8 @@
 # 技术设计方案（design.md）
 
-版本：v1.1 ｜ 配套：[spec.md](spec.md) ｜ [import-format.md](import-format.md) ｜ [guide-design.md](guide-design.md)
-> v1.1 增补（2026-09-01）：首次使用引导 & 使用指引（第 15 章，依据 guide-design.md v0.2 评审稿；范围硬约束：只增不改）
+版本：v2.0 ｜ 配套：[spec.md](spec.md) ｜ [import-format.md](import-format.md) ｜ [weight-design.md](weight-design.md) ｜ [backup-design.md](backup-design.md)
+> v2.0（2026-09-03）：项目已从 uni-app 整体迁移至 **Flutter**，本文按 `lib/` 实际代码重写，数据格式与交互同 uni-app 版保持 1:1 兼容。uni-app 时代方案（v1.x：HBuilderX / plus.push / 云打包等）见 git 历史归档。
+> v1.1（2026-09-01）：首次使用引导 & 使用指引（第 15 章）。
 
 ---
 
@@ -9,113 +10,113 @@
 
 | 层 | 选型 | 理由 |
 |----|------|------|
-| 框架 | uni-app（Vue 3）+ HBuilderX 4.x | 用户指定；个人开发云打包最省事 |
-| 工程模板 | HBuilderX「默认模板(Vue3)」 | 无需 CLI/Vite 配置成本，直接云打包 |
-| UI | 手写组件 + emoji/文字图标（自定义底部 TabBar） | 界面要求简洁，不引入 uview/uni-ui 与图片图标资产，包体小、样式可控 |
-| 状态管理 | 手写响应式 store（Vue3 `reactive` 单例模块 + 变更即同步 uni storage） | 零 npm 依赖，HBuilderX 打开即可运行；4 个 Tab + 详情页共享计划/打卡状态 |
-| 本地存储 | `uni.setStorageSync / getStorageSync` | 单机应用，数据量小（< 几百 KB） |
-| 本地提醒 | 方案 A：`plus.push.createMessage`（HTML5+ 本地消息，见第 8 节） | 零原生插件依赖；备选方案 B 为插件市场本地通知插件 |
-| AI 热量查询 | OpenAI 兼容 `chat/completions`，用户自配 Key（**DeepSeek 默认**/智谱/通义/自定义） | 免后端零成本；用户已有 DeepSeek Key，deepseek-v4-flash 即可胜任 |
-| 图表 | 纯 CSS 条形/日历格子 | 不引 echarts/uCharts，保持简洁 |
-| 目标平台 | Android APK（Android 8.0+） | 用户自装，不上架应用商店 |
+| 框架 | Flutter（Dart SDK ^3.12） | 性能与长期维护优于 uni-app；1:1 兼容旧版数据格式与交互 |
+| 状态管理 | `provider ^6.1.2`（ChangeNotifier 单例） | 贴近旧版 reactive store 风格；6 个 Provider 覆盖全部状态 |
+| 本地存储 | `shared_preferences ^2.3.3`（8 个 JSON 字符串键） | 单机应用，数据量小（< 几百 KB）；键名与旧版 uni storage 完全一致，老数据可直接水合 |
+| 本地提醒 | `flutter_local_notifications ^18.0.1` + `timezone ^0.10.0` | zonedSchedule 注册到系统 AlarmManager，**重启后调度自动恢复**（旧版 plus.push 做不到）；支持精确闹钟 |
+| 网络 | `dio ^5.7.0`（仅 AI 请求出网） | 拦截器/超时/重试成熟；除用户自配 AI endpoint 外无任何出网请求 |
+| 备份文件 | `file_picker`（SAF 选文件）+ `share_plus`（系统分享）+ `path_provider`（应用目录）+ MethodChannel/MediaStore（Download 直写） | 安卓 10+ 免权限写 Download；兼容旧版 .dat/.txt 备份 |
+| UI | Material（`useMaterial3: false`）+ 手写组件（`lib/theme/app_theme.dart`） | 复刻旧版配色与交互；无第三方 UI 库，包体小、样式可控；图表纯自绘（无 echarts 类依赖） |
+| AI 热量查询 | OpenAI 兼容 `chat/completions`，用户自配 Key（**DeepSeek 默认**/Kimi/MiMo/MiniMax/自定义） | 免后端零成本 |
+| 目标平台 | Android APK（主要）；iOS 工程保留可构建 | 个人自装，不上架应用商店 |
 
 ## 2. 总体架构
 
 ```
-┌─────────────────────────────────────────────┐
-│  页面层  today / plan / stats / settings     │
-│          food-add / import / template / item │
-├─────────────────────────────────────────────┤
-│  状态层  Pinia: planStore / recordStore /    │
-│          settingsStore（变更即持久化）         │
-├─────────────────────────────────────────────┤
-│  服务层(utils)                                │
-│   plan.js      计划解析/校验/当日任务计算        │
-│   reminder.js  提醒调度（plus.push 封装）       │
-│   calorie.js   热量缺口/统计聚合                │
-│   ai.js        AI 热量查询（请求+容错解析）      │
-│   date.js      日期与星期工具                   │
-├─────────────────────────────────────────────┤
-│  数据层                                       │
-│   uni storage（planData / records / settings）│
-│   data/food-db.js 内置食物库（离线）            │
-│   网络：仅 ai.js 出网（用户自配 endpoint）       │
-└─────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│ 页面层  MainShell(IndexedStack 4 Tab)                  │
+│   today / plan / stats / settings                     │
+│   + food_add / import / item_detail / backup          │
+│   + ai_config / onboarding / guide                    │
+├──────────────────────────────────────────────────────┤
+│ 状态层  Provider（ChangeNotifier，变更即持久化）           │
+│   AppProvider（UI 态）      UsageProvider（AI 用量）     │
+│   SettingsProvider         RecordProvider（打卡记录）    │
+│   PlanProvider（计划）      OnboardingProvider（引导）    │
+├──────────────────────────────────────────────────────┤
+│ 服务层                                                │
+│   utils/plan_utils.dart    计划校验/归一化/当日任务        │
+│   utils/calorie_utils.dart 热量缺口/统计聚合              │
+│   utils/date_utils.dart    日期与星期工具                │
+│   services/reminder_service.dart      提醒调度           │
+│   services/ai_service.dart            AI 请求+容错解析     │
+│   services/backup_service.dart        备份导出/导入/合并   │
+│   services/auto_backup_service.dart   本地自动备份         │
+├──────────────────────────────────────────────────────┤
+│ 数据层                                                │
+│   shared_preferences（8 个存储键，唯一持久化点）           │
+│   data/food_db.dart    内置食物库 82 条（离线）           │
+│   data/templates.dart  格式说明/示例/AI 提示词           │
+│   data/guide_articles.dart 使用指引内容源（8 篇图文）      │
+│   网络：仅 ai_service.dart 出网（用户自配 endpoint）       │
+└──────────────────────────────────────────────────────┘
 ```
 
-数据流向：页面 → store 模块方法（reactive 变更 + 同步 uni storage）；store 模块首次 import 时从 storage 水合。提醒调度在 App `onShow`/导入后/设置变更后触发，与页面解耦。
+数据流向：页面 `context.watch/read` Provider → Provider 方法内变更状态并同步 `StorageService.writeMap` → `notifyListeners()` 驱动 UI 重建。启动时序（`main.dart`）：`StorageService.init()` → `ReminderService.init()` → 创建 6 个 Provider 并装配 → `AutoBackupService.attach()`（数据变更防抖监听）→ `reminder.onLaunch()`（兜底重算当天/次日提醒）→ `runApp`。
+
+提醒调度在启动、导入/生成计划后、设置变更后触发，与页面解耦。
 
 ## 3. 目录结构
 
-uni-app 工程位于 `plan/app/`（与本 spec 目录平级）：
+Flutter 工程位于仓库根目录：
 
 ```
-app/
-├── App.vue                      # onLaunch/onShow：store 水合 + 提醒调度 + push 点击监听
-├── main.js
-├── pages.json                   # 无原生 tabBar（用自定义组件，免 PNG 图标资产）
-├── manifest.json                # 名称「知轻」、Push 模块、Android 权限
-├── uni.scss                     # 设计变量（见第 11 节）
-├── pages/
-│   ├── index/index.vue          # 主容器：v-show 挂 4 个 tab 组件 + tab-bar（切 tab 不重载）；onShow 首启判断 → redirectTo 引导（15.2，约 5 行）
-│   ├── food/add.vue             # 加餐录入
-│   ├── import/import.vue        # JSON 导入
-│   ├── template/template.vue    # 模板查看/复制
-│   ├── item/detail.vue          # 计划项详情
-│   ├── onboarding/onboarding.vue # 首次使用引导（Step0~5，含页内 AI 配置弹层；15.3）
-│   └── guide/guide.vue          # 使用指引：列表 + 详情两态（15.5）
-├── components/
-│   ├── tab-bar.vue              # 自定义底部导航（emoji 图标）
-│   ├── tabs/
-│   │   ├── today.vue            # Tab：今日
-│   │   ├── plan.vue             # Tab：计划
-│   │   ├── stats.vue            # Tab：统计
-│   │   └── settings.vue         # Tab：设置
-│   ├── calorie-summary.vue      # 今日热量汇总卡
-│   ├── meal-card.vue            # 餐食卡片（含打卡）
-│   ├── exercise-card.vue        # 运动卡片（含打卡）
-│   └── empty-state.vue          # 空状态
-├── store/                       # Vue3 reactive 单例模块，变更即写 storage
-│   ├── plan.js
-│   ├── record.js
-│   ├── settings.js
-│   ├── app.js                   # 全局 UI 态：todayKey（跨天刷新）、focusKey（通知定位）
-│   └── onboarding.js            # 引导状态（独立键 onboardingState）+ isLegacyUser 检测（15.2）
+lib/
+├── main.dart                    # 入口：初始化存储/提醒 → MultiProvider 装配 → MaterialApp(home: MainShell)
+├── theme/
+│   └── app_theme.dart           # AppColors 色板 + AppTheme + 通用组件（AppCard/Tag/PrimaryButton/EmptyState 等）
+├── models/
+│   ├── plan_data.dart           # PlanData/PlanMeta/MealItem/ExerciseItem/DetailItem/ContentItem
+│   ├── records.dart             # RecordStore：checkRecords/mealAdjust/tempTasks/extraFoods 四个 Map
+│   ├── settings.dart            # AppSettings + AiConfig + kAiProviders 预设 + kRetiredModelMap
+│   └── onboarding.dart          # 引导状态 { done, profile }
+├── providers/
+│   ├── app_provider.dart        # 全局 UI 态：activeTab / todayKey（跨天刷新）/ focusKey（通知定位）
+│   ├── plan_provider.dart       # 计划 CRUD/导入/清空，变更后联动提醒调度
+│   ├── record_provider.dart     # 打卡/临时任务/热量调整，变更后联动通知
+│   ├── settings_provider.dart   # 设置读写/估算器/AI 配置，变更后联动重调度
+│   ├── usage_provider.dart      # AI 用量统计（calls/tokens/费用）
+│   └── onboarding_provider.dart # 首启判定 shouldOnboard / isLegacyUser / 完成与跳过
+├── services/
+│   ├── storage_service.dart     # shared_preferences 封装（8 键常量 + readMap/writeMap）
+│   ├── reminder_service.dart    # flutter_local_notifications 调度（单例）
+│   ├── ai_service.dart          # AI 请求 + 提示词 + 容错解析 + 用量埋点（单例）
+│   ├── backup_service.dart      # 备份编解码/校验/合并/Download 读写（单例）
+│   └── auto_backup_service.dart # 自动备份：防抖 15s + 退后台即写 + 冷启动兜底 + 开关门禁
 ├── utils/
-│   ├── plan.js                  # normalize/validate/getTasksForDate
-│   ├── reminder.js              # plus.push 封装与调度
-│   ├── calorie.js               # 热量缺口/统计聚合
-│   ├── ai.js                    # AI 热量查询（请求+容错解析）；v1.1 文件末尾追加 generatePlanFromInput（15.4，现有函数零改动）
-│   └── date.js                  # 日期与星期工具
+│   ├── plan_utils.dart          # validateRaw/normalizePlan/getTasksForDate/genId（与旧版 plan.js 1:1）
+│   ├── calorie_utils.dart       # baseBurn/dailySummary/streakDays/weekData/monthData/trendData/dayDetail/monthReview
+│   └── date_utils.dart          # todayStr/parseDate/addDays/weekday 工具
 ├── data/
-│   ├── food-db.js               # 内置食物库（离线）
-│   ├── template.js              # 模板/示例/提示词文本
-│   └── guide.js                 # 使用指引内容源（8 篇图文，15.5）
-└── static/
-    ├── icons/                   # 应用图标各尺寸 PNG（sips 从用户 jpg 生成）
-    └── guide/                   # 指引真实截图素材 PNG ×12（15.5）
+│   ├── food_db.dart             # 内置食物库 82 条（FoodItem）
+│   ├── templates.dart           # kFormatBrief/kAiPrompt/kExample（与 import-format.md 同源）
+│   └── guide_articles.dart      # 使用指引 8 篇图文内容源
+├── widgets/
+│   ├── meal_card.dart           # 餐食卡片（含打卡）
+│   ├── exercise_card.dart       # 运动卡片（含打卡）
+│   ├── calorie_summary.dart     # 今日热量汇总卡
+│   └── ai_config_sheet.dart     # AI 配置弹层（showAiConfigSheet + ensureAiConfigured 前置校验）
+└── pages/
+    ├── main_shell.dart          # 主壳：IndexedStack 4 Tab + 底部导航 + 首启引导拦截
+    ├── today/today_page.dart    # Tab：今日（打卡/缺口/加餐/加练）
+    ├── plan/plan_page.dart      # Tab：计划（餐食/运动管理、导入与引导入口）
+    ├── stats/stats_page.dart    # Tab：统计（周图/月历/趋势/日详情/月回顾）
+    ├── settings/settings_page.dart  # Tab：设置（热量/提醒/AI/数据与计划/帮助/关于）
+    ├── settings/backup_page.dart    # 导入备份（概要/增量/覆盖/自动备份恢复卡）
+    ├── settings/ai_config_page.dart # AI 配置页
+    ├── food/food_add_page.dart  # 加餐录入（食物库/AI/手动）
+    ├── import/import_page.dart  # 导入计划（AI 生成 / 手动 JSON 双模式 + 预览确认）
+    ├── item/item_detail_page.dart   # 计划项详情（食材/步骤/训练内容/单项提醒开关/删除）
+    ├── onboarding/onboarding_page.dart  # 首次使用引导（Step0~5，含页内 AI 配置弹层）
+    └── guide/guide_page.dart    # 使用指引：列表 + 详情两态
 ```
 
-## 4. 导航与路由（pages.json）
+## 4. 导航与路由
 
-```jsonc
-{
-  "pages": [
-    { "path": "pages/index/index" },
-    { "path": "pages/food/add" },
-    { "path": "pages/import/import" },
-    { "path": "pages/template/template" },
-    { "path": "pages/item/detail" },
-    { "path": "pages/onboarding/onboarding", "style": { "navigationBarTitleText": "欢迎使用", "navigationStyle": "custom" } },
-    { "path": "pages/guide/guide" }
-  ],
-  "globalStyle": { "navigationBarTitleText": "知轻", "navigationBarBackgroundColor": "#F6F7FB", "navigationBarTextStyle": "black" }
-}
-```
-
-不使用原生 tabBar：由 `pages/index/index.vue` 作为主容器，`v-show` 挂载 4 个 tab 组件 + `tab-bar.vue` 自定义底部导航（emoji 图标 🏠📋📊⚙️）。好处：切 tab 零重载、状态即取即用、无需准备 8 张 PNG 图标资产。子页面（加餐/导入/模板/详情）用 `uni.navigateTo` 压栈。
-
-路由参数：`pages/item/detail?type=meal|exercise&id=xxx`；通知点击统一回主容器，通过 `store/app.js` 的 `focusKey` 定位今日页对应卡片并高亮。
+- `MaterialApp(home: MainShell)`；MainShell 用 `IndexedStack` 常驻 4 个 Tab 页（切 tab 零重载、状态保留），底部导航为自绘组件（emoji 图标 🏠📋📊⚙️，对应旧版 tab-bar.vue）。
+- 子页面统一走 `AppRoutes.fade(page)`（`PageRouteBuilder` 160ms 淡入，替代 MaterialPageRoute 默认 300ms 位移动画——低端机观感更轻快）：加餐录入、导入计划、计划项详情、备份导入、AI 配置、引导页、指引页。
+- 首启拦截：`MainShell.initState` 的 `addPostFrameCallback` 中 `OnboardingProvider.shouldOnboard()` 命中 → `push(OnboardingPage)`（老用户升级由 isLegacyUser 豁免，不弹）。
+- 通知点击定位：flutter_local_notifications 回调解析 payload `{"focus":"meal:xxx"}` → `NotificationTapBus.focus` → 首帧后 `AppProvider.onNotificationTap(focus)` 切到今日页并高亮对应卡片。
 
 ## 5. 页面信息设计
 
@@ -128,58 +129,54 @@ app/
 │ │ 热量汇总卡                 │ │
 │ │  缺口 +620 kcal（绿）      │ │   ← 大数字：缺口
 │ │  目标1400 | 已摄入780      │ │
-│ │  消耗2000 | 运动+180      │ │   ← TDEE + 打卡运动消耗
+│ │  消耗2000 | 运动+180      │ │   ← 基础消耗 + 打卡运动消耗
 │ └──────────────────────────┘ │
 │ 今日餐食                       │
-│ ┌ 🍚 12:00 冻豆腐虾仁荞麦面…  ✓打卡 │ ← 卡片：时间/名称/热量/打卡按钮
+│ ┌ 🍚 12:00 冻豆腐虾仁荞麦面…  ✓打卡 │
 │ │ 🍽 18:00 青椒洋葱炒鸡胸肉  ✓打卡 │
-│ │ ☕ 16:00 下午加餐(100)     ✓打卡 │
 │ └ ...                        │
 │ 今日运动                       │
 │ ┌ 🏃 18:30 适应期·快走 40min ✓打卡 │
 │ └ ...                        │
-│ 加餐记录 (2条 共1200kcal)  [＋记录加餐] │
-│  · 14:32 香辣鸡腿堡套餐 1100 [删] │
+│ ＋ 今日加餐（虚线按钮）           │
 └──────────────────────────────┘
 ```
 
-交互要点：
-- 打卡按钮点击即生效，动画变对勾；再点取消（仅当日）
-- 卡片点击 → 详情页（食材/步骤/训练内容/单项提醒开关）
-- 空状态：未导入计划时显示引导按钮「去导入计划」
-- `calories:null` 的自由餐打卡成功后 toast「记得记录实际热量」，右上角飘「去记录」快捷入口
-- 页面 `onShow` 时刷新（跨天停留场景）
+- 打卡点击即生效（对勾 + 变色），再点取消（仅当日）；打卡后汇总卡热量实时重算。
+- 卡片点击 → 计划项详情页（食材/步骤/训练内容/单项提醒开关/删除单项）。
+- ✎ 调整当日实际热量：弹窗手填或 AI 估算（没吃到计划的量时用）；仅当天生效。
+- 自由餐（calories:null）打卡后提示「记得记录实际热量」并可跳转加餐页。
+- 临时加餐/临时锻炼（加练）：添加即计入当日缺口，仅当天有效，不参与完成度。
+- 跨天停留：`AppProvider.refreshToday()` 驱动今日页刷新为新一天。
 
 ### 5.2 计划页
 
-- 顶部：当前计划卡片（名称、时间段、基础→目标体重、每日目标热量）
-- Tab 切换：餐食 / 运动，按时间排序列出全部计划项（显示星期徽标：如「一三五」）
-- 底部两个主按钮：「导入计划」「查看模板」
-- 每项可点进详情；详情页可删除单项（本地标记删除，不回写 JSON）
+- 顶部：当前计划卡片（名称、时间段、基础→目标体重、每日目标热量、计划开始日）。
+- 子 Tab 切换：餐食 / 运动，按时间排序列出全部计划项（星期徽标如「一三五」）。
+- 每项可点进详情；详情页可删除单项（写入 `deletedIds`，不回写 JSON）。
+- 底部：「＋ 导入计划」（进导入页）等主操作；分模块清空入口（跟随子 Tab）。
 
 ### 5.3 导入页
 
-1. 大输入框（textarea 粘贴 JSON）+「从文件导入」按钮（App 端走 SAF 系统文件选择器：`pickBackupFile`，读取委托 `readBackupFile`，兼容本地路径 / file:// / content://）
-2. 「解析校验」→ 错误：中文错误列表（定位第 N 条/字段）；成功 → 预览
-3. 预览卡：计划名/时间段/餐食 N 项（各类型数量）/运动 M 项/每日目标；提示「增量合并现有 XX 计划（同 id 更新，新增追加）」
-4. 「确认导入」→ 写入 planStore → 立即重调度提醒 → 跳转今日页
+1. 双模式切换：**AI 生成**（粘贴计划文档 → AI 转 JSON）｜ **手动 JSON**（粘贴/选择 .json 文件，`file_picker`）。
+2. 「解析校验」→ 错误：中文错误列表（定位第 N 条/字段，`validateRaw`）；成功 → 预览。
+3. 预览卡：meta 摘要（计划名/时间段/目标摄入）+ 条目列表（可删除/编辑）+ 实时统计（摄入Σ/消耗Σ/预计缺口）；提示「增量合并现有计划（同 id 更新，新增追加）」。
+4. 「确认导入」→ `PlanProvider.importPlan`（normalize + 增量合并 + 吸收 meta）→ 立即重调度提醒 → 跳转今日页。
+5. AI 生成未配 Key 时弹统一 AI 配置弹层（`ensureAiConfigured`），配置后原操作继续。
 
-### 5.4 模板页
+### 5.4 模板与格式说明
 
-三个可折叠区块，每块右上角「复制」按钮（`uni.setClipboardData`）：
-- 「JSON 格式说明」（精简版字段表）
-- 「完整示例」（template.json 内容，即用户的真实计划样例）
-- 「AI 生成提示词」（import-format.md 第 6 节）
+- 格式说明 / 完整示例 / AI 生成提示词三个数据块由 `data/templates.dart` 承载（与 import-format.md 同源，内容与旧版 template.js 完全一致），供 AI 生成模式与提示词组装复用。
+- 旧版独立「模板查看页」在 Flutter 版未保留独立路由；格式要求已内嵌在导入页 AI 模式与提示词中，用户无需自行拼提示词。
 
 ### 5.5 加餐录入页
 
 ```
 ┌──────────────────────────────┐
-│ [搜索食物：香辣鸡腿堡…]        │ ← 本地库即时过滤
+│ [搜索食物：香辣鸡腿堡…]        │ ← 本地库即时过滤（name/alias/tags）
 │ 内置库结果                     │
 │  香辣鸡腿堡套餐  ≈1100 kcal [＋] │
-│  吮指原味鸡(1块) ≈240 kcal  [＋] │
-│  —— 没找到？ [AI 查询热量]     │ ← 需已配置 API，否则引导去设置
+│  —— 没找到？ [AI 查询热量]     │ ← 需已配置 API（ensureAiConfigured）
 │ AI 结果（可编辑热量）           │
 │  黄焖鸡米饭(大份) [780] [确认记录] │
 │ 手动录入                       │
@@ -187,434 +184,324 @@ app/
 └──────────────────────────────┘
 ```
 
+来源标记：`db`（食物库）/ `ai`（AI 查询）/ `manual`（手动），随临时任务入库。
+
 ### 5.6 统计页
 
-- 顶部：连续完成 X 天 ｜ 累计完成 Y 天
-- 本周：7 列，每列显示 完成度 n/m + 缺口数字，着色同 FR4.6
-- 月历：格子按完成率着色（浅绿=部分 / 深绿=全部 / 灰=无数据）；未来或今天已排计划但未打卡 → 空心绿圈「待开始」（图例含待开始）；计划开始日（`meta.startedAt`，首次导入日期，老数据用最早打卡日回填）绿点标记，开始前视为无计划（`getTasksForDate` 直接返回空任务，不产生任务/不计完成度）
-- 近 14 天缺口条形图（0 轴基线，正向上绿、负向下红）
-- 某日详情弹层：月历格子或周图列点击任意一天（含未来）→ `dayDetail(date)` 弹层，顶部三格（完成度 n/m、已摄入、缺口）+ 逐项清单（计划餐✓/○与实际热量及备注、临时加餐＋含来源徽标、运动消耗；未打卡行置灰）；未来的日期：标题「未开始」标签 + 「还没到这天，以下是计划安排」，摄入显示 —、缺口显示「待开始」（不产生 TDEE 假缺口）；计划开始前的日期显示「计划开始前，无统计数据」
-- 月回顾弹层：月历标题旁「月回顾」按钮 → `monthReview(y, m)` 弹层，顶部三格（计划完成天数、总缺口、日均缺口）+「本月已记录 N 天」；下方两卡片——**消耗最多的一天 / 摄入最多的一天**，各显示日期 + 三列数据（热量缺口、总摄入、总消耗 kcal；缺口正绿/负橙着色，消耗最多的一天附「基础 X + 运动 Y kcal」拆分），每卡片「查看详情 ›」按钮 → 在回顾层之上叠加 `dayDetail(date)` 弹层（详情层 z-index 更高，关闭后回到月回顾）；统计口径：只统计开始日后、今天之前有记录的日子（未来与开始前不参与），本月无记录显示空状态
+- 顶部：连续完成 X 天 ｜ 累计完成 Y 天。
+- 本周：7 列，每列显示完成度 n/m + 缺口数字，着色同 FR4.6。
+- 月历：格子按完成率着色（浅绿=部分 / 深绿=全部 / 灰=无数据）；未来或今天已排计划未打卡 → 空心绿圈「待开始」；计划开始日（`meta.startedAt`）绿点标记，开始前视为无计划（`getTasksForDate` 直接返回空任务）。
+- 近 14 天缺口条形图（0 轴基线，正向上绿、负向下橙红）。
+- 某日详情弹层：月历/周图点任意一天（含未来）→ `dayDetail(date)`，顶部三格（完成度 n/m、已摄入、缺口）+ 逐项清单（计划餐✓/○与实际热量及备注、临时加餐＋来源徽标、运动消耗；未打卡行置灰）；未来日期：标题「未开始」、摄入 —、缺口「待开始」；开始前显示「计划开始前，无统计数据」；近 3 天（前天～今天）支持补打卡/补录/删除临时记录，更早只读。
+- 月回顾弹层：顶部三格（计划完成天数、总缺口、日均缺口）+ 两卡片「消耗最多的一天 / 摄入最多的一天」（缺口正绿/负橙；消耗最多的一天附「基础 X + 运动 Y」拆分）；「查看详情 ›」在回顾层之上叠加日详情；只统计开始日后、今天之前有记录的日子。
 
 ### 5.7 设置页（分组列表）
 
-- 热量：TDEE（输入 + 公式估算器弹层：性别/身高/体重/年龄/活动系数 → BMR×系数）
-- 提醒：总开关 / 提前量（0/5/10/15/30 分钟）/ 通知权限状态与申请按钮 / 省电白名单引导
-- AI 查询：服务商（智谱/DeepSeek/通义/自定义）→ 自动填 endpoint 与默认模型 / API Key（密码框）/ 模型名 / 测试连接
-- 数据：清空打卡记录 / 清空全部数据（二次确认）
-- 关于：版本号、格式版本 1.0
+```
+热量
+├── 每日基础消耗 / 每日目标摄入（仅展示行）
+├── 基础信息摘要行（性别/年龄/身高/体重/活动量，与引导共用 onboardingState.profile）
+└── 「更新数据」→ 估算器弹层（性别/身高/体重/年龄/活动系数 → BMR，可重新估测）
+提醒
+├── 总开关 / 提前量（0/5/10/15/30 分钟）
+└── 通知权限状态与申请按钮 / 省电白名单引导
+AI 查询
+├── 服务商（DeepSeek/Kimi/MiMo/MiniMax/自定义，自动填 endpoint 与默认模型）
+├── API Key（密码框）/ 模型名 / 测试连接 / 余额查询
+数据与计划
+├── 导出历史数据备份 (.txt) ›
+├── 导入历史数据备份 ›
+├── 自动备份 [开关]（副标题注明保存到系统 Download 目录）
+├── 清空打卡与加餐记录 ›
+├── 清空餐食计划（N 项）› / 清空运动计划（N 项）›
+└── 清空全部数据（红色，二次确认 + 留底）
+帮助
+└── 📖 使用指引（图文教程 N 篇）›
+关于
+└── 版本号（当前 1.0.0）/ 格式版本 1.0
+```
+
+- 估算器保存时把基础信息一并持久化到 `onboardingState.profile`，与引导 Step1 共用同一份口径（`estimateBmr`）。
+- 版本号当前在设置页与备份 `appVersion` 字段中硬编码（随 pubspec 版本更新，见 weight-design.md §8）。
 
 ## 6. 数据模型
 
-### 6.1 计划项（与 import-format.md 一致，存储前 normalize）
+### 6.1 计划项（models/plan_data.dart，与 import-format.md 一致）
 
-```ts
-interface MealItem {
-  id: string            // 缺省自动生成 m-时间戳-随机
-  type: 'breakfast' | 'lunch' | 'dinner' | 'snack'
-  name: string
-  time: string          // "HH:mm"
-  calories: number | null
-  days: number[]        // 1-7，空数组=每天
-  reminder: boolean     // 默认 true
-  note?: string
-  details?: { item: string; amount?: string }[]
-  steps?: string[]
-  startDate?: string; endDate?: string
+```dart
+class MealItem {
+  String id;              // 缺省 genId('m')：前缀-时间戳36进制-随机36进制（与 JS 版同构）
+  String type;            // breakfast | lunch | dinner | snack
+  String name;
+  String time;            // "HH:mm"
+  int? calories;          // null = 自由餐
+  List<int> days;         // 1-7，空数组=每天
+  List<String> dates;     // 具体日期数组（命中优先于 days/范围）
+  bool reminder;          // 默认 true
+  String note;
+  List<DetailItem> details;   // {item, amount}
+  List<String> steps;
+  String startDate, endDate;  // 空 = 不限
 }
-interface ExerciseItem {
-  id: string
-  name: string
-  time: string
-  duration: number      // 分钟
-  caloriesBurned: number // 默认 0
-  days: number[]
-  startDate?: string; endDate?: string
-  reminder: boolean
-  note?: string
-  content?: { item: string; detail?: string; minutes?: number }[]
+class ExerciseItem {
+  String id; String name; String time;
+  int duration;           // 分钟 1-600
+  int caloriesBurned;     // 默认 0
+  List<int> days; List<String> dates;
+  String startDate, endDate;
+  bool reminder; String note;
+  List<ContentItem> content;  // {item, detail, minutes}
 }
-interface PlanData {
-  version: string
-  meta: { planName?, startDate?, endDate?, baseWeight?, targetWeight?,
-          dailyCalorieTarget?, tdee? }
-  meals: MealItem[]
-  exercises: ExerciseItem[]
-  deletedIds: string[]   // 本地单项删除标记，导入时清空
+class PlanData {
+  String version;         // "1.0"
+  PlanMeta meta;          // planName/startDate/endDate/baseWeight/targetWeight/dailyCalorieTarget/tdee + startedAt(首次导入日)
+  List<MealItem> meals;
+  List<ExerciseItem> exercises;
+  List<String> deletedIds;    // 本地单项删除标记
 }
 ```
 
-### 6.2 存储键（storage schema）
+校验与归一化（`plan_utils.dart`）对 AI 输出做了容错：数字字符串、带秒时间、中文 type（「早餐」等）均自动纠正；`normalizePlan` 补默认值并按 id 去重。
 
-| 键 | 类型 | 结构 |
+### 6.2 存储键（storage_service.dart，与旧版 uni storage 完全一致）
+
+| 键 | 常量 | 结构 |
 |----|------|------|
-| `planData` | PlanData | 见上；meals/exercises 空数组表示无该类计划 |
-| `checkRecords` | object | `{ "2026-08-27": { "meal:lunch-weekday": { checkedAt: 1724... }, "exercise:phase1-cardio": {...} } }` 键=`类型:id`（temp 打卡键已废弃，加餐不再打卡） |
-| `tempTasks` | object | `{ "2026-08-27": [ { id, type:'snack', name, time:"14:32", calories, source: 'manual'\|'db'\|'ai' } ] }` 今日加餐：添加即计入缺口，仅当天有效 |
-| `mealAdjust` | object | `{ "2026-08-27": { "meal:lunch-weekday": { calories: 440, note: "没买到豆浆" } } }` 当日实际热量覆盖，仅当天生效 |
-| `extraFoods` | （已废弃） | 旧加餐记录，模块加载时自动迁移并入 tempTasks |
-| `settings` | object | `{ tdee: 2000, dailyCalorieTarget: 1400, reminderEnabled: true, reminderAdvance: 0, ai: { provider, endpoint, apiKey, model } }` |
-| `apiUsage` | object | `{ calls, promptTokens, cacheHitTokens, completionTokens }` 本 App 累计 API 用量；chat 响应 usage 字段埋点；费用按 deepseek-v4-flash 非峰值牌价现算（store/usage.js），官方美元价分峰谷 × 汇率折算 |
-| `reminderState` | 内存态 | 已调度 key 集合（`date\|time\|advance\|type\|id`）仅存进程内存：进程重启后已注册消息与 keys 同时丢失，冷启动全量重排即无重复无遗漏 |
-| `onboardingState` | object | `{ done: boolean, profile: { gender, age, height, weight, activity } }` 引导状态（15.2，独立键；`done` 仅在确认完成/跳过时置 true；settings 键不加字段） |
+| `planData` | kPlan | PlanData；meals/exercises 空数组表示无该类计划 |
+| `checkRecords` | kCheckRecords | `{ "2026-08-27": { "meal:lunch-weekday": { checkedAt: 1724... } } }` 键=`类型:id` |
+| `mealAdjust` | kMealAdjust | `{ "2026-08-27": { "meal:lunch-weekday": { calories: 440, note: "..." } } }` 当日实际热量覆盖（v1.0.2 起停写，旧数据保留） |
+| `tempTasks` | kTempTasks | `{ "2026-08-27": [ { id, type:'snack'\|'exercise', name, time, calories, source } ] }` 今日加餐/加练（v1.0.2 起停写退役，迁移并入 dayEntries，模型与 v1 备份兼容保留） |
+| `extraFoods` | kExtraFoods | （已废弃）旧加餐记录，迁移并入 tempTasks，兼容保留 |
+| `dayEntries` | kDayEntries | `{ "2026-08-27": [ DayEntry ] }` 当日条目快照（F11）：餐食与运动统一（kind 区分），内容/热量/备注，修改即脱钩；不参与 400 天裁剪 |
+| `weightRecords` | kWeightRecords | `{ baseline: {base,date}, records: { "2026-08-27": { weight, bmr, updatedAt } } }` 体重记录与基础消耗固化（F10）；一天一条；不参与 400 天裁剪 |
+| `settings` | kSettings | `{ tdee, bmr, dailyCalorieTarget, reminderEnabled, reminderAdvance, autoBackupEnabled, ai: { provider, endpoint, apiKey, model } }` |
+| `apiUsage` | kApiUsage | `{ calls, promptTokens, cacheHitTokens, completionTokens }` |
+| `onboardingState` | kOnboarding | `{ done, profile: { gender, age, height, weight, activity } }` |
 
-> 日期一律 `YYYY-MM-DD` 本地时区字符串；记录按月聚合清理（保留 12 个月）。
+> 日期一律 `YYYY-MM-DD` 本地时区字符串；打卡/调整/临时任务等按 400 天裁剪；`dayEntries`/`weightRecords` 因「历史固化」语义不裁剪（体量估算见各自设计文档）。
+> v1.0.2（2026-09-03 落地）：`weightRecords`（F10）与 `dayEntries`（F11）已随 App v1.0.2 实现，详见 [weight-design.md](weight-design.md) 与 [day-snapshot-design.md](day-snapshot-design.md)；备份 10 项、formatVersion 2。
 
-### 6.3 响应式 store 模块（store/）
+### 6.3 Provider 层（providers/）
 
-不用 Pinia（免 npm 依赖），用 Vue3 `reactive` 单例模块：每个 store 一个文件，导出 `state（reactive）` + 操作方法，方法末尾同步写 storage；模块顶层首次 import 时从 storage 水合。
+| Provider | 职责 | 关键方法 |
+|----------|------|----------|
+| AppProvider | 全局 UI 态（不持久化） | `setActiveTab` / `refreshToday()`（跨天刷新）/ `onNotificationTap(focus)` |
+| PlanProvider | planData 读写 | `importPlan`（校验+增量合并+调度）/ `removeItem` / `clearMeals` / `clearExercises` / `hasPlan` |
+| RecordProvider | 打卡/临时任务/调整 | `toggleCheck`（任意日期可写，供补打卡）/ `addTempTask` / `removeTempTask` / `setAdjust` / `clearRecords` |
+| SettingsProvider | settings 读写 | `update(patch)`（联动重调度）/ `applyMeta`（导入吸收 tdee/目标摄入）/ `estimateTdee` / `switchProvider` / `replaceSettings` |
+| UsageProvider | AI 用量统计 | `recordUsage`（chat 响应埋点）/ `clearUsage` |
+| OnboardingProvider | 引导状态 | `shouldOnboard()`（!done && !isLegacyUser）/ `finish` / `skip` / `rerun` |
 
-- `store/plan.js`：`plan`（PlanData）；`importPlan(raw)`（校验+增量合并+调度提醒）、`removeItem(type,id)`、`clearMeals()` / `clearExercises()`（分模块清空）、`clearPlan()`（仅清空全部数据使用）；getter `hasPlan()`
-- `store/record.js`：`checkRecords` / `extraFoods` / `mealAdjust` / `tempTasks`；`toggleCheck(date,type,id)`（任意日期可写，供近 3 天补打卡）、`addTempTask(date,{type:'snack'|'exercise',...})`、`removeTempTask(date,id)`、`getAdjust` / `setAdjust`、`clearRecords()`
-- `store/settings.js`：`settings`；`update(patch)`（联动重调度提醒）、`applyMeta(meta)`（导入时吸收 tdee/dailyCalorieTarget）、`estimateTdee(form)`、`clearAll()`
-- `store/app.js`：`todayKey`（跨天刷新用）、`focusKey`（通知点击定位卡片）、`activeTab`（当前 tab）
+变更通知约定：任何影响缺口/提醒的数据变更（打卡、加餐、调整、计划、设置）都会 `notifyListeners()`；自动备份服务 `attach()` 后监听全部 Provider 变更做防抖落盘。
 
 ## 7. 核心算法
 
-### 7.1 当日任务计算（utils/plan.js）
+### 7.1 当日任务计算（utils/plan_utils.dart）
 
-```js
-// weekday: 1=周一...7=周日
-function getTasksForDate(plan, dateStr) {
-  const { weekday } = parseDate(dateStr)
-  const inRange = it =>
-    (!it.startDate || dateStr >= it.startDate) && (!it.endDate || dateStr <= it.endDate)
-  const matchDays = it =>
-    !it.days?.length || it.days.includes(weekday)
-  const visible = it => !plan.deletedIds.includes(it.id)
-  const byTime = (a, b) => a.time.localeCompare(b.time)
-  return {
-    meals: plan.meals.filter(it => inRange(it) && matchDays(it) && visible(it)).sort(byTime),
-    exercises: plan.exercises.filter(it => inRange(it) && matchDays(it) && visible(it)).sort(byTime),
-  }
+```dart
+TaskSet getTasksForDate(PlanData planData, String dateStr) {
+  // 计划开始日（meta.startedAt，首次导入日）之前视为「无计划」：
+  // 不产生任务、不计完成度、不参与统计
+  if (startedAt 非空 && dateStr < startedAt) return const TaskSet();
+  // 命中规则：填了 dates 仅按具体日期生效（days/范围忽略）；
+  // 否则按 days 周几 + startDate/endDate 范围
+  // 结果按 time 升序排列
 }
 ```
 
-### 7.2 热量缺口（utils/calorie.js）
+### 7.2 热量缺口（utils/calorie_utils.dart）
 
 ```
 // 口径：当日消耗 = 基础消耗（不含运动）+ 当日实际运动；避免活动系数与运动打卡双算
-baseBurn = settings.bmr > 0 ? round(settings.bmr × 1.2) : settings.tdee
-function dailySummary(dateStr) {
-  const tasks = getTasksForDate(plan, dateStr)
-  const rec = checkRecords[dateStr] || {}
-  const done = key => !!rec[key]
-  const plannedIntake = sum(tasks.meals.filter(m => m.calories != null).map(m => m.calories))
-  const mealIntake = sum(tasks.meals
-    .filter(m => done(`meal:${m.id}`) && m.calories != null).map(m => m.calories))
-  const tempIntake = sum(tempTasks[dateStr].filter(t => t.type !== 'exercise').map(t => t.calories))
-  const extraIntake = sum((extraFoods[dateStr] || []).map(f => f.calories))
-  const planBurn = sum(tasks.exercises
-    .filter(e => done(`exercise:${e.id}`)).map(e => e.caloriesBurned || 0))
-  const tempBurn = sum(tempTasks[dateStr].filter(t => t.type === 'exercise').map(t => t.calories))
-  const exerciseBurn = planBurn + tempBurn
-  const intake = mealIntake + tempIntake + extraIntake
-  const deficit = (baseBurn + exerciseBurn) - intake
-  return { baseBurn, exerciseBurn, intake, deficit, ... }
-}
+baseBurn(settings) = settings.bmr > 0 ? round(settings.bmr × 1.2) : settings.tdee
+
+dailySummary(dateStr):
+  tasks      = getTasksForDate(plan, dateStr)
+  mealIntake = Σ 已打卡且 calories != null 的计划餐热量
+  tempIntake = Σ tempTasks[date] 中 type != 'exercise' 的热量
+  extraIntake= Σ extraFoods[date]（已废弃，兼容保留）
+  planBurn   = Σ 已打卡运动的 caloriesBurned
+  tempBurn   = Σ tempTasks[date] 中 type == 'exercise' 的热量
+  intake     = mealIntake + tempIntake + extraIntake
+  deficit    = (baseBurn + planBurn + tempBurn) − intake
 ```
 
-约定：缺口为正是好事；未打卡的计划餐不计入已摄入（用户漏打卡时缺口虚高，属可接受语义，页面注明「已打卡口径」）。临时加餐（tempTasks type='snack'）添加即计入摄入；临时锻炼（type='exercise'）添加即计入消耗，均不参与完成度。统计页日历点开近 3 天（前天～今天）支持补录：点击餐食/运动行补打卡、补录计划外加餐或锻炼、删除临时记录，更早的日期只读。
+约定：缺口为正是好事；未打卡的计划餐不计入已摄入（用户漏打卡时缺口虚高，页面注明「已打卡口径」）。临时加餐/加练添加即计入，均不参与完成度。
 
-打卡天口径：某日存在任一记录（打卡 / 临时任务 / 当日热量覆盖 / 旧加餐）即视为「打卡天」，完全无记录才算中断。连续打卡/累计打卡按此计算（与计划是否全部完成无关）。本周图为中轴 0 线形式：正缺口向上绿柱、超标向下橙柱（与近 14 天趋势图一致），不展示计划完成度（完成细节在月历点开查看）。
+**打卡天口径**：某日存在任一记录（打卡 / 临时任务 / 当日热量覆盖 / 旧加餐）即视为「打卡天」，完全无记录才算中断。连续打卡/累计打卡按此计算（与计划是否全部完成无关）。
 
-### 7.3 提醒调度（utils/reminder.js，详见第 8 节）
+> ⚠️ **v1.0.2 起历史固化（已落地，原缺陷已修复）**：
+> ① 基础消耗按日取值——`dailySummary` 改调 `baseBurnForDate(settings, records, dateStr)`（沿用链：最近 ≤date 且 bmr>0 的体重记录 ×1.2 → 基准固化 baseline → 现状口径 fallback），录体重/改估算器不再漂移历史缺口，详见 [weight-design.md](weight-design.md) §3；
+> ② 当日条目快照——`dailySummary`/`dayDetail`/月历等对该日已有 `dayEntries` 时**只读快照**（完成度/摄入/运动消耗与当前计划无关），无快照日走旧口径 fallback，详见 [day-snapshot-design.md](day-snapshot-design.md) §4.2。
+
+### 7.3 提醒调度（services/reminder_service.dart，详见第 8 节）
 
 ```
-reschedule():
-  if !settings.reminderEnabled → clearAll(); return
-  keys = []
+ensureScheduled(plan, settings):        // 增量调度：今天+明天
+  if !settings.reminderEnabled → return
   for date in [today, tomorrow]:
-    for task in getTasksForDate(date) where reminder==true 且未被删除:
-      fireAt = date + task.time - reminderAdvance 分钟
-      delaySec = (fireAt - now) / 1000
-      if delaySec > 0:
-        plus.push.createMessage(正文, payload, { title, delay: delaySec, cover: false })
-        keys.push(`${date}|${taskType}|${task.id}`)
-  reminderState = { lastScheduledDate: today, scheduledKeys: keys }
+    for task in getTasksForDate(date) where reminder==true:
+      fireAt = 日期 + task.time − reminderAdvance 分钟
+      if fireAt 已过 → 跳过
+      key = "date|time|advance|type|id"；本进程已调度（_scheduledKeys）→ 跳过
+      zonedSchedule(...)；单日上限 30 条
+  清理本次未涉及且非未来日期的 key（防膨胀）
+
+fullReschedule(plan, settings):         // 全量重排：cancelAll（异常吞掉不阻塞）→ 清 keys → ensureScheduled
 ```
 
-触发时机：`App.onLaunch`、`App.onShow`（仅当日期变更或 reminderState 脏标记时全量重排）、导入成功后、设置变更后。
-上限保护：单日调度 ≤ 30 条，超出截断并 console.warn（正常计划远达不到）。
+触发时机：`main.dart` 启动兜底（`onLaunch`）、导入/生成计划后、提醒设置变更后。通知 id 按 `date+id` 稳定哈希（0-999），重复调度直接覆盖不叠加。
 
-### 7.4 统计聚合
+### 7.4 统计聚合（utils/calorie_utils.dart）
 
-- 周视图：取本周一到今天，逐日 `dailySummary` + 完成度 `done数/计划数`
-- 月历：逐日完成率 `rate = done/total`；着色阈值 0 / (0,1) / =1；无任务=灰
-- 连续完成：从今天往回数，`done==total && total>0` 连续天数（今天未全部完成则从昨天起算）
+- 周视图 `weekData`：本周一到今天，逐日 `dailySummary` + 完成度。
+- 月历 `monthData`：逐日完成率着色；无任务=灰；开始前=灰。
+- 连续完成 `streakDays`：从今天往回数，`done==total && total>0` 连续天数（今天未全部完成则从昨天起算）。
+- 趋势 `trendData`（近 14 天正负条）、`dayDetail`（单日明细）、`monthReview`（月度回顾）口径见 5.6 节。
 
 ## 8. 提醒技术方案（关键风险点）
 
-### 8.1 方案 A（v1.0 采用）：plus.push 本地消息
+### 8.1 采用方案：flutter_local_notifications（v2.0 现行）
 
-HTML5+ 的 `plus.push.createMessage(content, payload, options)` 支持本地延迟通知，`options.delay` 单位秒：
+`zonedSchedule` 注册到系统 **AlarmManager**（`AndroidScheduleMode.exactAllowWhileIdle`），相比旧版 plus.push 的本质提升：
 
-```js
-plus.push.createMessage(
-  `${task.name}${task.note ? '｜' + task.note : ''}`,
-  { date, type: 'meal' | 'exercise', id: task.id },          // payload，点击时取回
-  { title: type === 'meal' ? '用餐提醒' : '运动提醒',
-    cover: false, delay: delaySec, sound: 'system' }
-)
-plus.push.addEventListener('click', msg => { /* 跳转 today?focusId=... */ })
-```
+| 能力 | plus.push（旧） | flutter_local_notifications（现） |
+|------|----------------|--------------------------------|
+| 重启后调度 | 可能丢失，需开 App 恢复 | **系统级自动恢复**（App 仍做启动兜底重算） |
+| 精确闹钟 | 依赖 ROM | exactAllowWhileIdle（未授权自动降级 inexact，偏差数分钟仍可提醒） |
+| 通知渠道 | 不可控 | 自建渠道 `jianfei_dazi_reminder`（计划提醒，importance high） |
 
 要点与限制：
-- manifest「App 模块配置 → Push(消息推送)」勾选，**不配置任何 push 服务**，仅用本地消息能力（打包前真机验证：标准基座即可测，无需自定义基座）
-- Android 13+ 需运行时申请 `POST_NOTIFICATIONS`：`plus.android.requestPermissions`，设置页提供状态检测与申请按钮
-- **手机重启后已注册消息可能丢失**：接受该限制，App 任意一次启动/前台化即恢复当天及明日调度（设置页与文档说明）
-- 部分国产 ROM（MIUI/EMUI/ColorOS）需用户手动允许「自启动 + 电池不限制」，否则延迟消息被系统吞：设置页放图文引导（FR2.7）
 
-### 8.2 方案 B（备用，方案 A 真机不可靠时切换）
+- Android 13+ 运行时申请 `POST_NOTIFICATIONS`：`requestNotifPermission()` / `checkNotifPermission()`，设置页提供状态检测与申请按钮（插件 manifest 自动合并权限声明，主 Manifest 无需手写）。
+- 精确闹钟权限（部分 ROM 默认关闭「闹钟和提醒」）：`zonedSchedule` 抛异常时降级 inexact 重试（reminder_service 内已实现），时间可能偏差数分钟。
+- 通知点击：payload `{"focus":"meal:xxx"}` → `NotificationTapBus` → 定位今日页卡片。
+- 旧版插件残留的坏通知 JSON 可能导致 `cancelAll` 反序列化失败：已捕获并忽略（坏数据 cancel 不到也无妨，同 id 重调度会覆盖）。
+- 部分国产 ROM（MIUI/EMUI/ColorOS）仍需用户手动允许「自启动 + 省电策略无限制 + 通知类别开启」：设置页图文引导（FR2.7）。
 
-插件市场本地通知插件（如 Ba-LocalNotification 类，基于 AlarmManager + 广播接收器 + 开机重注册）：
-- 优点：精确闹钟、重启自恢复、通知渠道可控
-- 成本：需自定义基座调试 + 云打包时勾选插件；API 面换成插件 API（reminder.js 内部替换，页面无感）
-- 决策点：Phase 4 真机测试若「杀进程+息屏 30 分钟」场景提醒到达率 < 100%，立即切换
+### 8.2 旧版方案归档
 
-### 8.3 否决项
+uni-app 时代的 plus.push 本地消息与插件市场方案（v1.x 方案 A/B）随迁移废弃，详见 git 历史 design.md v1.x 第 8 节。
 
-- Native.JS 直接调 AlarmManager：无法注册静态广播接收器，重启后无法恢复，且代码侵入大
-- uni-app `uni.` 无本地定时通知 API（`uni.createPushMessage` 为 App 侧即时消息）
-
-## 9. AI 热量查询设计（utils/ai.js）
+## 9. AI 热量查询设计（services/ai_service.dart）
 
 ### 9.1 请求契约（OpenAI 兼容）
 
 ```
 POST {endpoint}/chat/completions
 Authorization: Bearer {apiKey}
-{ "model": model,
-  "temperature": 0.2,
-  "messages": [
-    { "role": "system", "content": SYSTEM_PROMPT },
-    { "role": "user",   "content": "用户输入的食物描述" } ] }
+{ "model": model, "temperature": 0.2, "messages": [...], "stream": false }
 ```
 
-SYSTEM_PROMPT：
+提示词组（常量内置于 ai_service.dart）：热量查询（kCalQuerySys，返回 `{name, calories, unit, confidence}`）、运动消耗估算（kBurnEstSys，按体重/时长估算并返回拆解）、计划生成（复用 templates.dart 的 kAiPrompt + 格式说明）、文档转计划（generatePlan）。所有响应过统一容错解析：剥离 markdown 围栏 → 正则提取首个 JSON → 数值范围校验（热量 0-20000）。
 
-```
-你是食物热量估算助手。用户描述一份食物或套餐，请估算总热量。
-严格只返回一个 JSON 对象，不要输出任何其他文字：
-{"name":"食物名","calories":总热量整数kcal,"unit":"份量描述","confidence":0到1}
-描述含多种食物时合并估算总值。无法判断时 confidence 给低值。
-```
+### 9.2 服务商预设（models/settings.dart `kAiProviders`）
 
-### 9.2 服务商预设
+| 服务商 | endpoint | 默认模型 |
+|--------|----------|----------|
+| DeepSeek（默认） | `https://api.deepseek.com` | `deepseek-v4-flash` |
+| Kimi（月之暗面） | `https://api.moonshot.cn/v1` | `kimi-k3` |
+| MiMo（小米） | `https://api.xiaomimimo.com/v1` | `mimo-v2.5` |
+| MiniMax | `https://api.minimaxi.com/v1` | `MiniMax-M3` |
+| 自定义 | 用户填 | 用户填 |
 
-| 服务商 | endpoint | 默认模型 | 备注 |
-|--------|----------|----------|------|
-| 智谱 AI | `https://open.bigmodel.cn/api/paas/v4` | `glm-4-flash` | 有免费模型，推荐默认 |
-| DeepSeek | `https://api.deepseek.com` | `deepseek-v4-flash` | 旧名 `deepseek-chat`/`deepseek-reasoner` 已于 2026-07-24 退役，启动时自动迁移 |
-| 阿里通义 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus` | |
-| 自定义 | 用户填 | 用户填 | 任意 OpenAI 兼容网关 |
+退役模型自动迁移（`kRetiredModelMap`）：`deepseek-chat → deepseek-v4-flash`、`deepseek-reasoner → deepseek-v4-pro`。
 
-### 9.3 容错解析与失败处理
+### 9.3 函数面与容错
 
-1. 剥离 markdown 代码块围栏 → 正则 `\{[\s\S]*\}` 提取首个 JSON → `JSON.parse`，失败再试 `eval` 前置校验（仅允许数字/字符串/中英文）
-2. 校验 `calories` 为 0-20000 数字，否则视为失败
-3. 网络失败/超时(15s)/未配置：分别提示「网络异常，请重试」「识别失败，请手动输入」，一律可回退手动录入
-4. **未配置 AI 时统一弹出 AI 配置弹层**：服务商预设 + 接口地址 + API Key + 模型 + 测试连接，保存后立即继续原操作（不跳转设置页）。所有 AI 入口共用同一弹层——导入页生成 / 加餐热量估算 / 今日实际摄入估算 / 运动消耗估算 / 引导页生成计划；引导页额外给「暂不，手动模式」，手填永远兜底。Flutter 版实现：`lib/widgets/ai_config_sheet.dart`（`showAiConfigSheet` + `ensureAiConfigured` 前置校验）
-5. Key 仅存本地 storage，不打印日志
+| 函数 | 用途 |
+|------|------|
+| `queryCalorie(desc)` | 食物热量查询（加餐页/AI 估算/重估） |
+| `estimateMeal(...)` | 计划生成前的单餐估算（引导/导入编辑态） |
+| `estimateBurn(desc, weight, ...)` | 运动消耗估算（带体重）；**v1.0.1 扩展 gender/age/height 个人基础信息**（weight-design.md §6） |
+| `generatePlan(doc)` | 文档转计划 JSON（导入页 AI 模式） |
+| `testAI(config)` | 测试连接（固定询问「一个水煮蛋的热量」） |
+| `queryBalance()` | DeepSeek 账户余额（仅 deepseek 端点显示） |
 
-### 9.4 测试连接
+- 失败处理：自动重试 1 次 → 中文错误（网络异常/识别失败/未配置），手动录入永远兜底。
+- **未配置 AI 时统一弹出 AI 配置弹层**（`widgets/ai_config_sheet.dart`：`showAiConfigSheet` + `ensureAiConfigured` 前置校验，保存后立即继续原操作）。所有 AI 入口共用：导入生成 / 加餐查询 / 今日实际摄入估算 / 运动消耗估算 / 引导页生成。
+- 用量统计：chat 响应 `usage` 字段埋点入 `apiUsage`；余额查询弹窗同屏展示账户余额 + 本 App 用量（次数/tokens/估算费用，按 DeepSeek 牌价现算）。
+- Key 仅存本地 storage，不打印日志。
 
-设置页「测试连接」发送固定询问「一个水煮蛋的热量」，成功标准：HTTP 200 且解析出合法 JSON，展示返回值。
+## 10. 内置食物库（data/food_db.dart）
 
-## 10. 内置食物库（data/food-db.js）
+- 82 条 `FoodItem`：`{ name, alias[], calories, unit, tags[] }`。
+- 搜索：name/alias/tags 不区分大小写包含匹配，返回前 20 条；中文/拼音首字母不要求。
+- 覆盖：KFC 单品/套餐、麦当劳、常见外卖主食（黄焖鸡/麻辣烫/螺蛳粉等）、轻食、饮品零食、通用（米饭/水煮蛋/牛奶等）。数值为公开资料估算值，App 内展示「≈」前缀。
 
-条目结构：
+## 11. UI 设计规范（theme/app_theme.dart）
 
-```js
-{ id: 'kfc-001', name: '香辣鸡腿堡套餐（汉堡+中薯+中可乐）',
-  alias: ['肯德基', 'kfc套餐', '香辣鸡腿堡'],
-  calories: 1100, unit: '1份', tags: ['kfc', '快餐', '套餐'] }
-```
+色彩（`AppColors`，柔和化复刻旧版配色）：
 
-搜索：name/alias/tags 不区分大小写包含匹配，返回前 20 条。
-
-种子数据约 60-80 条（数值为公开资料估算值，App 内展示「≈」前缀）：
-
-| 分类 | 示例条目（热量为估算） |
-|------|------------------------|
-| KFC 单品 | 香辣鸡腿堡≈590、新奥尔良烤鸡腿堡≈500、劲脆鸡腿堡≈590、吮指原味鸡(1块)≈240、黄金鸡块(5块)≈270、薯条(中)≈330、蛋挞≈290、老北京鸡肉卷≈490、可乐(中)≈180、九珍果汁≈160 |
-| KFC 套餐 | 香辣鸡腿堡套餐≈1100、新奥尔良烤鸡腿堡套餐≈1000、儿童套餐≈600 |
-| 麦当劳 | 巨无霸≈550、麦辣鸡腿堡≈570、麦乐鸡(6块)≈250、薯条(中)≈330、套餐≈1100 |
-| 常见外卖主食 | 黄焖鸡米饭(大份)≈750、麻辣烫(一碗)≈700、蛋炒饭≈700、炒河粉≈750、螺蛳粉≈750、兰州牛肉面≈650、沙县拌面+炖罐≈600、猪脚饭≈850、麻辣香锅(1人份)≈900 |
-| 轻食 | 鸡胸肉沙拉≈350、金枪鱼三明治≈350、牛肉谷物碗≈500、关东煮(6串)≈300 |
-| 饮品零食 | 珍珠奶茶(全糖大杯)≈450、美式咖啡≈10、拿铁(大杯)≈230、薯片(1包)≈550、巧克力(1板)≈550、可乐(330ml)≈140、啤酒(1瓶)≈150 |
-| 通用 | 白米饭(1碗200g)≈230、水煮蛋≈70、纯牛奶(250ml)≈160、黑咖啡≈5 |
-
-> 数值随官方营养信息更新，dev 阶段以最新公开数据核对一遍；表结构预留 `dataVersion` 便于后续扩充。
-
-## 11. UI 设计规范
-
-色彩（uni.scss 变量）：
-
-```scss
-$primary: #00B578;        // 主色·健康绿（打卡/强调）
-$primary-light: #E6F7F0;  // 打卡完成底色
-$accent: #FF8F1F;         // 热量橙（数字/加餐）
-$danger: #FA5151;         // 超标红
-$warning: #FF9F0A;        // 过猛/临界橙
-$text-1: #17181A; $text-2: #666C7A; $text-3: #B0B6C1;
-$bg: #F6F7FB; $card: #FFFFFF; $line: #EEF0F4;
+```dart
+primary      #5BA47C  // 主绿（打卡/强调/按钮）
+primaryBg    #E9F3ED  // 浅绿底（chips/完成态卡片）
+orange       #DB9558  // 柔和橙（时间/kcal/警示数字）
+danger       #E25C50  // 红（超标/危险操作）
+bg           #F6F6F3  // 页面背景（米白）
+card         #FFFFFF  // 卡片
+text         #3C3C3E / textSub #A6A6AA / textFaint #C6C6C4
+chartGray    #D8DAD6  // 图表无数据
 ```
 
-字号/间距（rpx）：页面标题 36-40、卡片标题 30、正文 28、辅助 24、热量大数字 56；卡片圆角 20、按钮胶囊圆角 44、页面左右边距 32、卡片间距 20、卡片内边距 24。
+主题取向（性能优先，低端机优化）：
 
-组件规范：
-- **MealCard / ExerciseCard**：左侧时间竖排（HH:mm + 类型 emoji），中间名称+热量（`500 kcal` 或 `自由餐`徽标），右侧打卡按钮（56rpx 圆形，未打卡描边、已打卡实心+对勾）；note 可展开一行
-- **CalorieSummary**：缺口大数字居中着色（FR4.6 阈值），下方 2×2 网格（目标/已摄入/消耗/运动）
-- **EmptyState**：插画（emoji 即可）+ 一句话 + 主操作按钮
-- 列表交互统一 600ms 内反馈；危险操作（清空数据）用模态二次确认
+- `useMaterial3: false`；关闭水波纹（`NoSplash`），点击反馈用一次性淡灰高亮（列表滚动不再持续计算 splash 动画）。
+- 页面转场统一 160ms 淡入（`FastPageTransitionsBuilder` + `AppRoutes.fade`），替代默认 300ms 位移+缩放。
 
-图标：emoji + 文字为主（🍚🏃📋⚙️ 等），不引入字体图标库与图片资产；应用图标由用户提供的 jpg 经 sips 生成各尺寸 PNG 放 `static/icons/`。
+通用组件（对应旧版 class/组件）：`AppCard`（圆角 16 白卡）、`SectionTitle`、`Tag`（default/green/orange/red）、`PrimaryButton` / `PlainButton` / `DangerButton`（胶囊 44/42 高）、`DashedAddButton`（虚线胶囊「＋ 今日加餐/导入计划」）、`EmptyState`（emoji + 文案 + 副文案，页面级垂直居中）、`DashedBorderContainer`（CustomPaint 虚线描边）。
 
-## 12. manifest.json 关键配置
+字号：页面标题 19 / 区块标题 15 / 正文 13-14 / 辅助 11-12 / 缺口大数字按汇总卡规格。图标：emoji + 文字为主（🍚🏃📋⚙️），不引入字体图标库；应用图标用用户 jpg 生成的 PNG（`android/app/src/main/res/mipmap-*`）。
 
-```jsonc
-{
-  "name": "知轻",
-  "appid": "",                      // HBuilderX 打开项目时生成（需登录 DCloud 账号）
-  "versionName": "1.0.0",
-  "vueVersion": "3",
-  "app-plus": {
-    "modules": { "Push": {} },      // 本地消息能力（不配 push 服务）
-    "distribute": {
-      "android": {
-        "permissions": [
-          "<uses-permission android:name=\"android.permission.POST_NOTIFICATIONS\"/>"
-        ],
-        "minSdkVersion": 26,        // Android 8.0+
-        "targetSdkVersion": 34
-      },
-      "icons": {
-        "android": {
-          "hdpi": "static/icons/icon-72.png",
-          "xhdpi": "static/icons/icon-96.png",
-          "xxhdpi": "static/icons/icon-144.png",
-          "xxxhdpi": "static/icons/icon-192.png"
-        }
-      }
-    }
-  }
-}
-```
+## 12. Android 工程配置
+
+| 项 | 值 |
+|----|-----|
+| 包名 applicationId | `com.colorh.jianfei_dazi`（一旦定了不改） |
+| 应用名 | 知轻（Manifest `android:label`） |
+| compileSdk | 36（`android/build.gradle.kts` 对所有插件模块强制，file_picker 等旧插件硬编码 34 的冲突已统一拉齐） |
+| 版本号 | pubspec `version: 1.0.0+1`（versionName+versionCode；v1.0.1 计划 `1.0.1+2`） |
+| 权限 | `INTERNET`（AI 请求，release 必需）；`WRITE_EXTERNAL_STORAGE maxSdkVersion=28`（Android 9 及以下写 Download）；通知权限运行时申请（插件合并） |
+| Download 写入 | Android 10+ 走 MediaStore（MainActivity.kt 原生方法，免权限）；Android 9 及以下直写文件路径 |
+| 依赖镜像 | `android/.local-maven-repo`（本地 Maven 仓库，含 Flutter 引擎 AAR 全系列；`build.gradle.kts` allprojects 置于仓库链最前，离线/弱网环境可稳定构建） |
 
 ## 13. 构建与发布
 
-1. HBuilderX 云打包：发行 → 原生 App-云打包 → Android → 使用公共测试证书（个人使用足够）→ 得到 APK
-2. 包名 `com.colorh.jianfei`（一旦定了不改）
-3. 安装：APK 直接传手机安装；开启「允许安装未知来源」
-4. 安装后首跑检查：通知权限弹窗、一键去白名单引导
+1. 构建：`flutter build apk --release` → 产物 `build/app/outputs/flutter-apk/app-release.apk`。
+2. 本机构建要点（Windows/macOS 通用）：确保 `~/.gradle` 中 io.flutter 引擎 jar 按 debug/release 分别缓存完整；缺 jar 时按 `download.flutter.io` 模板**串行单连接**补入本地镜像仓库后再构建（详见项目记忆，勿并行下载）。
+3. 测试：`flutter test`（需先清代理环境变量 `HTTP(S)_PROXY` 等，否则 flutter_tester 的 localhost WebSocket 握手被劫持导致全部测试连不上）；`flutter analyze` 不受影响。
+4. 安装：APK 直接传手机安装；开启「允许安装未知来源」。
+5. 安装后首跑检查：通知权限弹窗、省电白名单引导、自动备份开关（默认关）。
 
 ## 14. 风险与对策
 
 | 风险 | 等级 | 对策 |
 |------|------|------|
-| plus.push 延迟消息在部分 ROM 不可靠 | 高 | Phase 4 首周真机矩阵测试；不可达即切方案 B 插件（第 8.2 节） |
-| 重启后提醒丢失 | 中 | 接受+文档说明；任一次打开 App 即恢复；方案 B 可根治 |
-| AI 返回非严格 JSON | 中 | 强容错解析（9.3）+ 热量数值可编辑 + 手动录入兜底 |
-| 用户未配 AI Key | 低 | 内置库覆盖高频外卖/KFC；手动录入永不缺席 |
-| 计划 JSON 被生成得不规范 | 中 | 校验错误中文定位 + 模板页提示词强制「只输出 JSON」 |
+| 部分 ROM 精确闹钟/后台限制导致提醒偏差或延迟 | 中 | exact→inexact 自动降级仍可提醒；设置页省电白名单图文引导；启动兜底重算 |
+| AI 返回非严格 JSON | 中 | 强容错解析（9.3）+ 数值可编辑 + 手动录入兜底 |
+| 用户未配 AI Key | 低 | 内置库 82 条覆盖高频外卖/KFC；手动录入永不缺席 |
+| 计划 JSON 被生成得不规范 | 中 | validateRaw 中文错误定位 + normalizePlan 自动补默认 + 重试 1 次 |
+| 老版本备份读 1.0.1+ 备份忽略新键 | 低 | formatVersion 保持 1，`_normalizeBackup` 白名单模式天然兼容（weight-design.md §7 已知限制） |
+| 插件 compileSdk 冲突（file_picker 等硬编码 34） | 已解决 | build.gradle.kts 强制全插件 compileSdk=36 |
 
-## 15. 首次使用引导 & 使用指引（v1.1 增补）
+## 15. 首次使用引导 & 使用指引（v1.0 已实现）
 
-完整设计方案与页面线框见 [guide-design.md](guide-design.md) v0.2（已评审），本章记录技术要点。**范围硬约束：只增不改**——对现有文件的触碰仅限 3 个最小接入点 + 1 处末尾追加（15.1），现有函数/页面行为零变化。
+设计方案见 [guide-design.md](guide-design.md) v0.2，本章记录 Flutter 实际落点。
 
-### 15.1 接入点清单（全部触碰范围）
+### 15.1 首启判定与引导状态（providers/onboarding_provider.dart）
 
-| # | 文件 | 改动 | 不触碰 |
-|---|------|------|--------|
-| ① | `pages.json` | 注册 `pages/onboarding/onboarding`（custom 导航栏）与 `pages/guide/guide` | 现有 5 个页面配置 |
-| ② | `pages/index/index.vue` | onShow 开头：`if (shouldOnboard()) { uni.redirectTo('/pages/onboarding/onboarding'); return }` | 现有渲染/tab/focus 逻辑 |
-| ③ | `components/tabs/settings.vue` | 「关于」分组上方插入「帮助」分组（使用指引入口行） | 现有 5 个分组 |
-| ④ | `utils/ai.js` | 文件**末尾**追加 `generatePlanFromInput()`（内含 GUIDE_PLAN_PROMPT） | 现有全部函数（物理隔离：追加区与原代码间以注释分界） |
+- 独立存储键 `onboardingState`：`{ done, profile }`；`done` 仅在确认完成/跳过时置 true。
+- `shouldOnboard()` = `!done && !isLegacyUser()`；老用户豁免：有计划 / 有打卡 / `bmr > 0` / 有 AI Key 任一命中即静默置 done，绝不打扰。
+- 「清空全部数据」不重弹引导（数据复位与引导重看解耦）；重走引导走指引页「重新体验首次引导」（主动行为，不清数据，确认完成走增量合并不破坏现有计划）。
 
-### 15.2 首启判定与引导状态（store/onboarding.js，新增）
+### 15.2 引导页（pages/onboarding/onboarding_page.dart）
 
-```js
-// 独立存储键，settings.js 零改动
-const KEY = 'onboardingState'
-// { done: false, profile: { gender, age, height, weight, activity } }
+- 5 步流转：欢迎 → 基础信息（实时算 BMR/基础消耗/参考总消耗，`estimateBmr` 与设置页同口径；即存即持久化）→ 计划录入（逐条 / 整日一句话双模式，草稿内存态不落盘）→ AI 生成（未配 Key 弹页内精简配置层，「暂不」转手动；失败重试 1 次 + 手动兜底）→ 编辑确认（行内编辑 + 单条/全部 AI 重估 + 汇总条实时着色 + 删除撤销）→ 确认完成（importPlan 增量合并 + finish → 回首页）。
+- 推荐目标摄入 = `round(BMR × activity) − 400`，下限保护（女 1200 / 男 1500）。
+- 重估复用现有 `queryCalorie` / `estimateBurn`（体重取引导 profile）；token 成本走 apiUsage 统计。
 
-export function shouldOnboard() { ... }   // !done && !isLegacyUser()
-function isLegacyUser() {                 // 升级豁免：任一命中即老用户
-  return hasPlan()
-    || Object.keys(uni.getStorageSync('checkRecords') || {}).length > 0
-    || settings.bmr > 0
-    || !!settings.ai.apiKey
-}
-export function finishOnboarding(profile) // done = true + persist
-export function skipOnboarding()          // done = true（跳过）
-export function rerunOnboarding()         // done = false（指引页「重新体验」用）
-```
+### 15.3 使用指引（pages/guide/guide_page.dart + data/guide_articles.dart）
 
-- Step1 保存：`settings.update({ tdee: 基础消耗, bmr, dailyCalorieTarget })`（现有方法）+ `onboardingState.profile`。
-- 「清空全部数据」不改 `clearAll()`：清空后 done 仍 true 不自动重弹；重走引导走指引页 `rerunOnboarding()`（主动行为）。
-- 推荐目标摄入 = `round(BMR × activity) − 400`，下限 clamp（女 1200 / 男 1500）。
-
-### 15.3 引导页（pages/onboarding/onboarding.vue，新增）
-
-- 5 步流转：`step: 0欢迎 → 1基础信息 → 2计划录入 → 3AI生成 → 4编辑确认 → 5完成redirectTo`；组件内 v-if 切换，进度圆点。
-- **Step1**：字段 UI 自写；计算直接 import 现有 `estimateBmr`（口径与设置页估算器一致）；即存即持久化（用户中断后重进预填）。
-- **Step2 双模式**：模式 A 逐条（餐类 emoji chips / 时间默认 07:30·12:00·18:00·15:30 / 星期 chips 对应 `days`）；模式 B 整日一句话 textarea；共用同一份 draft（`{ meta, meals, exercises }` 草稿结构，内存态不落盘）。
-- **Step3**：`hasAIConfig()` 检测 → 未配置弹页内精简配置层（服务商 picker + Key + 测试连接，调现有 `switchProvider/updateAI/testAI`）→「暂不」转手动；AI 调用 `generatePlanFromInput`（15.4）→ 结果过 `normalizePlan` → 进 Step4。loading 态文案轮播 + 90s 超时（与导入页 generatePlan 一致）。
-- **Step4**：条目卡行内编辑（名称/时间/星期/热量或时长/餐类）+ 删除（撤销 toast 5s）+ 追加；dirty 标记 + 单条重估（`queryCalorie` / `estimateBurn(desc, profile.weight)`）；「全部重估」对 dirty 条目并发 2 路逐条执行，失败保留原值；汇总条本地实时算（摄入Σ/消耗Σ/预计缺口，FR4.6 着色复用 `numClass` 同款阈值）。
-- **Step5**：`importPlan(draft)`（现有：增量合并 + applyMeta + fullReschedule）→ `finishOnboarding()` → redirectTo 首页。**重跑场景安全性**：importPlan 增量合并天然幂等（同 id 更新），打卡记录不受影响。
-- 物理返回键：Step0 弹确认「退出引导？下次还会出现」（确认退出不置 done）；其余步骤返回上一步。
-
-### 15.4 引导计划生成（utils/ai.js 追加，现有函数零改动）
-
-```js
-// ===== v1.1 追加区（引导计划生成）——以上代码不做任何修改 =====
-const GUIDE_PLAN_PROMPT = `你是减脂计划生成助手。根据用户的饮食/运动描述与个人资料，
-生成结构化计划 JSON。严格只输出一个 JSON 对象：
-{"version":"1.0","meta":{"planName":"我的减脂计划","dailyCalorieTarget":用户目标},
- "meals":[{"type":"breakfast|lunch|dinner|snack","name":"...","time":"HH:mm",
-           "calories":整数kcal或null(自由餐),"days":[1-7]或[],"note":"..."}],
- "exercises":[{"name":"...","time":"HH:mm","duration":分钟,"caloriesBurned":整数,
-               "days":[],"note":""}]}
-要求：按描述拆分餐次（早/午/晚/加餐）；时间为常见用餐/训练时间；热量按中国常见
-食物份量估算；days 空数组=每天；不遗漏用户提到的任何条目。`
-
-export function generatePlanFromInput(inputText, profile) {
-  return chat([
-    { role: 'system', content: GUIDE_PLAN_PROMPT },
-    { role: 'user', content: '用户资料：性别/体重/目标摄入…；描述：' + inputText }
-  ], 90000).then(content => { /* extractJsonObj + version 修正，同 generatePlan */ })
-}
-```
-
-- 失败处理：自动重试 1 次 → 中文错误（复用 `httpErrorMsg`）+「重试 / 手动模式」。
-- 重估**不新增函数**：页面直接调现有 `queryCalorie`（餐食）与 `estimateBurn(desc, weight)`（运动，体重来自 onboardingState.profile）。
-- token 成本：整日生成单次约 1~2k tokens，走现有 `apiUsage` 统计。
-
-### 15.5 使用指引（pages/guide/guide.vue + data/guide.js，新增）
-
-- 内容源接口：
-
-```ts
-interface GuideStep { img?: string; marks?: { x: number; y: number; label: string }[]; text: string }
-interface GuideArticle { id; icon; title; summary; steps: GuideStep[] }
-// 8 篇：onboarding / checkin / import / add-snack / add-exercise / ai-config / reminder / stats
-```
-
-- 页面两态：列表（条目卡）⇄ 详情（v-if 切换；步骤卡 = 截图 `uni.previewImage` 全屏 + 文字 + 序号标注绝对定位叠加）；底部上一篇/下一篇。
-- 「▶ 重新体验首次引导」：`rerunOnboarding()` + redirectTo 引导页（仅重跑，不清数据）。
-- 截图素材制作（开发阶段一次性执行）：HBuilderX 运行到 Chrome（H5，`#ifdef APP-PLUS` 代码自动剔除）→ DevTools 手机视口 412×915 → 预置演示数据（template.json 导入 + 造打卡/加餐记录）→ 按 guide-design.md §6.1 的 12 张清单截图 → `static/guide/`。若 H5 与真机视觉差异不可接受，改真机截图（其余流程不变）。
-- 加餐/加练引导 = 归档内「add-snack」「add-exercise」「checkin」三篇；现有页面不加任何轻引导（范围硬约束）。
-
-### 15.6 边界行为汇总
-
-| 场景 | 行为 |
-|------|------|
-| 老用户升级 | isLegacyUser 命中 → 静默置 done，不弹 |
-| 引导中杀 App | 基础信息已存；草稿丢弃，重进 Step1 预填 |
-| 跳过引导 | done 置位不再弹；指引页可回看 |
-| 清空全部数据 | 不改 clearAll；done 仍 true；重走引导走指引页主动入口 |
-| 重跑引导 + 已有计划 | importPlan 增量合并幂等，打卡记录保留 |
-| AI 失败/未配 Key | 重试 1 次 → 手动模式兜底；热量手填/自由餐语义不变 |
-| 卸载丢数据 | 低 | v1 接受；P1 导出备份 |
-| 引导 AI 生成结构不稳定（整日一句话模式字段多） | 中 | 复用 normalizePlan 校验管线 + 字段自动补默认 + 重试 1 次 + 手动模式永远兜底（第 15 章） |
+- 8 篇图文：onboarding / checkin / import / add-snack / add-exercise / ai-config / reminder / stats；列表态（条目卡）⇄ 详情态（分步图文 + 全屏预览 + 底部上一篇/下一篇）。
+- 入口：设置页「帮助」分组；截图素材为 Flutter 模拟器/真机截图（旧版 HBuilderX H5 截图方案随迁移废弃）。
+- 加餐/加练引导 = 归档内三篇图文承载，现有页面零轻引导（范围硬约束延续）。

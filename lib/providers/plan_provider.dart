@@ -1,5 +1,7 @@
-/// 计划状态层（对应旧版 plan.js）：reactive 单例 + 持久化 + 提醒联动
+/// 计划状态层（对应旧版 plan.js）：reactive 单例 + 持久化 + 提醒联动 + 当日快照同步
 library;
+
+import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
@@ -15,13 +17,24 @@ class PlanProvider extends ChangeNotifier {
   final StorageService _storage;
   final ReminderService _reminder;
   final SettingsProvider _settings;
+  final RecordProvider _records;
 
   PlanData plan;
 
-  PlanProvider(this._storage, this._reminder, this._settings, RecordProvider _)
+  PlanProvider(this._storage, this._reminder, this._settings, this._records)
       : plan = PlanData.empty() {
     _load();
+    // F11：启动即确保旧数据已迁移为快照、今天快照与计划一致
+    unawaited(_bootstrap());
   }
+
+  Future<void> _bootstrap() async {
+    await _records.migrateIfNeeded(plan);
+    await _records.syncDayEntries(todayStr(), plan);
+  }
+
+  /// 计划结构性变更后：仅同步今天的快照（历史快照永不触碰）
+  Future<void> _syncToday() => _records.syncDayEntries(todayStr(), plan);
 
   void _load() {
     final d = _storage.readMap(StorageService.kPlan);
@@ -72,6 +85,7 @@ class PlanProvider extends ChangeNotifier {
     await _persist();
     await _settings.applyMeta(np.meta);
     await _reminder.fullReschedule(plan, _settings.settings);
+    await _syncToday();
   }
 
   /// 增量合并：已有 id 覆盖更新（保留原位置），新 id 追加
@@ -129,6 +143,7 @@ class PlanProvider extends ChangeNotifier {
     notifyListeners();
     await _persist();
     await _reminder.fullReschedule(plan, _settings.settings);
+    await _syncToday();
   }
 
   /// 批量删除计划项（多选删除用）
@@ -142,6 +157,7 @@ class PlanProvider extends ChangeNotifier {
     notifyListeners();
     await _persist();
     await _reminder.fullReschedule(plan, _settings.settings);
+    await _syncToday();
   }
 
   /// 分模块清空（打卡与加餐记录保留）；清空后若计划整体为空则重置开始日，下次导入重新记
@@ -151,6 +167,7 @@ class PlanProvider extends ChangeNotifier {
     notifyListeners();
     await _persist();
     await _reminder.fullReschedule(plan, _settings.settings);
+    await _syncToday();
   }
 
   Future<void> clearExercises() async {
@@ -159,6 +176,7 @@ class PlanProvider extends ChangeNotifier {
     notifyListeners();
     await _persist();
     await _reminder.fullReschedule(plan, _settings.settings);
+    await _syncToday();
   }
 
   /// 清除全部计划（仅「清空全部数据」使用）
@@ -167,6 +185,7 @@ class PlanProvider extends ChangeNotifier {
     notifyListeners();
     await _persist();
     await _reminder.fullReschedule(plan, _settings.settings);
+    await _syncToday();
   }
 
   /// 覆盖替换整个计划（历史备份「覆盖导入」使用；data 为导出时的 planData 快照）
@@ -181,5 +200,6 @@ class PlanProvider extends ChangeNotifier {
     notifyListeners();
     await _persist();
     await _reminder.fullReschedule(plan, _settings.settings);
+    await _syncToday();
   }
 }

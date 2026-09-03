@@ -1,10 +1,14 @@
-/// 当日记录数据：打卡 / 加餐 / 实际热量覆盖 / 临时任务
+/// 当日记录数据：打卡 / 加餐 / 实际热量覆盖 / 临时任务 / 当日条目快照 / 体重记录
 /// 与旧版存储结构 1:1 兼容：
 ///   checkRecords: { date: { "meal:id"/"exercise:id"/"temp:id": { checkedAt } } }
 ///   extraFoods:   { date: [ { id, name, calories, source, at } ] }（已废弃迁移，仅保留兼容）
-///   mealAdjust:   { date: { "meal:id": { calories, note } } }
-///   tempTasks:    { date: [ { id, type: 'snack'|'exercise', name, time, calories, source } ] }
+///   mealAdjust:   { date: { "meal:id": { calories, note } } }（v1.5 起停写，旧数据保留）
+///   tempTasks:    { date: [ { id, type: 'snack'|'exercise', name, time, calories, source } ] }（v1.5 起停写，旧数据保留）
+///   dayEntries:   { date: [ DayEntry ] }（F11 当日条目快照：餐食与运动统一，打卡状态仍在 checkRecords）
+///   weightRecords:{ baseline?, records }（F10 体重记录与基础消耗快照，见 weight.dart）
 library;
+
+import 'weight.dart';
 
 /// 打卡记录 { checkedAt: 时间戳 }
 class CheckEntry {
@@ -60,6 +64,71 @@ class TempTask {
   bool get isExercise => type == 'exercise';
 }
 
+/// 当日条目快照（F11：计划 = 模板，快照 = 事实）
+/// 餐食与运动统一模型（kind 区分）；打卡状态不在此（仍在 checkRecords，键空间 meal:/exercise:/temp:）
+/// 字段口径：content = 食物内容/运动内容；calories = 餐摄入/运动消耗（null=待补录）
+/// detached = 内容被改过、与计划脱钩（永不跟随计划变化）；caloriesDirty = 热量/消耗被手改（false 时跟随计划值）
+class DayEntry {
+  String id;
+  String kind; // 'meal' | 'exercise'
+  String slot; // breakfast | lunch | dinner | snack（运动为 ''）
+  String time; // HH:mm（跟随计划或录入时刻）
+  String content;
+  int? calories;
+  String note;
+  String source; // plan | manual | ai | fooddb
+  String planItemId; // 关联计划项 id；'' 表示计划外
+  bool detached;
+  bool caloriesDirty;
+
+  DayEntry({
+    required this.id,
+    this.kind = 'meal',
+    this.slot = '',
+    this.time = '',
+    this.content = '',
+    this.calories,
+    this.note = '',
+    this.source = 'manual',
+    this.planItemId = '',
+    this.detached = false,
+    this.caloriesDirty = false,
+  });
+
+  factory DayEntry.fromJson(Map<String, dynamic> json) => DayEntry(
+        id: _str(json['id']),
+        kind: _str(json['kind']) == 'exercise' ? 'exercise' : 'meal',
+        slot: _str(json['slot']),
+        time: _str(json['time']),
+        content: _str(json['content']),
+        calories: json['calories'] is num ? (json['calories'] as num).round() : null,
+        note: _str(json['note']),
+        source: _str(json['source']).isNotEmpty ? _str(json['source']) : 'manual',
+        planItemId: _str(json['planItemId']),
+        detached: json['detached'] is bool ? json['detached'] as bool : false,
+        caloriesDirty: json['caloriesDirty'] is bool ? json['caloriesDirty'] as bool : false,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'kind': kind,
+        'slot': slot,
+        'time': time,
+        'content': content,
+        'calories': calories,
+        'note': note,
+        'source': source,
+        'planItemId': planItemId,
+        'detached': detached,
+        'caloriesDirty': caloriesDirty,
+      };
+
+  /// 是否计划来源条目
+  bool get isPlan => source == 'plan';
+
+  static String _str(dynamic v) => v is String ? v : '';
+}
+
 /// 实际热量覆盖值
 class AdjustEntry {
   int calories;
@@ -85,22 +154,32 @@ class RecordStore {
   /// { date: { "meal:id": AdjustEntry } }
   Map<String, Map<String, AdjustEntry>> mealAdjust;
 
-  /// { date: `List<TempTask>` }
+  /// { date: `List<TempTask>` }（v1.5 起停写，旧数据保留兼容读写）
   Map<String, List<TempTask>> tempTasks;
+
+  /// { date: `List<DayEntry>` }（F11 当日条目快照，不参与 400 天裁剪）
+  Map<String, List<DayEntry>> dayEntries;
+
+  /// 体重记录（F10：{ baseline, records }，一天一条，不参与 400 天裁剪）
+  WeightData weightRecords;
 
   RecordStore({
     Map<String, Map<String, CheckEntry>>? checkRecords,
     Map<String, List<dynamic>>? extraFoods,
     Map<String, Map<String, AdjustEntry>>? mealAdjust,
     Map<String, List<TempTask>>? tempTasks,
+    Map<String, List<DayEntry>>? dayEntries,
+    WeightData? weightRecords,
   })  : checkRecords = checkRecords ?? {},
         extraFoods = extraFoods ?? {},
         mealAdjust = mealAdjust ?? {},
-        tempTasks = tempTasks ?? {};
+        tempTasks = tempTasks ?? {},
+        dayEntries = dayEntries ?? {},
+        weightRecords = weightRecords ?? WeightData.empty();
 
   factory RecordStore.empty() => RecordStore();
 
-  /// 从存储 JSON 反序列化（4 个顶层键）
+  /// 从存储 JSON 反序列化（5 个顶层键）
   factory RecordStore.fromJson(Map<String, dynamic> json) {
     final checks = <String, Map<String, CheckEntry>>{};
     if (json['checkRecords'] is Map) {
@@ -137,11 +216,26 @@ class RecordStore {
         }
       });
     }
+    final entries = <String, List<DayEntry>>{};
+    if (json['dayEntries'] is Map) {
+      (json['dayEntries'] as Map).forEach((date, list) {
+        if (list is List) {
+          entries[date.toString()] = list
+              .whereType<Map>()
+              .map((e) => DayEntry.fromJson(Map<String, dynamic>.from(e)))
+              .toList();
+        }
+      });
+    }
     return RecordStore(
       checkRecords: checks,
       extraFoods: foods,
       mealAdjust: adjusts,
       tempTasks: temps,
+      dayEntries: entries,
+      weightRecords: json['weightRecords'] is Map
+          ? WeightData.fromJson(Map<String, dynamic>.from(json['weightRecords'] as Map))
+          : WeightData.empty(),
     );
   }
 
@@ -153,6 +247,9 @@ class RecordStore {
             MapEntry(d, m.map((k, v) => MapEntry(k, v.toJson())))),
         'tempTasks': tempTasks.map((d, list) =>
             MapEntry(d, list.map((e) => e.toJson()).toList())),
+        'dayEntries': dayEntries.map((d, list) =>
+            MapEntry(d, list.map((e) => e.toJson()).toList())),
+        'weightRecords': weightRecords.toJson(),
       };
 
   // ---------- 查询 ----------

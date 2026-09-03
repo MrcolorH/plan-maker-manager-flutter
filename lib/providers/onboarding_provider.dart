@@ -48,6 +48,10 @@ class OnboardingProvider extends ChangeNotifier {
   /// 首启判断（首页 onShow 调用）；内部做一次性老用户迁移
   bool shouldOnboard() {
     if (!state.done) {
+      if (state.rerun) {
+        // 「重新体验」期间跳过老用户豁免检测，退出后下次冷启动仍会弹出
+        return !_dismissedOnce;
+      }
       if (isLegacyUser()) {
         state.done = true;
         _persist();
@@ -63,12 +67,12 @@ class OnboardingProvider extends ChangeNotifier {
     _dismissedOnce = true;
   }
 
-  /// 保存引导收集的基础信息
+  /// 保存引导收集的基础信息（weight 支持两位小数，不做 round 丢弃）
   Future<void> saveProfile(Map<String, dynamic> patch) async {
     if (patch['gender'] is String) state.profile.gender = patch['gender'] as String;
     if (patch['age'] is num) state.profile.age = (patch['age'] as num).round();
     if (patch['height'] is num) state.profile.height = (patch['height'] as num).round();
-    if (patch['weight'] is num) state.profile.weight = (patch['weight'] as num).round();
+    if (patch['weight'] is num) state.profile.weight = (patch['weight'] as num).toDouble();
     if (patch['activity'] is num) state.profile.activity = (patch['activity'] as num).toDouble();
     notifyListeners();
     await _persist();
@@ -77,6 +81,7 @@ class OnboardingProvider extends ChangeNotifier {
   /// 引导最终完成
   Future<void> finishOnboarding() async {
     state.done = true;
+    state.rerun = false;
     notifyListeners();
     await _persist();
   }
@@ -84,13 +89,16 @@ class OnboardingProvider extends ChangeNotifier {
   /// 跳过引导（不再自动出现）
   Future<void> skipOnboarding() async {
     state.done = true;
+    state.rerun = false;
     notifyListeners();
     await _persist();
   }
 
-  /// 重新体验引导（使用指引页入口用；仅重跑，不清任何数据）
+  /// 重新体验引导（设置页入口用；仅重跑，不清任何数据）。
+  /// 置位 rerun 并持久化：老用户豁免不再生效，完成/跳过前每次冷启动都会弹出
   Future<void> rerunOnboarding() async {
     state.done = false;
+    state.rerun = true;
     _dismissedOnce = false;
     notifyListeners();
     await _persist();
@@ -98,7 +106,7 @@ class OnboardingProvider extends ChangeNotifier {
 
   /// 覆盖替换整个引导状态（历史备份「覆盖导入」使用）
   Future<void> replaceOnboarding(OnboardingState data) async {
-    state = OnboardingState(done: data.done, profile: data.profile);
+    state = OnboardingState(done: data.done, rerun: data.rerun, profile: data.profile);
     notifyListeners();
     await _persist();
   }

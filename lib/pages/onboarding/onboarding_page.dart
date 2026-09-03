@@ -4,9 +4,11 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../models/plan_data.dart';
+import '../../models/onboarding.dart';
 import '../../models/settings.dart';
 import '../../providers/onboarding_provider.dart';
 import '../../providers/plan_provider.dart';
@@ -67,11 +69,24 @@ class _OnboardingPageState extends State<OnboardingPage> {
 
   void _initFromProfile() {
     final p = context.read<OnboardingProvider>().state.profile;
+    final s = context.read<SettingsProvider>().settings;
     if (p.gender.isNotEmpty) _gender = p.gender;
     if (p.age != null) _ageCtrl.text = '${p.age}';
     if (p.height != null) _heightCtrl.text = '${p.height}';
-    if (p.weight != null) _weightCtrl.text = '${p.weight}';
+    if (p.weight != null) _weightCtrl.text = fmtWeight(p.weight!);
     if (p.activity > 0) _activity = p.activity;
+    // 重新体验引导 / 老用户：已存的热量数据一并带入，不允许空数据。
+    // bmr>0 表示至少估测过一次，settings 里的 BMR/TDEE/目标摄入可信（含用户手改过的自定义目标）；
+    // 没估过但基础信息完整时按当前输入重算，保证第 4 步与完成页有值；
+    // 两者都不满足（全新用户）才保持为空，走正常估算流程。
+    if (s.bmr > 0) {
+      _bmr = s.bmr;
+      _tdee = s.tdee > 0 ? s.tdee : 0;
+      _target = s.dailyCalorieTarget > 0 ? s.dailyCalorieTarget : 0;
+      _targetCtrl.text = _target > 0 ? '$_target' : '';
+    } else if (p.complete) {
+      _recalc();
+    }
   }
 
   bool _canNext() {
@@ -106,7 +121,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
   void _recalc() {
     final age = int.tryParse(_ageCtrl.text.trim());
     final h = int.tryParse(_heightCtrl.text.trim());
-    final w = int.tryParse(_weightCtrl.text.trim());
+    final w = double.tryParse(_weightCtrl.text.trim());
     if (age == null || h == null || w == null) return;
     _bmr = estimateBmr(gender: _gender, height: h, weight: w, age: age);
     _tdee = estimateTdee(gender: _gender, height: h, weight: w, age: age, activity: _activity);
@@ -126,7 +141,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
       final planP = context.read<PlanProvider>();
       final age = int.tryParse(_ageCtrl.text.trim());
       final h = int.tryParse(_heightCtrl.text.trim());
-      final w = int.tryParse(_weightCtrl.text.trim());
+      final w = double.tryParse(_weightCtrl.text.trim());
       final profileComplete = age != null && h != null && w != null;
 
       if (profileComplete) {
@@ -493,7 +508,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
         const SizedBox(height: 10),
         _numField(_heightCtrl, '身高', 'cm'),
         const SizedBox(height: 10),
-        _numField(_weightCtrl, '体重', 'kg'),
+        _numField(_weightCtrl, '体重', 'kg', allowDecimal: true),
       ],
     );
   }
@@ -768,13 +783,19 @@ class _OnboardingPageState extends State<OnboardingPage> {
     );
   }
 
-  Widget _numField(TextEditingController ctrl, String label, String unit) {
+  Widget _numField(TextEditingController ctrl, String label, String unit,
+      {bool allowDecimal = false}) {
     return Row(
       children: [
         Expanded(
           child: TextField(
             controller: ctrl,
-            keyboardType: TextInputType.number,
+            keyboardType:
+                TextInputType.numberWithOptions(decimal: allowDecimal),
+            // 体重（allowDecimal）限制两位小数（如 68.55），与体重记录口径一致
+            inputFormatters: allowDecimal
+                ? [FilteringTextInputFormatter.allow(RegExp(r'^\d{0,3}(\.\d{0,2})?'))]
+                : null,
             decoration: InputDecoration(
               labelText: label,
               filled: true,

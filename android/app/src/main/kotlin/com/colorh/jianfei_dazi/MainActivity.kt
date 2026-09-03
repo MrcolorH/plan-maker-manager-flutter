@@ -50,6 +50,15 @@ class MainActivity : FlutterActivity() {
 
                     "downloadsPath" -> result.success(publicDownloadsPath())
 
+                    "readFromDownloads" -> {
+                        val name = call.argument<String>("fileName")
+                        if (name.isNullOrEmpty()) {
+                            result.error("ARG", "fileName 不能为空", null)
+                            return@setMethodCallHandler
+                        }
+                        result.success(readFromDownloads(name))
+                    }
+
                     else -> result.notImplemented()
                 }
             }
@@ -164,4 +173,27 @@ class MainActivity : FlutterActivity() {
 
     private fun publicDownloadsPath(): String =
         Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).path
+
+    /**
+     * 读取公共 Download 目录下的备份文本（自动备份恢复用），不存在或不可读返回 null。
+     * Android 10+：优先按 MediaStore 查文件名（本应用写入的文件可直接读）；
+     * Android 9 及以下：直接读文件路径。
+     * 任何异常（跨设备拷贝来的文件无归属权限等）都按「无备份」处理，由 Dart 层降级。
+     */
+    private fun readFromDownloads(displayName: String): String? {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val uri = findExistingUri(MediaStore.Downloads.EXTERNAL_CONTENT_URI, displayName)
+                    ?: return null
+                contentResolver.openInputStream(uri)?.use {
+                    it.readBytes().toString(Charsets.UTF_8)
+                }
+            } else {
+                val file = File(publicDownloadsPath(), displayName)
+                if (file.exists()) file.readText(Charsets.UTF_8) else null
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
 }

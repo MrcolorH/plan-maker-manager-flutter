@@ -53,10 +53,11 @@ class _FoodAddPageState extends State<FoodAddPage> {
   }
 
   Future<void> _addSnack(String name, int calories, String source) async {
-    await context.read<RecordProvider>().addTempTask(
+    await context.read<RecordProvider>().addDayEntry(
           todayStr(),
-          type: 'snack',
-          name: name,
+          kind: 'meal',
+          slot: 'snack',
+          content: name,
           calories: calories,
           source: source,
         );

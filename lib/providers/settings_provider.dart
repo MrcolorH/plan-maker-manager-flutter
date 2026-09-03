@@ -14,9 +14,21 @@ class SettingsProvider extends ChangeNotifier {
   AppSettings settings;
   final PlanData Function()? _getPlan;
 
-  SettingsProvider(this._storage, this._reminder, {this._getPlan})
+  /// F10 固化钩子：bmr/tdee 即将变化前回调（用于把当前基础消耗固化为历史基准，防历史缺口漂移）
+  /// 由 main.dart 装配为 recordProvider.ensureBaseline(baseBurn(settings))
+  final Future<void> Function()? _onBurnChange;
+
+  SettingsProvider(this._storage, this._reminder,
+      {this._getPlan, this._onBurnChange})
       : settings = AppSettings.defaults() {
     _load();
+  }
+
+  /// 基础消耗口径即将变化（bmr/tdee 会被改写）→ 先固化当前值（若需）
+  Future<void> _freezeIfBurnChanging(Map<String, dynamic> patch) async {
+    final burnChanging = (patch['bmr'] is num && (patch['bmr'] as num).round() != settings.bmr) ||
+        (patch['tdee'] is num && (patch['tdee'] as num).round() != settings.tdee);
+    if (burnChanging) await _onBurnChange?.call();
   }
 
   void _load() {
@@ -40,10 +52,11 @@ class SettingsProvider extends ChangeNotifier {
     await _storage.writeMap(StorageService.kSettings, settings.toJson());
   }
 
-  /// 通用更新；涉及提醒配置时自动重调度
+  /// 通用更新；涉及提醒配置时自动重调度；bmr/tdee 将变时先固化历史基准
   Future<void> update(Map<String, dynamic> patch) async {
     const remindKeys = ['reminderEnabled', 'reminderAdvance'];
     final touchRemind = remindKeys.any((k) => patch.containsKey(k));
+    await _freezeIfBurnChanging(patch);
     if (patch['tdee'] is num) settings.tdee = (patch['tdee'] as num).round();
     if (patch['bmr'] is num) settings.bmr = (patch['bmr'] as num).round();
     if (patch['dailyCalorieTarget'] is num) {
@@ -51,6 +64,9 @@ class SettingsProvider extends ChangeNotifier {
     }
     if (patch['reminderEnabled'] is bool) settings.reminderEnabled = patch['reminderEnabled'] as bool;
     if (patch['reminderAdvance'] is num) settings.reminderAdvance = (patch['reminderAdvance'] as num).round();
+    if (patch['autoBackupEnabled'] is bool) {
+      settings.autoBackupEnabled = patch['autoBackupEnabled'] as bool;
+    }
     notifyListeners();
     await _persist();
     if (touchRemind) {
@@ -80,11 +96,12 @@ class SettingsProvider extends ChangeNotifier {
     await _persist();
   }
 
-  /// 导入计划时吸收 meta（仅覆盖显式提供的值）
+  /// 导入计划时吸收 meta（仅覆盖显式提供的值）；tdee 将变时先固化历史基准
   Future<void> applyMeta(PlanMeta? meta) async {
     if (meta == null) return;
     var dirty = false;
-    if (meta.tdee != null && meta.tdee! > 0) {
+    if (meta.tdee != null && meta.tdee! > 0 && meta.tdee!.round() != settings.tdee) {
+      await _onBurnChange?.call();
       settings.tdee = meta.tdee!.round();
       dirty = true;
     }
@@ -115,6 +132,7 @@ class SettingsProvider extends ChangeNotifier {
       dailyCalorieTarget: data.dailyCalorieTarget,
       reminderEnabled: data.reminderEnabled,
       reminderAdvance: data.reminderAdvance,
+      autoBackupEnabled: data.autoBackupEnabled,
       ai: AiConfig(
         provider: data.ai.provider,
         endpoint: data.ai.endpoint,

@@ -1,7 +1,9 @@
 # 历史数据导入导出设计（backup-design.md）
 
-版本：v1.0 ｜ 编写日期：2026-09-01 ｜ 关联需求：spec.md F9
-功能范围：设置页「数据与计划」分组新增 **导出历史数据备份** / **导入历史数据备份**，解决换机/重装后的数据迁移。
+版本：v1.1 ｜ 编写日期：2026-09-01（v1.1 增补于 2026-09-03）｜ 关联需求：spec.md F9
+功能范围：设置页「数据与计划」分组新增 **导出历史数据备份** / **导入历史数据备份**，解决换机/重装后的数据迁移；v1.1 增补 **本地自动备份**（单文件滚动覆盖，用户零操作）。
+
+> **实现状态（2026-09-03 注记）**：F9 功能已随 **Flutter 版实现并发布（v1.0.0）**。§2/§4/§6/§8 中出现的 uni-app 技术方案（store/*.js、plus.io、uni.chooseFile、settings.vue 等）为 v1.0 时的实现记录；Flutter 实际落点：`lib/services/backup_service.dart`（编解码/合并/Download 读写）、`lib/services/auto_backup_service.dart`（自动备份）、各 Provider 的 replace/merge 方法、`lib/pages/settings/backup_page.dart`、`MainActivity.kt`（MediaStore 原生方法），改动清单见 §11.4 与 [design.md](design.md) §6.2/§12。文件读写差异：导出为 `.txt` 纯文本（旧版 .dat 内容同为 JSON 文本，导入按纯文本读取兼容）。
 
 ---
 
@@ -204,3 +206,53 @@ plus.io.requestFileSystem(plus.io.PUBLIC_DOWNLOADS, fs => {
 3. 增量导入：同 id 计划更新不重复；打卡按 checkedAt 取新；tempTasks 按 id 合并；settings 不被覆盖。
 4. 导入前必见备份概要；增量前必见热量风险提示；覆盖前必见强确认。
 5. 选错文件/坏 JSON → 中文报错，本机数据不变。
+
+## 11. 本地自动备份（v1.1 增补）
+
+**动机**：手动备份靠自觉，忘记备份时一次误操作/故障就丢光历史记录。目标：用户零操作，数据时刻有底。
+
+### 11.1 方案要点
+
+| 项 | 设计 |
+|----|------|
+| 文件 | **单一固定文件** `zhiqing-backup-auto.txt`（Download 目录），每次写入同名覆盖，不产生多个备份文件。格式与手动导出完全一致（`encodeBackup` 复用，`exportedAt` 随每次写入更新） |
+| 存储 | Android 10+ 走 MediaStore（原生层 `findExistingUri` 已支持同名覆盖，免权限）；Android 9 及以下直写文件；非 Android 降级应用文档目录 |
+| 开关 | 设置页「数据与计划」分组新增**自动备份开关，默认关**（新装与老版本升级均不自动开启，避免未经告知的落盘）；开启后随 settings 持久化（`autoBackupEnabled`），**除非手动关闭 / 清空全部数据 / 覆盖导入（恢复备份中的开关值）否则一直保持开启**；关闭时 ①-③ 任一触发均不落盘 |
+| 触发 | ① 任意数据变更后防抖 15 秒写一次；② 退后台/被杀前（lifecycle paused）立即写；③ 启动后 10 秒兜底写一次（开启状态下跨启动自愈） |
+| 静默 | 自动备份全程无弹窗无 toast；失败静默，下次触发自动重试 |
+| 内容 | 8 项全量快照（与手动导出一致，含 AI Key——与手动备份同一隐私口径） |
+
+### 11.2 保护规则（防止备份本身变成数据丢失源）
+
+1. **内容去重**：快照正文与上次写入一致时跳过（内存比对），避免重复落盘。
+2. **空数据保护（永不写空快照）**：当前快照无实质内容（无计划/打卡/调整/临时任务/加餐，`hasBackupContent` 为假）时，自动备份**直接跳过、不落盘**——**不依赖能否读回旧文件**（MediaStore 瞬时异常 / 跨设备拷贝读不到也不会误写空文件），从根上杜绝「用户清空数据后退出 App → 唯一好备份被空快照冲掉」；空快照本身无恢复价值，首次开启且暂无数据时不生成占位文件（有第一份真实数据时自然生成，与导入页「暂无自动备份」提示一致）。
+3. **破坏性操作前强制留底**：**覆盖导入**与**清空全部数据**执行前，先把当前数据导出为带时间戳的 `zhiqing-backup-YYYYMMDD-HHmmss.txt`（复用手动导出通道；这是唯一会新增备份文件的场景，仅出现在用户主动确认的破坏性操作前）。留底失败（如未授权）不阻断操作，但提示用户。注：「清空全部数据」会把设置重置回出厂（自动备份开关随之变回默认关），叠加保护 2 后旧 auto 文件不会被冲掉。
+
+### 11.3 恢复入口
+
+导入备份页顶部新增「自动备份」卡片：显示备份文件更新时间（读 `exportedAt`）+「从自动备份恢复」按钮，一键读取固定文件（原生新增 `readFromDownloads` 方法按文件名查询 MediaStore），走与选文件导入相同的 概要 → 增量合并 / 覆盖导入 流程。无备份或文件损坏时显示「暂无自动备份」。
+
+设置页「数据与计划」分组为开关行：`自动备份 [开关]`，副标题随状态提示保存位置与含义——开启：「数据变更/退出时自动保存到系统 Download 目录（单文件覆盖，含 AI 配置）」；关闭：「已关闭：开启后自动保存到系统 Download 目录的 zhiqing-backup-auto.txt（单文件覆盖）」。导出页/导入页的自动备份卡片文案同步反映开关状态与 Download 保存位置（用户在**开启前即被告知**文件会存到下载文件夹）。
+
+### 11.4 代码改动清单（v1.1）
+
+| 文件 | 改动 | 性质 |
+|------|------|------|
+| `lib/models/settings.dart` | `AppSettings.autoBackupEnabled`（**默认 false**；fromJson 缺字段/非 bool 回落 false） | 增补 |
+| `lib/providers/settings_provider.dart` | `update()` 支持 `autoBackupEnabled` patch 并持久化；`replaceSettings` 透传开关 | 增补 |
+| `lib/services/auto_backup_service.dart` | `_run` 开头加开关门禁（关闭时任一触发均不落盘）；`captureBackupData` 快照聚合、两道保护 | 新增/修改 |
+| `lib/services/backup_service.dart` | `exportBackup` 支持固定 `fileName`；新增 `readAutoBackupText` / `autoBackupFileName` / `hasBackupContent` | 增补 |
+| `android/.../MainActivity.kt` | 新增 `readFromDownloads`（MediaStore 按名查询 + 老版本直读，异常返回 null） | 增补 |
+| `lib/main.dart` | 创建并 `attach()` 自动备份服务 | 增补 |
+| `lib/pages/settings/backup_page.dart` | 导入页自动备份卡片 + 文案随开关状态；覆盖导入前留底 | 增补/修改 |
+| `lib/pages/settings/settings_page.dart` | 「自动备份」改开关行（`_SwitchRow` 带副标题）；清空全部数据前留底 | 修改 |
+| `test/settings_model_test.dart` | 新增：默认关 / 老数据回落关 / 开启持久化往返 / 手动关往返 共 6 用例 | 新增 |
+
+### 11.5 已知限制
+
+- 自动备份位于本机 Download，卸载重装后是否保留由系统/ROM 决定；跨设备迁移仍以「手动导出 → 分享」为准。
+- 单文件滚动覆盖为原地写：极端情况下（写入进行到一半时进程被杀）该次文件可能不完整；数据量小（<1MB）写入瞬时完成，概率极低，且时间戳留底文件不受影响；损坏时导入页按「暂无自动备份」处理。
+- 换机场景下用户把 auto 文件拷到新机 Download 后，`readFromDownloads` 可能因文件归属不同读不到（异常按无备份处理）；此时走「选择备份文件」正常导入。
+- Android 9 及以下未授权存储时自动备份会静默失败（与手动导出同一路径），下次触发重试。
+- **默认关**：新装与老版本升级均不自动开启自动备份，需用户在设置页主动开启（一次开启即持久化，之后重启/换版本不丢）。
+- 自定义保存路径：Android 技术上可行（SAF `ACTION_OPEN_DOCUMENT_TREE` 选目录 + `takePersistableUriPermission` 持久授权，DocumentsContract 直写/直读，无需新依赖），但**本期未实现**，自动备份默认固定系统 Download 目录。

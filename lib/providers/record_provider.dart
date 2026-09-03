@@ -4,9 +4,12 @@ library;
 
 import 'package:flutter/foundation.dart';
 
+import '../models/plan_data.dart';
 import '../models/records.dart';
+import '../models/weight.dart';
 import '../services/storage_service.dart';
 import '../utils/date_utils.dart';
+import '../utils/legacy_convert.dart';
 import '../utils/plan_utils.dart';
 
 class RecordProvider extends ChangeNotifier {
@@ -24,6 +27,8 @@ class RecordProvider extends ChangeNotifier {
       'extraFoods': _storage.readMap(StorageService.kExtraFoods),
       'mealAdjust': _storage.readMap(StorageService.kMealAdjust),
       'tempTasks': _storage.readMap(StorageService.kTempTasks),
+      'dayEntries': _storage.readMap(StorageService.kDayEntries),
+      'weightRecords': _storage.readMap(StorageService.kWeightRecords),
     });
     _prune();
     _migrateExtraFoods();
@@ -34,6 +39,16 @@ class RecordProvider extends ChangeNotifier {
     await _storage.writeMap(StorageService.kExtraFoods, store.extraFoods);
     await _storage.writeMap(StorageService.kMealAdjust, store.mealAdjust.map((d, m) => MapEntry(d, m.map((k, v) => MapEntry(k, v.toJson())))));
     await _storage.writeMap(StorageService.kTempTasks, store.tempTasks.map((d, l) => MapEntry(d, l.map((e) => e.toJson()).toList())));
+    await _persistEntries();
+    await _persistWeights();
+  }
+
+  Future<void> _persistWeights() async {
+    await _storage.writeMap(StorageService.kWeightRecords, store.weightRecords.toJson());
+  }
+
+  Future<void> _persistEntries() async {
+    await _storage.writeMap(StorageService.kDayEntries, store.dayEntries.map((d, l) => MapEntry(d, l.map((e) => e.toJson()).toList())));
   }
 
   Future<void> _persistCheck() async {
@@ -53,6 +68,7 @@ class RecordProvider extends ChangeNotifier {
   }
 
   /// 只保留近 400 天数据，防止无限膨胀
+  /// dayEntries（当日条目快照）**不参与裁剪**：历史固化是硬需求（F11 FR11.7）
   void _prune() {
     final limit = addDays(todayStr(), -400);
     var dirty = false;
@@ -182,22 +198,282 @@ class RecordProvider extends ChangeNotifier {
     await _persistCheck();
   }
 
+  // ---------- 当日条目快照（F11：计划 = 模板，快照 = 事实）----------
+
+  List<DayEntry> getDayEntries(String date) => store.dayEntries[date] ?? const [];
+
+  /// 当天计划项 → 新建快照列表（不含归档，供 sync 使用）
+  List<DayEntry> _instantiatePlan(String date, PlanData plan) {
+    final tasks = getTasksForDate(plan, date);
+    final out = <DayEntry>[];
+    for (final m in tasks.meals) {
+      out.add(DayEntry(
+        id: m.id,
+        kind: 'meal',
+        slot: m.type,
+        time: m.time,
+        content: m.name,
+        calories: m.calories,
+        note: '',
+        source: 'plan',
+        planItemId: m.id,
+      ));
+    }
+    for (final e in tasks.exercises) {
+      out.add(DayEntry(
+        id: e.id,
+        kind: 'exercise',
+        slot: '',
+        time: e.time,
+        content: e.name,
+        calories: e.caloriesBurned,
+        note: '',
+        source: 'plan',
+        planItemId: e.id,
+      ));
+    }
+    return out;
+  }
+
+  bool _entriesEqual(List<DayEntry>? a, List<DayEntry>? b) {
+    if (identical(a, b)) return true;
+    if (a == null || b == null || a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (!_entryEq(a[i], b[i])) return false;
+    }
+    return true;
+  }
+
+  bool _entryEq(DayEntry a, DayEntry b) =>
+      a.id == b.id &&
+      a.kind == b.kind &&
+      a.slot == b.slot &&
+      a.time == b.time &&
+      a.content == b.content &&
+      a.calories == b.calories &&
+      a.note == b.note &&
+      a.source == b.source &&
+      a.planItemId == b.planItemId &&
+      a.detached == b.detached &&
+      a.caloriesDirty == b.caloriesDirty;
+
+  /// 同步某天快照与当前计划（幂等；只对 ≤ 今天操作，未来日期不生成）。
+  /// 规则（spec day-snapshot-design §4.1）：
+  ///   - 计划外条目（加餐/加练，source != plan）原样保留，永不触碰
+  ///   - 未脱钩条目跟随计划（content/time/slot；calories 未被手改则跟随）
+  ///   - 未脱钩但计划里已删除（该日无此计划项）→ 移除；脱钩条目永不动
+  ///   - 计划里新增 → 追加新快照
+  /// 有变化才 notify + 落盘。
+  Future<void> syncDayEntries(String date, PlanData plan) async {
+    if (date.compareTo(todayStr()) > 0) return; // 未来日期不生成快照
+    final planItems = _instantiatePlan(date, plan);
+    final old = store.dayEntries[date];
+    if (old == null && planItems.isEmpty) return; // 无快照无计划，无操作
+    final kept = <DayEntry>[];
+    for (final e in (old ?? const <DayEntry>[])) {
+      if (!e.isPlan) {
+        kept.add(e);
+        continue;
+      }
+      final p = planItems.where((x) => x.kind == e.kind && x.id == e.planItemId).toList();
+      if (p.isEmpty) {
+        if (e.detached) kept.add(e); // 脱钩：计划里删了也永久保留
+      } else if (!e.detached) {
+        final s = p.first;
+        kept.add(DayEntry(
+          id: e.id,
+          kind: e.kind,
+          slot: s.slot,
+          time: s.time,
+          content: s.content,
+          calories: e.caloriesDirty ? e.calories : s.calories,
+          note: e.note,
+          source: 'plan',
+          planItemId: e.planItemId,
+          detached: false,
+          caloriesDirty: e.caloriesDirty,
+        ));
+      } else {
+        kept.add(e);
+      }
+    }
+    for (final p in planItems) {
+      if (!kept.any((e) => e.isPlan && e.kind == p.kind && e.planItemId == p.id)) {
+        kept.add(p);
+      }
+    }
+    sortDayEntries(kept);
+    if (_entriesEqual(old, kept)) return;
+    store.dayEntries[date] = kept;
+    notifyListeners();
+    await _persistEntries();
+  }
+
+  /// 计划外录入（加餐 / 加练 / 补录）：source 保留；添加即计缺口/消耗，不参与完成度
+  Future<void> addDayEntry(
+    String date, {
+    required String kind, // 'meal' | 'exercise'
+    required String content,
+    int? calories,
+    String slot = '',
+    String? time,
+    String note = '',
+    String source = 'manual',
+  }) async {
+    final list = store.dayEntries.putIfAbsent(date, () => []);
+    list.add(DayEntry(
+      id: genId(kind == 'exercise' ? 'e' : 'm'),
+      kind: kind,
+      slot: kind == 'meal' ? (slot.isNotEmpty ? slot : 'snack') : '',
+      time: (time != null && time.isNotEmpty) ? time : nowTimeStr(),
+      content: content.isNotEmpty ? content : (kind == 'meal' ? '加餐' : '临时运动'),
+      calories: calories,
+      note: note,
+      source: source,
+      planItemId: '',
+      detached: true,
+      caloriesDirty: true,
+    ));
+    sortDayEntries(list);
+    notifyListeners();
+    await _persistEntries();
+  }
+
+  /// 更新某天某条快照的内容（编辑弹窗保存）；不触碰打卡状态（由调用方决定是否 toggleCheck）
+  Future<void> updateDayEntry(String date, DayEntry updated) async {
+    final list = store.dayEntries[date];
+    if (list == null) return;
+    final i = list.indexWhere((e) => e.id == updated.id);
+    if (i < 0) return;
+    list[i] = updated;
+    sortDayEntries(list);
+    notifyListeners();
+    await _persistEntries();
+  }
+
+  /// 删除计划外条目（加餐/加练，可删；正餐/计划运动快照不提供删除入口）
+  /// 同时清理其打卡状态（temp:&lt;id&gt;，兼容旧键空间）
+  Future<void> removeDayEntry(String date, String id) async {
+    final list = store.dayEntries[date];
+    if (list == null) return;
+    final e = list.where((x) => x.id == id).firstOrNull;
+    list.removeWhere((x) => x.id == id);
+    if (e != null && !e.isPlan) {
+      store.checkRecords[date]?.remove('temp:${e.id}');
+      await _persistCheck();
+    }
+    notifyListeners();
+    await _persistEntries();
+  }
+
+  /// 打卡键（快照渲染用）：计划条目沿用 meal:/exercise:；计划外条目用 temp:
+  /// 例：'meal:abc'（计划餐）、'exercise:abc'（计划运动）、'temp:xyz'（计划外加餐/加练）
+  String checkKeyOf(DayEntry e) {
+    if (e.isPlan) return '${e.kind == 'meal' ? 'meal' : 'exercise'}:${e.planItemId}';
+    return 'temp:${e.id}';
+  }
+
+  bool isEntryChecked(String date, DayEntry e) =>
+      store.checkRecords[date]?.containsKey(checkKeyOf(e)) ?? false;
+
+  /// 升级首启迁移：把本机旧格式存量一次性转换为快照（幂等，kDayEntries 已存在则跳过）
+  Future<void> migrateIfNeeded(PlanData plan) async {
+    if (_storage.readString(StorageService.kDayEntries) != null) return; // 已迁移（含空）
+    final converted = convertLegacyToEntries(
+      plan: plan,
+      checkRecords: _storage.readMap(StorageService.kCheckRecords),
+      mealAdjust: _storage.readMap(StorageService.kMealAdjust),
+      tempTasks: _storage.readMap(StorageService.kTempTasks),
+      extraFoods: _storage.readMap(StorageService.kExtraFoods),
+    );
+    if (converted.isNotEmpty) {
+      store.dayEntries = converted;
+      notifyListeners();
+      await _persistEntries();
+    } else {
+      // 无记录也要落一个空标记，防止每次启动重扫
+      await _storage.writeMap(StorageService.kDayEntries, {});
+    }
+  }
+
+  /// v1 老备份 → 快照（导入管线内直接转换；用备份自带 planData 投影）
+  /// 返回转换结果供导入概要展示；调用方负责把结果并入 store（merge/replace）
+  Map<String, List<DayEntry>> convertBackupEntries({
+    required PlanData plan,
+    Map<String, dynamic>? checkRecords,
+    Map<String, dynamic>? mealAdjust,
+    Map<String, dynamic>? tempTasks,
+    Map<String, dynamic>? extraFoods,
+  }) {
+    return convertLegacyToEntries(
+      plan: plan,
+      checkRecords: checkRecords,
+      mealAdjust: mealAdjust,
+      tempTasks: tempTasks,
+      extraFoods: extraFoods,
+    );
+  }
+
+  // ---------- 体重记录（F10：历史基础消耗固化）----------
+
+  /// 本机是否有历史记录（供 ensureBaseline 判断是否需要固化）
+  bool get hasHistory =>
+      store.checkRecords.isNotEmpty ||
+      store.tempTasks.isNotEmpty ||
+      store.extraFoods.isNotEmpty ||
+      store.mealAdjust.isNotEmpty ||
+      store.dayEntries.isNotEmpty;
+
+  /// 固化历史基准（幂等）：baseline 已存在则跳过；
+  /// [base] = 固化时的基础消耗（baseBurn(settings) 现值）
+  Future<void> ensureBaseline(int base) async {
+    final w = store.weightRecords;
+    if (w.baseline != null || !hasHistory) return;
+    if (base <= 0) return;
+    w.baseline = WeightBaseline(base: base, date: todayStr());
+    notifyListeners();
+    await _persistWeights();
+  }
+
+  /// 写入/覆盖某天体重（同日重复录入刷新 updatedAt）；[bmr] = 录入时快照的 BMR（基础信息不全传 0）
+  Future<void> setWeightRecord(double weight, int bmr, {String? date, int? updatedAt}) async {
+    final d = (date != null && date.isNotEmpty) ? date : todayStr();
+    store.weightRecords.records[d] = WeightEntry(
+      weight: weight,
+      bmr: bmr,
+      updatedAt: updatedAt ?? DateTime.now().millisecondsSinceEpoch,
+    );
+    notifyListeners();
+    await _persistWeights();
+  }
+
+  /// 删除某天体重记录（删除仅影响展示与后续沿用，不回改 baseline）
+  Future<void> removeWeightRecord(String date) async {
+    if (store.weightRecords.records.remove(date) != null) {
+      notifyListeners();
+      await _persistWeights();
+    }
+  }
+
   // ---------- 清空 ----------
 
-  /// 仅清空打卡/加餐/调整/临时任务（保留计划与设置）
+  /// 仅清空打卡/加餐/调整/临时任务/当日快照/体重记录（保留计划与设置）
   Future<void> clearRecords() async {
     store.checkRecords.clear();
     store.extraFoods.clear();
     store.mealAdjust.clear();
     store.tempTasks.clear();
+    store.dayEntries.clear();
+    store.weightRecords = WeightData.empty();
     notifyListeners();
     await _persistAll();
   }
 
   // ---------- 历史备份：增量合并 ----------
 
-  /// bundle = BackupData（或含 checkRecords/mealAdjust/tempTasks/extraFoods 的 Map）
-  /// 规则：打卡按 checkedAt 取较新（不把已打卡倒回未打卡）；调整/临时任务/旧加餐按 id 合并，导入文件优先
+  /// bundle = BackupData（或含 checkRecords/mealAdjust/tempTasks/extraFoods/dayEntries 的 Map）
+  /// 规则：打卡按 checkedAt 取较新（不把已打卡倒回未打卡）；调整/临时任务/旧加餐按 id 合并，导入文件优先；
+  ///       当日快照 dayEntries 按「同 date 内同 id 合并、新 id 追加、导入优先」（v2 备份直入；v1 备份由调用方先转换）
   Future<void> mergeRecords(BackupLike bundle) async {
     // 打卡：同 date 同 key 保留时间戳较大者
     if (bundle.checkRecords != null && bundle.checkRecords!.isNotEmpty) {
@@ -246,6 +522,51 @@ class RecordProvider extends ChangeNotifier {
       });
       await _persistFoods();
     }
+
+    // 当日条目快照：同 date 内按 id 合并（导入优先、新 id 追加），合并后按 time 排序
+    if (bundle.dayEntries != null && bundle.dayEntries!.isNotEmpty) {
+      bundle.dayEntries!.forEach((date, list) {
+        if (list is! List) return;
+        final d = date.toString();
+        final target = store.dayEntries.putIfAbsent(d, () => []);
+        final idx = <String, int>{};
+        for (var i = 0; i < target.length; i++) {
+          idx[target[i].id] = i;
+        }
+        for (final it in list) {
+          if (it is! Map) continue;
+          final id = it['id'];
+          if (id is! String || id.isEmpty) continue;
+          final entry = DayEntry.fromJson(Map<String, dynamic>.from(it));
+          if (idx.containsKey(id)) {
+            target[idx[id]!] = entry;
+          } else {
+            idx[id] = target.length;
+            target.add(entry);
+          }
+        }
+        sortDayEntries(target);
+      });
+      await _persistEntries();
+    }
+
+    // 体重记录：records 按 updatedAt 取较新；baseline 双方都有取日期较早者（保留更长历史基准）
+    if (bundle.weightRecords != null && bundle.weightRecords!.isNotEmpty) {
+      final src = WeightData.fromJson(Map<String, dynamic>.from(bundle.weightRecords!));
+      final tgt = store.weightRecords;
+      if (src.baseline != null) {
+        final b = tgt.baseline;
+        if (b == null ||
+            (src.baseline!.date.isNotEmpty && src.baseline!.date.compareTo(b.date) < 0)) {
+          tgt.baseline = src.baseline;
+        }
+      }
+      src.records.forEach((date, e) {
+        final cur = tgt.records[date];
+        if (cur == null || e.updatedAt >= cur.updatedAt) tgt.records[date] = e;
+      });
+      await _persistWeights();
+    }
     notifyListeners();
   }
 
@@ -287,6 +608,10 @@ class RecordProvider extends ChangeNotifier {
     store.mealAdjust = _parseAdjusts(b.mealAdjust ?? {});
     store.tempTasks = _parseTemps(b.tempTasks ?? {});
     store.extraFoods = Map<String, List<dynamic>>.from(b.extraFoods ?? {});
+    store.dayEntries = _parseDayEntries(b.dayEntries ?? {});
+    store.weightRecords = (b.weightRecords != null && b.weightRecords!.isNotEmpty)
+        ? WeightData.fromJson(Map<String, dynamic>.from(b.weightRecords!))
+        : WeightData.empty();
     notifyListeners();
     await _persistAll();
   }
@@ -326,6 +651,20 @@ class RecordProvider extends ChangeNotifier {
     });
     return out;
   }
+
+  Map<String, List<DayEntry>> _parseDayEntries(Map<String, dynamic> src) {
+    final out = <String, List<DayEntry>>{};
+    src.forEach((date, list) {
+      if (list is! List) return;
+      final entries = list
+          .whereType<Map>()
+          .map((e) => DayEntry.fromJson(Map<String, dynamic>.from(e)))
+          .toList();
+      sortDayEntries(entries);
+      if (entries.isNotEmpty) out[date.toString()] = entries;
+    });
+    return out;
+  }
 }
 
 /// 备份数据兼容视图（供 mergeRecords/replaceRecords 使用）
@@ -334,5 +673,14 @@ class BackupLike {
   final Map<String, dynamic>? mealAdjust;
   final Map<String, dynamic>? tempTasks;
   final Map<String, dynamic>? extraFoods;
-  const BackupLike({this.checkRecords, this.mealAdjust, this.tempTasks, this.extraFoods});
+  final Map<String, dynamic>? dayEntries;
+  final Map<String, dynamic>? weightRecords;
+  const BackupLike({
+    this.checkRecords,
+    this.mealAdjust,
+    this.tempTasks,
+    this.extraFoods,
+    this.dayEntries,
+    this.weightRecords,
+  });
 }

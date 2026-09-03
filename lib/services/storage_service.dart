@@ -18,6 +18,8 @@ class StorageService {
   static const String kSettings = 'settings';
   static const String kApiUsage = 'apiUsage';
   static const String kOnboarding = 'onboardingState';
+  static const String kDayEntries = 'dayEntries';
+  static const String kWeightRecords = 'weightRecords';
 
   late SharedPreferences _prefs;
   bool _ready = false;

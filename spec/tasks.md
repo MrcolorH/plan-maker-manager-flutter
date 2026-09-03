@@ -3,7 +3,12 @@
 按阶段推进，每阶段以「完成标准」自测通过后再进入下一阶段。
 Phase 4（提醒）是最大技术风险点，刻意提前到核心 UI 之后、统计之前，留出方案 B 切换空间。
 
-约定：工程目录 `plan/app/`；文档参照本目录 spec.md / design.md。
+> **v2.0 迁移注记（2026-09-03）**：工程已从 uni-app 整体迁移至 **Flutter**（仓库根目录，`lib/`）。
+> Phase 0~10 为 uni-app 时代执行记录（文件名为当时工程 `plan/app/`，功能已全部由 Flutter 版 1:1 承接，对应实现见 [design.md](design.md) v2.0；其中未勾选项随迁移废弃，不再执行）；
+> Phase 11（引导）与 Phase 12（备份）在 Flutter 版完成实现，条目文件名已更新为 Flutter 实际落点；
+> Phase 13 起均为 Flutter 版开发计划。
+
+约定：Flutter 工程位于仓库根目录（入口 `lib/main.dart`）；文档参照本目录 spec.md / design.md。
 
 ---
 
@@ -102,7 +107,7 @@ Phase 4（提醒）是最大技术风险点，刻意提前到核心 UI 之后、
 
 - [x] 自定义 TabBar（emoji 图标，无需 PNG 资产）
 - [x] 应用图标/版本号 1.0.0（static/icons 已就绪）
-- [ ] 云打包 Android APK（公共测试证书）—— **用户操作：HBuilderX 打开 `plan/app/` → 发行 → 云打包**
+- [x] ~~云打包 Android APK（公共测试证书）~~ → Flutter 版：`flutter build apk --release` 产出 `build/app/outputs/flutter-apk/app-release.apk`（design.md 第 13 节）
 - [ ] 按 [checklist.md](checklist.md) 全量回归（含小米14/小米10 真机矩阵）
 - [ ] 安装到日常手机，实跑 3 天：真实提醒/打卡/加餐数据
 - [ ] 交付：APK + 使用说明（导入流程、白名单设置一页纸）
@@ -125,45 +130,62 @@ Phase 4（提醒）是最大技术风险点，刻意提前到核心 UI 之后、
 - [x] 加餐功能整合：「今日加餐」为唯一计划外加餐入口（食物库/AI/手动），添加即计入缺口（无需打卡），不参与完成度统计，明天自动消失；旧「加餐记录」区块移除并自动迁移历史数据
 - [x] API 用量统计：累计调用次数/tokens/估算费用（store/usage.js，chat 响应 usage 字段埋点），余额查询弹窗同屏展示，支持清零
 
-## Phase 11 ｜ 首次使用引导 & 使用指引（2026-09-01 增补）
+## Phase 11 ｜ 首次使用引导 & 使用指引（2026-09-01 增补；Flutter 版已实现）
 
 设计依据：[guide-design.md](guide-design.md) v0.2（已评审）；需求：spec.md F7/F8；技术：design.md 第 15 章。
-**范围硬约束：只增不改**——现有文件触碰仅限 4 处（3 个接入点 + 1 处末尾追加，见 design.md 15.1），现有功能回归用例见 checklist.md 第 9 节。
+**范围硬约束：只增不改**——Flutter 版触碰仅限 2 个接入点（主壳首启拦截 + 设置页帮助分组），现有功能回归用例见 checklist.md 第 9 节。以下为 **Flutter 实际落点**（uni-app 版条目见 git 历史）：
 
-- [ ] `store/onboarding.js`：独立键 `onboardingState`（done + profile）+ `shouldOnboard` / `finishOnboarding` / `skipOnboarding` / `rerunOnboarding` + `isLegacyUser` 升级豁免
-- [ ] 接入点 ①②：`pages.json` 注册 2 个新页面；`index.vue` onShow 首启判断 redirectTo（约 5 行）
-- [ ] `pages/onboarding/onboarding.vue` 骨架：5 步流转 + 进度圆点 + 返回键策略（Step0 退出确认）
-- [ ] Step0 欢迎页（三能力卡 + 开始/跳过）
-- [ ] Step1 基础信息：实时 BMR/基础消耗/参考总消耗（复用 `estimateBmr`，与设置页口径一致）+ 推荐目标摄入（参考总消耗−400，下限女 1200/男 1500）+ 经 `settings.update()` 保存 + profile 存 onboardingState
-- [ ] Step2 计划录入双模式：逐条录入（餐类/时间/星期 chips/热量，含运动条目）⇄ 整日一句话；草稿跨模式保留；「手动完成」直达 Step4
-- [ ] `utils/ai.js` 末尾追加 `generatePlanFromInput`（GUIDE_PLAN_PROMPT，输出对齐 import-format.md，复用 chat/容错/用量统计；现有函数零改动）
-- [ ] Step3 AI 生成：`hasAIConfig` 检测 → 页内精简配置弹层（调现有 switchProvider/updateAI/testAI，可跳过转手动）→ normalizePlan 校验 → 失败重试 1 次/转手动
-- [ ] Step4 编辑确认：条目行内编辑 + 删除撤销（5s）+ 追加；dirty 标记 + 单条/全部 AI 重估（复用 `queryCalorie`/`estimateBurn`，并发 ≤2，失败保留原值）+ 汇总条实时着色
-- [ ] Step5 完成：`importPlan(draft)` + `finishOnboarding` + redirectTo 首页；完成页「查看使用指引 ›」入口
-- [ ] 接入点 ③：设置页「帮助」分组 + 使用指引入口行
-- [ ] `pages/guide/guide.vue`：列表 ⇄ 详情两态 + 上一篇/下一篇 + 「重新体验首次引导」
-- [ ] `data/guide.js`：8 篇图文内容源（步骤文案 + marks 标注坐标）
-- [ ] 截图素材：HBuilderX 跑 H5 → DevTools 412×915 视口 → 预置演示数据 → 12 张真实截图入 `static/guide/`（guide-design.md §6.1 清单）
+- [x] `lib/providers/onboarding_provider.dart`：独立键 `onboardingState`（done + profile）+ `shouldOnboard` / finish / skip / rerun + `isLegacyUser` 升级豁免（有计划/有打卡/bmr>0/有 Key 任一命中即豁免）
+- [x] 接入点 ①：`lib/pages/main_shell.dart` initState `addPostFrameCallback` 首启判断 → `AppRoutes.fade` push 引导页
+- [x] `lib/pages/onboarding/onboarding_page.dart` 骨架：5 步流转（欢迎 → 基础信息 → 计划录入 → AI 生成 → 编辑确认 → 完成）+ 进度指示 + 返回键策略（Step0 退出确认）
+- [x] Step0 欢迎页（三能力卡 + 开始/跳过）
+- [x] Step1 基础信息：实时 BMR/基础消耗/参考总消耗（与设置页估算器同口径）+ 推荐目标摄入（参考总消耗−400，下限女 1200/男 1500）+ 即存即持久化 + profile 存 onboardingState
+- [x] Step2 计划录入双模式：逐条录入（餐类/时间/星期 chips/热量，含运动条目）⇄ 整日一句话；草稿跨模式保留；「手动完成」直达编辑确认
+- [x] AI 生成：`lib/services/ai_service.dart` 计划生成（提示词复用 `data/templates.dart`，输出对齐 import-format.md，容错解析 + 用量统计）→ `normalizePlan` 校验归一 → 失败重试 1 次/转手动
+- [x] 编辑确认：条目行内编辑 + 删除撤销 + 追加；单条/全部 AI 重估（复用 `queryCalorie`/`estimateBurn`，失败保留原值）+ 汇总条实时着色
+- [x] 完成：`PlanProvider.importPlan` 增量合并 + finishOnboarding + 回首页；完成页「查看使用指引 ›」入口
+- [x] 接入点 ②：设置页「帮助」分组 + 使用指引入口行（`lib/pages/settings/settings_page.dart`）
+- [x] `lib/pages/guide/guide_page.dart`：列表 ⇄ 详情两态 + 上一篇/下一篇 + 「重新体验首次引导」
+- [x] `lib/data/guide_articles.dart`：8 篇图文内容源（步骤文案 + 标注）
+- [x] 截图素材：Flutter 模拟器/真机截图（uni-app H5 截图方案随迁移废弃）
 - [ ] checklist.md 第 9 节全量自测 + 现有功能回归（对照第 1~8 节抽测）
 
 **完成标准**：新装真机首启自动进引导，走完「基础信息 → 录入 → AI 生成 → 编辑 → 确认」全流程后今日页正常展示、提醒正常调度；老用户升级不弹引导；现有功能行为与改前一致。
 
 ## Phase 12 ｜ 历史数据导入导出（2026-09-01 增补）
 
-设计依据：[backup-design.md](backup-design.md) v1.0；需求：spec.md F9。
-**范围约束（只增不改）**：现有文件改动仅 settings.vue「数据与计划」分组增补 + 各 store 末尾追加小函数；其余全部为新增 utils/backup.js。
+设计依据：[backup-design.md](backup-design.md) v1.0；需求：spec.md F9。以下文件名为 **Flutter 实际落点**。
+**范围约束（只增不改）**：现有文件改动仅设置页「数据与计划」分组增补 + 各 Provider 追加小方法；其余全部为新增 `lib/services/backup_service.dart`。
 
-- [x] `spec/backup-design.md`：备份文件格式（.dat 壳 + JSON 内容 + app/type/formatVersion 标识）、8 项全量快照、增量/覆盖合并规则、热量风险与隐私提示、plus.io 读写方案
+- [x] `spec/backup-design.md`：备份文件格式（.txt 纯文本 + JSON 内容 + app/type/formatVersion 标识）、8 项全量快照、增量/覆盖合并规则、热量风险与隐私提示、Download 读写方案
 - [x] spec.md 增补 F9（FR9.1~9.6 验收标准）、页面清单、P1 候选移除「数据导出备份」；README 导航增补
-- [x] `store/plan.js` 追加 `replacePlan(data)`（覆盖导入用：整体替换 + persist + fullReschedule）
-- [x] `store/record.js` 追加 `mergeRecords(bundle)`（打卡按 checkedAt 取新 / mealAdjust、tempTasks 按 id 合并，导入优先）+ `replaceRecords(bundle)`（清空后整体写入）
-- [x] `store/settings.js` 追加 `replaceSettings(data)`（DEFAULTS 深度合并补缺后整体替换）
-- [x] `store/onboarding.js` 追加 `replaceOnboarding(data)`；`store/usage.js` 追加 `replaceUsage(data)`
-- [x] `utils/backup.js`（新）：`buildBackupData`（8 项快照聚合）/ `exportBackup`（写 .dat 到 Download 目录 + 返回路径）/ `parseBackupText`（JSON 解析 + 结构校验 + 容错归一）/ `buildBackupSummary`（导入前概要）/ `mergeBackup`（增量）/ `restoreBackup`（覆盖）
-- [x] `components/tabs/settings.vue`：「数据与计划」分组新增「导出历史数据备份 / 导入历史数据备份」两行；导出确认（隐私提示）+ 成功弹窗（路径 + 分享按钮）；导入：选文件 → 读取 → 概要弹层（增量/覆盖/取消）→ 增量风险确认 / 覆盖强确认 → 执行
+- [x] `lib/providers/plan_provider.dart` 追加 `replacePlan(data)`（覆盖导入用：整体替换 + persist + fullReschedule）
+- [x] `lib/providers/record_provider.dart` 追加 `mergeRecords(bundle)`（打卡按 checkedAt 取新 / mealAdjust、tempTasks 按 id 合并，导入优先）+ `replaceRecords(bundle)`（清空后整体写入）
+- [x] `lib/providers/settings_provider.dart` 追加 `replaceSettings(data)`（默认值深度合并补缺后整体替换）
+- [x] `lib/providers/onboarding_provider.dart` 追加 `replaceOnboarding(data)`；`lib/providers/usage_provider.dart` 追加 `replaceUsage(data)`
+- [x] `lib/services/backup_service.dart`（新）：快照聚合（8 项）/ `exportBackup`（写 .txt 到 Download 目录 + 返回路径）/ 解析校验（JSON + 结构校验 + 容错归一）/ 概要统计 / 增量合并 / 覆盖恢复
+- [x] `lib/pages/settings/settings_page.dart`：「数据与计划」分组新增「导出历史数据备份 / 导入历史数据备份」两行；导出确认（隐私提示）+ 成功弹窗（路径 + 分享按钮）；导入：选文件 → 读取 → 概要弹层（增量/覆盖/取消）→ 增量风险确认 / 覆盖强确认 → 执行
 - [ ] checklist.md 第 10 节全量自测 + 现有功能回归（第 7 节设置相关抽测）
 
-**完成标准**：真机导出 .dat → 微信发送另一设备 → 覆盖导入后计划/打卡/设置/用量与导出时一致、提醒正常调度；增量导入同 id 不重复、打卡不倒退、settings 不被覆盖；选错文件中文报错且数据不变。
+**完成标准**：真机导出 .txt → 微信发送另一设备 → 覆盖导入后计划/打卡/设置/用量与导出时一致、提醒正常调度；增量导入同 id 不重复、打卡不倒退、settings 不被覆盖；选错文件中文报错且数据不变。
+
+## Phase 13 ｜ 本地自动备份（2026-09-03 增补，F9/FR9.7-9.8）
+
+设计依据：[backup-design.md](backup-design.md) v1.1 §11；需求：spec.md FR9.7/FR9.8。Flutter 版实际文件名。
+
+- [x] `lib/services/backup_service.dart`：`exportBackup` 支持固定 `fileName`（单文件覆盖）；新增 `readAutoBackupText` / `autoBackupFileName` / `hasBackupContent`
+- [x] `lib/services/auto_backup_service.dart`（新）：`captureBackupData` 8 项快照聚合；防抖 15 秒 / paused 立即写 / 启动 10 秒兜底；内容去重 + 空数据保护两道防线；`_run` 开头**开关门禁**（`autoBackupEnabled` 为 false 不落盘）；全程静默
+- [x] `lib/models/settings.dart`：`AppSettings.autoBackupEnabled`（**默认 false**，fromJson 缺字段回落 false，老版本升级不自启）
+- [x] `lib/providers/settings_provider.dart`：`update()` 支持 `autoBackupEnabled` patch 持久化；`replaceSettings` 透传开关
+- [x] `android/.../MainActivity.kt`：新增 `readFromDownloads`（MediaStore 按名查询 + 老版本直读，异常返回 null）；`writeViaMediaStore` 同名覆盖（免 `xxx (1).txt` 副本）
+- [x] `lib/main.dart`：创建并 `attach()` 自动备份服务（挂 5 个 Provider 监听）
+- [x] `lib/pages/settings/backup_page.dart`：导入页「自动备份」卡片（更新时间 + 一键恢复 + 文案随开关状态）；覆盖导入前自动留底
+- [x] `lib/pages/settings/settings_page.dart`：「自动备份」改**开关行**（`_SwitchRow` 支持副标题，明示保存到系统 Download 目录）；清空全部数据前自动留底
+- [x] `test/backup_service_test.dart`：自动备份专项用例（固定文件名 / 单文件覆盖 / hasBackupContent / 读回一致）
+- [x] `test/settings_model_test.dart`（新）：开关默认关 / 老数据回落关 / 开启与关闭的序列化往返持久化 共 6 用例
+- [ ] checklist.md §10.5（本地自动备份，含开关与持久化）真机自测 + 第 10 节整体回归
+
+**完成标准**：真机上开关默认关，开启后 Download 只有一份 auto 文件且重启不丢开关状态；改数据后退后台 15 秒内更新时间变化；关闭后不再写入；空数据不冲掉好备份；覆盖导入/清空全部前均有带时间戳留底；导入页一键恢复全流程可用。
 
 ---
 
@@ -171,9 +193,9 @@ Phase 4（提醒）是最大技术风险点，刻意提前到核心 UI 之后、
 
 ```
 Phase 0 → 1 → 2 → 3 → 4(真机) → 5 → 6 → 7 → 11(引导) → 8(打包)
-                   ↑ 风险点：若 Phase 4 需切方案B，则插件集成后回归 Phase 3/4
+                   ↑ Flutter 版提醒方案（flutter_local_notifications）已落地，无方案 B 切换问题
 Phase 11 复用 Phase 1（normalize）/2（导入动作）/5（AI）/7（设置口径）的现成产物，接入点改动在 Phase 8 打包前完成回归
-Phase 12 复用 Phase 1（store 读写模式）/2（文件读取模式）/4（fullReschedule）的现成产物，独立于 Phase 11，随下个安装包发布
+Phase 12 复用 Phase 1（存储读写模式）/2（文件读取模式）/4（fullReschedule）的现成产物，独立于 Phase 11，随下个安装包发布
 ```
 
 ## 里程碑定义

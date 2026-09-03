@@ -2,6 +2,7 @@
 
 版本：v0.2 ｜ 编写日期：2026-09-01 ｜ 状态：**待评审**
 > v0.2 变更：按评审意见收紧范围——**只做引导，不修改任何现有功能**。删除对设置页/今日页/加餐页的改动项与公共组件重构；引导状态改用独立存储键；加餐/加练引导改为指引归档图文承载。
+> **实现状态（2026-09-03 注记）**：本方案交互设计已随 **Flutter 版 v1.0 整体实现**（评审通过后按 F7/F8 落地）——页面/内容源落点为 `lib/pages/onboarding/onboarding_page.dart`、`lib/pages/guide/guide_page.dart`、`lib/data/guide_articles.dart`、`lib/providers/onboarding_provider.dart`；本文中的 uni-app 文件名（onboarding.vue/guide.vue/utils/ai.js 追加区等）为当时方案表述，对应 Flutter 落点见 [design.md](design.md) 第 15 章；H5 截图方案（§6.1）已随迁移废弃，改模拟器/真机截图。
 评审通过后：更新 [spec.md](spec.md)（新增 F7/F8）、[design.md](design.md)、[tasks.md](tasks.md)、[checklist.md](checklist.md) 产出开发文档
 
 ---
@@ -431,6 +432,7 @@ interface GuideArticle {
 | 8 | 已有计划时重跑「重新体验引导」 | 确认完成走增量合并（同 id 更新、新 id 追加），打卡记录保留 |
 | 9 | 生成结果与目标摄入偏差大 | 汇总条缺口着色提示（红/橙/绿），编辑步引导微调，不强制 |
 | 10 | 引导页物理返回键 | Step0/跳过确认弹窗「退出引导？下次还会出现」→ 确认退出不置标记；其他步骤返回上一步 |
+| 11 | 重跑「重新体验引导」时已有基础信息/热量 | 引导页预填 `onboardingState.profile`（性别/年龄/身高/体重/活动量）与已存热量（`settings.bmr>0` 时直读 BMR/TDEE/目标摄入，保留自定义目标；否则按完整 profile 重算），不出现空数据 |
 
 ## 10. 风险与对策
 

@@ -1,38 +1,42 @@
-/// 运动卡片（对应 exercise-card.vue）
-/// 左栏 🏃+橙色时间；中栏「运动」tag+名称+时长/消耗子行；右栏 ✓ / ✕
+/// 运动卡片（F11 快照版，对应 exercise-card.vue + 当日条目快照）
+/// 左栏 🏃+橙色时间；中栏「运动/临时练」tag(+「已改」)+运动内容 content+消耗子行；右栏 ✎ / ✕ / ✓
 library;
 
 import 'package:flutter/material.dart';
 
-import '../models/plan_data.dart';
+import '../models/records.dart';
 import '../theme/app_theme.dart';
 import 'meal_card.dart';
 
 class ExerciseCard extends StatelessWidget {
-  final ExerciseItem exercise;
+  final DayEntry entry;
+  final int? planBurn; // 关联计划项当前消耗（未脱钩计划条目传值，供覆盖划线；其余传 null）
   final bool checked;
-  final bool isTemp; // 临时运动
   final bool focused;
   final VoidCallback? onTap;
-  final VoidCallback? onCheck;
-  final VoidCallback? onDelete;
+  final VoidCallback? onCheck; // 打卡（计划条目）
+  final VoidCallback? onAdjust; // ✎ 编辑（新增）
+  final VoidCallback? onDelete; // ✕（计划外）
 
   const ExerciseCard({
     super.key,
-    required this.exercise,
+    required this.entry,
+    this.planBurn,
     required this.checked,
-    this.isTemp = false,
     this.focused = false,
     this.onTap,
     this.onCheck,
+    this.onAdjust,
     this.onDelete,
   });
 
   @override
   Widget build(BuildContext context) {
+    final isTemp = !entry.isPlan;
     final Color bg = checked
         ? AppColors.primaryBg
         : (isTemp ? const Color(0xFFFCF6EE) : Colors.white);
+    final cal = entry.calories ?? 0;
     return Container(
       margin: const EdgeInsets.only(left: 16, right: 16, bottom: 8),
       decoration: BoxDecoration(
@@ -57,7 +61,7 @@ class ExerciseCard extends StatelessWidget {
                   children: [
                     const Text('🏃', style: TextStyle(fontSize: 22)),
                     const SizedBox(height: 4),
-                    Text(exercise.time,
+                    Text(entry.time,
                         style: const TextStyle(fontSize: 11, color: AppColors.orange)),
                   ],
                 ),
@@ -74,10 +78,14 @@ class ExerciseCard extends StatelessWidget {
                           const Tag('临时练', color: 'orange')
                         else
                           const Tag('运动', color: 'green'),
+                        if (entry.detached && entry.isPlan) ...[
+                          const SizedBox(width: 4),
+                          const Tag('已改', color: 'orange'),
+                        ],
                         const SizedBox(width: 4),
                         Expanded(
                           child: Text(
-                            exercise.name,
+                            entry.content,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -89,20 +97,42 @@ class ExerciseCard extends StatelessWidget {
                     const SizedBox(height: 4),
                     Row(
                       children: [
-                        Text('${exercise.duration} 分钟',
-                            style: const TextStyle(fontSize: 12, color: AppColors.text)),
-                        const SizedBox(width: 6),
-                        Text('≈ -${exercise.caloriesBurned} kcal',
-                            style: const TextStyle(fontSize: 12, color: AppColors.primary)),
+                        if (!entry.isPlan)
+                          Text('≈ -$cal kcal',
+                              style: const TextStyle(fontSize: 12, color: AppColors.primary))
+                        else if (entry.detached)
+                          Text('≈ -$cal kcal',
+                              style: const TextStyle(fontSize: 12, color: AppColors.primary))
+                        else if (entry.caloriesDirty && planBurn != null && planBurn != cal)
+                          Flexible(
+                            child: Text('实际 -$cal',
+                                style: const TextStyle(fontSize: 12, color: AppColors.primary)),
+                          )
+                        else
+                          Text('≈ -$cal kcal',
+                              style: const TextStyle(fontSize: 12, color: AppColors.primary)),
+                        if (entry.isPlan &&
+                            entry.caloriesDirty &&
+                            planBurn != null &&
+                            planBurn != cal) ...[
+                          const SizedBox(width: 4),
+                          Flexible(
+                            child: Text('计划 -$planBurn',
+                                style: const TextStyle(
+                                    fontSize: 11,
+                                    color: AppColors.textSub,
+                                    decoration: TextDecoration.lineThrough)),
+                          ),
+                        ],
                         if (checked) ...[
                           const SizedBox(width: 6),
                           const Tag('已计入', color: 'orange'),
                         ],
                       ],
                     ),
-                    if (exercise.note.isNotEmpty) ...[
+                    if (entry.note.isNotEmpty) ...[
                       const SizedBox(height: 2),
-                      Text(exercise.note,
+                      Text(entry.note,
                           maxLines: 1, overflow: TextOverflow.ellipsis,
                           style: const TextStyle(fontSize: 11, color: AppColors.textSub)),
                     ],
@@ -121,9 +151,17 @@ class ExerciseCard extends StatelessWidget {
                         child: Icon(Icons.close, size: 18, color: AppColors.textSub),
                       ),
                     ),
-                    const SizedBox(width: 8),
+                  ] else ...[
+                    GestureDetector(
+                      onTap: onAdjust,
+                      child: const Padding(
+                        padding: EdgeInsets.all(3),
+                        child: Icon(Icons.edit_outlined, size: 17, color: AppColors.textSub),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    CheckCircle(checked: checked, onTap: onCheck),
                   ],
-                  CheckCircle(checked: checked, onTap: onCheck),
                 ],
               ),
             ],

@@ -1,6 +1,7 @@
-/// 历史数据备份：导出 / 解析 / 增量合并 / 覆盖替换
-/// 设计依据：spec/backup-design.md v1.0（F9）—— 与旧版 backup.js 格式兼容
+/// 历史数据备份：导出 / 解析 / 增量合并 / 覆盖替换 / 自动备份
+/// 设计依据：spec/backup-design.md v1.1（F9）—— 与旧版 backup.js 格式兼容
 /// 备份文件：.txt 纯文本（内容为 JSON），保存到手机存储根目录的 Download 目录
+/// 手动导出 = 时间戳文件（可留档）；自动备份 = 固定名单文件滚动覆盖（见 auto_backup_service.dart）
 /// 导出 = 8 项全量快照；增量导入不触碰 settings/onboardingState/apiUsage；
 /// 覆盖导入 = 全量替换（含 AI 配置，弹窗需强确认）
 library;
@@ -16,17 +17,22 @@ import 'package:share_plus/share_plus.dart';
 import '../models/onboarding.dart';
 import '../models/plan_data.dart';
 import '../models/settings.dart';
+import '../utils/legacy_convert.dart';
 
-/// 备份数据快照（8 项）
+/// 备份数据快照（10 项：planData + 8 记录键 + weightRecords）
+/// [legacy] true = 该备份为 v1 旧格式，解析时已自动转换为含 dayEntries 的新视图（转换标记，供 UI 提示）
 class BackupData {
   final PlanData planData;
   final Map<String, dynamic> checkRecords;
   final Map<String, dynamic> mealAdjust;
   final Map<String, dynamic> tempTasks;
   final Map<String, dynamic> extraFoods;
+  final Map<String, dynamic> dayEntries;
+  final Map<String, dynamic> weightRecords;
   final AppSettings settings;
   final OnboardingState onboardingState;
   final ApiUsage apiUsage;
+  final bool legacy;
 
   const BackupData({
     required this.planData,
@@ -34,9 +40,12 @@ class BackupData {
     required this.mealAdjust,
     required this.tempTasks,
     required this.extraFoods,
+    this.dayEntries = const {},
+    this.weightRecords = const {},
     required this.settings,
     required this.onboardingState,
     required this.apiUsage,
+    this.legacy = false,
   });
 
   Map<String, dynamic> toJson() => {
@@ -45,6 +54,8 @@ class BackupData {
         'mealAdjust': mealAdjust,
         'tempTasks': tempTasks,
         'extraFoods': extraFoods,
+        'dayEntries': dayEntries,
+        'weightRecords': weightRecords,
         'settings': settings.toJson(),
         'onboardingState': onboardingState.toJson(),
         'apiUsage': apiUsage.toJson(),
@@ -68,6 +79,8 @@ class BackupSummary {
   final int checkDays;
   final int checkCount;
   final int tempCount;
+  final int entryCount; // 当日条目快照条数
+  final int weightCount; // 体重记录条数
   final bool hasAiKey;
   const BackupSummary({
     required this.meals,
@@ -75,6 +88,8 @@ class BackupSummary {
     required this.checkDays,
     required this.checkCount,
     required this.tempCount,
+    required this.entryCount,
+    required this.weightCount,
     required this.hasAiKey,
   });
 }
@@ -107,15 +122,31 @@ String backupStamp([DateTime? now]) {
 /// 备份文件名：ASCII（zhiqing = 「知轻」拼音 + 时间戳），中文名在传输端易截断/乱码；扩展名 .txt
 String backupFileName([DateTime? now]) => 'zhiqing-backup-${backupStamp(now)}.txt';
 
+/// 自动备份固定文件名（单文件滚动覆盖，不产生多个备份文件）
+const String autoBackupFileName = 'zhiqing-backup-auto.txt';
+
+/// 当前数据是否含有可备份的实质内容（计划 / 打卡 / 调整 / 临时任务 / 加餐 / 当日快照 / 体重）
+/// 用于自动备份的空数据保护：避免用一份空快照把完好的备份文件冲掉
+bool hasBackupContent(BackupData d) =>
+    d.planData.meals.isNotEmpty ||
+    d.planData.exercises.isNotEmpty ||
+    d.checkRecords.isNotEmpty ||
+    d.mealAdjust.isNotEmpty ||
+    d.tempTasks.isNotEmpty ||
+    d.extraFoods.isNotEmpty ||
+    d.dayEntries.isNotEmpty ||
+    d.weightRecords.isNotEmpty;
+
 /// 备份文件正文（JSON，缩进 2 空格）
 /// 公开以便单元测试直接校验格式，与旧版 backup.js 兼容
+/// formatVersion：1 = v1 旧格式（8 项）；2 = v2（9 项，含 dayEntries 当日条目快照）
 String encodeBackup(BackupData data, {DateTime? now}) =>
     const JsonEncoder.withIndent('  ').convert({
       'app': 'jianfeidazi',
       'type': 'backup',
-      'formatVersion': 1,
+      'formatVersion': 2,
       'exportedAt': (now ?? DateTime.now()).toIso8601String(),
-      'appVersion': '1.0.0',
+      'appVersion': '1.0.2',
       'data': data.toJson(),
     });
 
@@ -151,19 +182,20 @@ class BackupService {
   }
 
   /// 导出：聚合 8 项全量快照 → 写 .txt 到手机存储根目录的 Download 目录
-  /// Android 10+ 走 MediaStore（免权限）；写入失败或用户拒权时降级到应用文档目录
-  Future<ExportResult> exportBackup(BackupData data) async {
+  /// [fileName] 缺省为时间戳文件名；自动备份传固定名实现单文件覆盖
+  /// Android 10+ 走 MediaStore（免权限，同名覆盖）；写入失败或用户拒权时降级到应用文档目录
+  Future<ExportResult> exportBackup(BackupData data, {String? fileName}) async {
     final text = _backupText(data);
-    final fileName = _backupFileName();
+    final name = fileName ?? _backupFileName();
 
     if (Platform.isAndroid) {
       try {
         final saved = await _channel.invokeMethod<String>(
           'saveToDownloads',
-          {'fileName': fileName, 'content': text},
+          {'fileName': name, 'content': text},
         );
         if (saved == null || saved.isEmpty) throw Exception('未返回保存路径');
-        return ExportResult('file://$saved', fileName, savedPath: saved);
+        return ExportResult('file://$saved', name, savedPath: saved);
       } on PlatformException catch (e) {
         // 用户拒绝存储权限：直接向上抛，由 UI 明确提示，不做静默降级
         if (e.code == _errPermission) {
@@ -177,10 +209,34 @@ class BackupService {
 
     // 非 Android 或降级路径：写应用文档目录
     final dir = await getApplicationDocumentsDirectory();
-    final file = File('${dir.path}/$fileName');
+    final file = File('${dir.path}/$name');
     await file.writeAsString(text, flush: true);
-    return ExportResult('file://${file.path}', fileName,
+    return ExportResult('file://${file.path}', name,
         savedPath: file.path, fallback: true);
+  }
+
+  /// 读取自动备份正文（固定文件名）；不存在或不可读返回 null
+  /// Android 优先走 MediaStore 读本应用写入的 Download 文件，再降级应用文档目录
+  Future<String?> readAutoBackupText() async {
+    if (Platform.isAndroid) {
+      try {
+        final t = await _channel.invokeMethod<String>(
+            'readFromDownloads', {'fileName': autoBackupFileName});
+        if (t != null && t.isNotEmpty) return t;
+      } on PlatformException {
+        // 读不到（文件不存在 / 跨设备拷贝无权限等）：继续尝试应用文档目录
+      } on MissingPluginException {
+        // 通道不存在：走降级
+      }
+    }
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final file = File('${dir.path}/$autoBackupFileName');
+      if (await file.exists()) return await file.readAsString();
+    } catch (_) {
+      // 文件系统异常按「无备份」处理
+    }
+    return null;
   }
 
   /// 系统分享文件
@@ -219,54 +275,79 @@ class BackupService {
     if (obj['app'] != 'jianfeidazi' || obj['type'] != 'backup') {
       return const ParseResult.fail('这不是「知轻」的备份文件，请重新选择');
     }
-    if (obj['formatVersion'] != 1) {
-      return const ParseResult.fail('备份版本不支持：formatVersion 必须为 1');
+    final fv = obj['formatVersion'];
+    if (fv != 1 && fv != 2) {
+      return const ParseResult.fail('备份版本不支持：formatVersion 必须为 1 或 2');
     }
     if (obj['data'] is! Map) return const ParseResult.fail('备份文件缺少 data 数据段');
     final d = Map<String, dynamic>.from(obj['data'] as Map);
-    return ParseResult.ok(_normalizeBackup(d), exportedAt: obj['exportedAt']?.toString());
+    return ParseResult.ok(_normalizeBackup(d, legacy: fv != 2),
+        exportedAt: obj['exportedAt']?.toString());
   }
 
   /// 容错归一：防御老版本/手工编辑导致的缺字段
-  BackupData _normalizeBackup(Map<String, dynamic> d) {
+  /// v1 备份（无 dayEntries）→ 在解析期即用备份自带 planData 转换为快照视图（F11 §6.3）
+  BackupData _normalizeBackup(Map<String, dynamic> d, {bool legacy = false}) {
     final planData = _objOf(d['planData']);
     final pMeta = _objOf(planData['meta']);
+    final plan = PlanData(
+      version: planData['version'] is String ? planData['version'] as String : '1.0',
+      meta: PlanMeta.fromJson({
+        'planName': pMeta['planName'],
+        'startDate': pMeta['startDate'],
+        'endDate': pMeta['endDate'],
+        'startedAt': pMeta['startedAt'],
+        'baseWeight': pMeta['baseWeight'],
+        'targetWeight': pMeta['targetWeight'],
+        'dailyCalorieTarget': pMeta['dailyCalorieTarget'],
+        'tdee': pMeta['tdee'],
+      }),
+      meals: (planData['meals'] is List)
+          ? (planData['meals'] as List)
+              .whereType<Map>()
+              .map((e) => MealItem.fromJson(Map<String, dynamic>.from(e)))
+              .toList()
+          : [],
+      exercises: (planData['exercises'] is List)
+          ? (planData['exercises'] as List)
+              .whereType<Map>()
+              .map((e) => ExerciseItem.fromJson(Map<String, dynamic>.from(e)))
+              .toList()
+          : [],
+      deletedIds: (planData['deletedIds'] is List)
+          ? (planData['deletedIds'] as List).whereType<String>().toList()
+          : [],
+    );
+    // dayEntries：v2 直取；v1 用备份内 planData 投影转换为快照（旧备份自动可用）
+    Map<String, dynamic> dayEntries;
+    final rawEntries = d['dayEntries'];
+    if (rawEntries is Map && rawEntries.isNotEmpty) {
+      dayEntries = Map<String, dynamic>.from(rawEntries);
+    } else if (legacy) {
+      final converted = convertLegacyToEntries(
+        plan: plan,
+        checkRecords: _objOf(d['checkRecords']),
+        mealAdjust: _objOf(d['mealAdjust']),
+        tempTasks: _objOf(d['tempTasks']),
+        extraFoods: _objOf(d['extraFoods']),
+      );
+      dayEntries = converted.map((date, list) =>
+          MapEntry(date, list.map((e) => e.toJson()).toList()));
+    } else {
+      dayEntries = {};
+    }
     return BackupData(
-      planData: PlanData(
-        version: planData['version'] is String ? planData['version'] as String : '1.0',
-        meta: PlanMeta.fromJson({
-          'planName': pMeta['planName'],
-          'startDate': pMeta['startDate'],
-          'endDate': pMeta['endDate'],
-          'startedAt': pMeta['startedAt'],
-          'baseWeight': pMeta['baseWeight'],
-          'targetWeight': pMeta['targetWeight'],
-          'dailyCalorieTarget': pMeta['dailyCalorieTarget'],
-          'tdee': pMeta['tdee'],
-        }),
-        meals: (planData['meals'] is List)
-            ? (planData['meals'] as List)
-                .whereType<Map>()
-                .map((e) => MealItem.fromJson(Map<String, dynamic>.from(e)))
-                .toList()
-            : [],
-        exercises: (planData['exercises'] is List)
-            ? (planData['exercises'] as List)
-                .whereType<Map>()
-                .map((e) => ExerciseItem.fromJson(Map<String, dynamic>.from(e)))
-                .toList()
-            : [],
-        deletedIds: (planData['deletedIds'] is List)
-            ? (planData['deletedIds'] as List).whereType<String>().toList()
-            : [],
-      ),
+      planData: plan,
       checkRecords: _objOf(d['checkRecords']),
       mealAdjust: _objOf(d['mealAdjust']),
       tempTasks: _objOf(d['tempTasks']),
       extraFoods: _objOf(d['extraFoods']),
+      dayEntries: dayEntries,
+      weightRecords: _objOf(d['weightRecords']),
       settings: AppSettings.fromJson(_objOf(d['settings'])),
       onboardingState: OnboardingState.fromJson(_objOf(d['onboardingState'])),
       apiUsage: ApiUsage.fromJson(_objOf(d['apiUsage'])),
+      legacy: legacy,
     );
   }
 
@@ -280,12 +361,21 @@ class BackupService {
     data.tempTasks.forEach((date, list) {
       if (list is List) tempCount += list.length;
     });
+    var entryCount = 0;
+    data.dayEntries.forEach((date, list) {
+      if (list is List) entryCount += list.length;
+    });
+    var weightCount = 0;
+    final wr = data.weightRecords['records'];
+    if (wr is Map) weightCount = wr.keys.length;
     return BackupSummary(
       meals: data.planData.meals.length,
       exercises: data.planData.exercises.length,
       checkDays: data.checkRecords.keys.length,
       checkCount: checkCount,
       tempCount: tempCount,
+      entryCount: entryCount,
+      weightCount: weightCount,
       hasAiKey: data.settings.ai.apiKey.isNotEmpty,
     );
   }

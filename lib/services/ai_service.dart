@@ -16,15 +16,16 @@ const String kCalorieSys = '''你是食物热量估算助手。用户描述一�
 {"name":"食物名","calories":总热量整数kcal,"unit":"份量描述","confidence":0到1}
 描述含多种食物时合并估算总值。无法判断时 confidence 给低值。''';
 
-const String kMealEstSys = '''你是营养估算助手。用户描述某一餐实际吃了什么——通常是"计划的餐食 + 今天少了/换了/多了什么"（例如：计划是两个包子一杯豆浆，今天没买到豆浆）。
+const String kMealEstSys = '''你是营养估算助手。用户会描述这一餐实际吃了什么——可能是完整菜名或食物清单，也可能是"计划的餐食 + 今天少了/换了/多了什么"的口语描述，还可能带份量备注。
 请根据中国常见食物热量常识，估算这一餐的实际总热量。
 严格只返回一个 JSON 对象，不要输出任何其他文字：
-{"calories":实际总热量整数kcal,"detail":"一句话拆解，如：包子2个≈440，豆浆没喝0，合计440"}
+{"calories":实际总热量整数kcal,"detail":"一句话拆解，如：黄焖鸡米饭1份≈640，可乐没喝0，合计640"}
 描述模糊时按常见份量估。''';
 
-const String kBurnEstSys = '''你是运动消耗估算助手。用户描述一次实际做的运动（项目+时长或强度），请估算总消耗热量；如提供体重请按体重计算，否则按 65kg 成人估算。
+const String kBurnEstSys = '''你是运动消耗估算助手。用户会描述一次实际做的运动（项目 + 时长/距离/强度，可能带备注）。
+请结合用户的基础资料（性别/年龄/身高/体重，若提供）按运动强度（MET 参照）估算总消耗；未提供体重时按 65kg 成人估算。
 严格只返回一个 JSON 对象，不要输出任何其他文字：
-{"name":"运动名（10字内）","calories":消耗整数kcal,"detail":"一句话拆解，如：慢跑30分钟≈300 kcal"}
+{"name":"运动名（10字内）","calories":消耗整数kcal,"detail":"一句话拆解，如：慢跑40分钟≈300 kcal"}
 描述模糊时按常见强度估。''';
 
 const String kGuidePlanSys = '''你是减脂计划生成助手。用户会描述想吃的餐食和想做的运动（可能是一整段大白话，也可能是逐条列表），请把它生成为结构化计划 JSON。
@@ -241,11 +242,25 @@ class AiService {
   }
 
   /// 一次运动的消耗估算（支持"项目+时长"的口语描述），resolve { name, calories, detail }
-  Future<Map<String, dynamic>> estimateBurn(AiConfig config, String desc, num? weight,
-      {void Function(Map<String, dynamic>)? onUsage}) async {
-    final w = weight;
-    final user =
-        '运动的描述：$desc${(w != null && w > 20 && w < 300) ? '；用户体重约 ${w.round()} kg' : ''}';
+  /// F10：携带个人基础资料（性别/年龄/身高/体重）按强度（MET 参照）估算
+  Future<Map<String, dynamic>> estimateBurn(
+    AiConfig config,
+    String desc, {
+    num? weight,
+    String? gender, // 'male' | 'female'
+    int? age,
+    int? height,
+    void Function(Map<String, dynamic>)? onUsage,
+  }) async {
+    final parts = <String>[];
+    final g = gender == 'male' ? '男性' : (gender == 'female' ? '女性' : '');
+    if (g.isNotEmpty) parts.add(g);
+    if (age != null && age > 0) parts.add('$age岁');
+    if (height != null && height > 0) parts.add('身高${height}cm');
+    if (weight != null && weight > 0 && weight < 300) parts.add('体重约${fmtWeight(weight.toDouble())}kg');
+    final user = parts.isEmpty
+        ? '运动的描述：$desc'
+        : '运动的描述：$desc；用户资料：${parts.join('，')}';
     final content = await chat(
       config,
       [
@@ -299,7 +314,7 @@ class AiService {
     if (p.gender.isNotEmpty) meta.add(p.gender == 'male' ? '男性' : '女性');
     if (p.age != null) meta.add('${p.age}岁');
     if (p.height != null) meta.add('身高${p.height}cm');
-    if (p.weight != null) meta.add('体重约${p.weight}kg');
+    if (p.weight != null) meta.add('体重约${fmtWeight(p.weight!)}kg');
     final user = '今天是 ${dateCn(todayStr())}（${todayStr()}）。'
         '${meta.isNotEmpty ? '用户资料：${meta.join('，')}。' : ''}'
         '用户的需求描述：\n$inputText';

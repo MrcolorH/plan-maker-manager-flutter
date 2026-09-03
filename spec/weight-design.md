@@ -1,0 +1,296 @@
+# 体重记录与基础消耗快照设计（weight-design.md）
+
+版本：v1.0（2026-09-03）｜ 对应 App 版本：**1.0.2**（与 F11 同日同包落地）｜ 配套：[spec.md](spec.md)（F10）｜ [backup-design.md](backup-design.md)
+状态：**已实现**（2026-09-03 落地，随 App v1.0.2；实现说明：备份基线按 F11 现状为 formatVersion 2 / 10 项，非本文档假设的 formatVersion 1 / 9 项——以代码为准）
+
+实现记录：models/weight.dart（WeightData/WeightEntry/WeightBaseline）、records.dart（RecordStore.weightRecords）、calorie_utils.dart（baseBurnForDate 沿用链/weightForDate，dailySummary 双路径改按日取值）、record_provider.dart（ensureBaseline/setWeightRecord/removeWeightRecord + 备份合并）、settings_provider.dart（bmr/tdee 变更前固化钩子）、main.dart（装配钩子）、settings_page.dart（体重记录行 + _WeightSheet 录入弹层）、stats_page.dart（月历体重小字 + 详情 4 格 + 基础消耗核对行）、ai_service.dart（estimateBurn 带个人资料 + 调用点 3 处）、backup_service/auto_backup/backup_page（10 项快照）。测试 test/weight_records_test.dart（8 例），全量 99 例绿 + analyze 0。
+
+---
+
+## 1. 背景与目标（v1.0.1 四项需求）
+
+| # | 需求 | 性质 |
+|---|------|------|
+| R1 | 增加体重录入记录功能 | 新功能 |
+| R2 | 录入新体重后基础热量消耗变化，导致**历史热量缺口数据异常** | Bug 修复（本期核心） |
+| R3 | 日历中展示录入的体重和基础消耗（当天没更新体重就沿用之前的数据） | 新功能 |
+| R4 | 运动数据 AI 测算需要结合个人基础信息计算 | 优化 |
+
+### 1.1 R2 根因分析
+
+现状 `lib/utils/calorie_utils.dart` 的 `baseBurn(AppSettings settings)` 是**全局单值**：
+
+```
+基础消耗 = settings.bmr > 0 ? round(bmr × 1.2) : settings.tdee
+```
+
+`dailySummary()` 对**任意历史日期**都调用它。于是：
+
+- 引导/估算器改了 `settings.bmr`（例如体重从 75kg 改到 70kg）→ **所有历史日期**的基础消耗同步被改写 → 历史缺口全部漂移；
+- 本期新增的体重录入若直接改 `settings.bmr`，会放大同一个问题。
+
+**修复原则：历史日期的基础消耗一旦成为事实就不再变化；只有「从生效日起」才应用新的基础消耗。**
+
+### 1.2 方案总览（沿用链快照）
+
+1. 新增**按日体重记录** `weightRecords`（存储键，§2）。每条记录在录入时**快照当时算出的 BMR**（`{weight, bmr, updatedAt}`），后续基础信息（性别/年龄/身高）再改动也不影响已录入日期——历史绝对稳定。
+2. 新增**基准固化** `baseline`：第一次「基础消耗口径即将变化」且本机已有历史记录数据时，把当时的 `baseBurn` 值连同日期固化下来（§3.2）。固化前的所有日期永远用这个值。
+3. `baseBurnForDate(date)` 按沿用链取值（§3.1），替换 `dailySummary` 里的全局 `baseBurn(settings)`。
+4. 体重与基础消耗在月历格子、某日详情弹层展示，未录入的天**沿用最近一次记录**（与沿用链同一口径，R2/R3 天然一致）。
+5. 运动消耗 AI 估算携带当天生效体重 + 个人基础信息（性别/年龄/身高/体重，§6）。
+
+---
+
+## 2. 数据模型
+
+### 2.1 新存储键 `weightRecords`（第 9 个本地键）
+
+```json
+{
+  "baseline": { "base": 1814, "date": "2026-09-03" },
+  "records": {
+    "2026-09-03": { "weight": 68.55, "bmr": 1512, "updatedAt": 1756857600000 }
+  }
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `baseline.base` | int | 固化的基准基础消耗（kcal，已是 BMR×1.2 口径或旧 tdee 口径，与固化时的 `baseBurn(settings)` 完全一致） |
+| `baseline.date` | string | 固化日（YYYY-MM-DD）。**严格早于该日的日期**才使用 baseline |
+| `records.<date>.weight` | double | 体重 kg，允许两位小数（UI 限制 30.00–300.00，如 68.55） |
+| `records.<date>.bmr` | int | 录入时按当时基础信息快照计算的 BMR；**基础信息不完整时存 0**（该记录不参与基础消耗计算，仅作体重展示） |
+| `records.<date>.updatedAt` | int | 毫秒时间戳，同日重复录入覆盖并刷新 |
+
+规则：
+
+- **一天一条**：同日重复录入 = 覆盖（当天体重波动对 BMR 影响可忽略，不做多条历史）。
+- **不裁剪**：不参与 `_prune` 的 400 天清理（一天约 80 字节，10 年 < 300KB；裁剪会斩断沿用链）。超长期膨胀风险见 §9。
+- 挂在 `RecordStore` 上作为第 5 个 Map（`weightRecords`），复用 RecordProvider 的持久化/清空/备份/自动备份监听全部现有链路。
+
+### 2.2 `settings.bmr` / `settings.tdee` / `profile.weight` 的角色
+
+| 场景 | 行为 |
+|------|------|
+| 体重录入（基础信息完整） | **同步更新** `settings.bmr` = 新 BMR（走 `SettingsProvider.update`，供 fallback 与设置页口径一致；`tdee` 不动，仍是「BMR×活动系数」的参考总消耗）；同时同步 `profile.weight` = 本次体重（与体重记录保持一致） |
+| 体重录入（基础信息不完整） | 不改 `settings.bmr`，记录 `bmr=0`，UI 提示去「热量设置」补全；`profile.weight` 仅在 profile 已有内容时同步（避免给空档案造半截数据） |
+| 热量设置弹层估算器 / 手填 | 行为不变（写 `settings.bmr` / `settings.tdee` / `profile`），但变更前触发基准固化（§3.2） |
+| 统计计算 | `settings.bmr/tdee` 降级为沿用链的**最后一环 fallback**（§3.1 步骤③） |
+
+> `UserProfile.weight` 类型为 `double?`（两位小数，与体重记录同口径），保证录体重同步时不丢小数；展示用去尾零格式化（68.0 → 68、68.50 → 68.5）。
+
+---
+
+## 3. 核心算法：基础消耗按日沿用
+
+### 3.1 `baseBurnForDate(settings, records, dateStr)`
+
+```
+① 体重记录链：records 中 date ≤ dateStr 的最近一条记录：
+     bmr > 0  → round(bmr × 1.2)
+     bmr == 0 → 继续往下（录入时基础信息不全，该记录不决定基础消耗）
+② 历史基准：baseline 存在 且 dateStr < baseline.date → baseline.base
+③ 兜底（现状口径）：settings.bmr > 0 ? round(settings.bmr × 1.2) : settings.tdee
+```
+
+配套显示函数 `weightForDate(records, dateStr)`：`records` 中 `date ≤ dateStr` 最近一条的 `weight`；无则 `null`（UI 显示「未记录」）。
+
+**替换点**：`dailySummary()`（及 `baseBurn()` 的全部调用点）改用 `baseBurnForDate(..., dateStr)`；`weekData / trendData / monthReview / dayDetail` 均经由 `dailySummary`，无需单独修改。
+
+### 3.2 基准固化时机（`ensureBaseline`）
+
+固化动作：`baseline == null` **且** 本机存在历史记录数据（`checkRecords / tempTasks / extraFoods / mealAdjust` 任一非空）时，写入 `baseline = { base: baseBurn(当前settings), date: todayStr() }`。幂等：`baseline` 已存在则跳过。
+
+| 触发点 | 场景 | 效果 |
+|--------|------|------|
+| 首次录入体重（流程最前步） | 升级用户开始记体重 | 固化日之前的所有日期基础消耗 = 升级前值，**历史缺口一个数都不变** |
+| `SettingsProvider.update()` 中 `bmr`/`tdee` 即将变化时（赋值前） | 估算器重估、手填 | 不录体重的用户改估算器，历史也稳定；固化日之后按新值计算 |
+| `SettingsProvider.applyMeta()` 中 `tdee` 即将变化时 | 导入计划携带 meta | 同上 |
+
+装配方式：`SettingsProvider` 经构造注入回调（与现有 `_getPlan` 模式一致），`main.dart` 中回调实现为「读当前 `baseBurn(settings)` → `recordProvider.ensureBaseline(base)`」。**覆盖导入 `replaceSettings` 不触发固化**（历史数据整体被替换，baseline 随备份的 `weightRecords` 一起恢复）。
+
+### 3.3 兼容矩阵（验收核心）
+
+| 用户状态 | 历史日期（< 生效日） | 生效日起 |
+|----------|---------------------|----------|
+| 升级用户，从未录体重、改过估算器 | 固化前的旧口径值（不变） | 新 bmr/tdee 现算 |
+| 升级用户，首次录体重（信息完整） | `baseline.base`（= 升级前值，不变） | 新记录 `bmr×1.2` |
+| 升级用户，首次录体重（信息不全） | `baseline.base`（不变） | 现状口径 fallback（记录仅展示体重） |
+| 新装用户，无历史记录 | —（无历史） | 改任何值都即时生效，无固化 |
+| 删光全部体重记录 | `baseline` 保留，仍稳定 | 回到现状口径 fallback |
+
+---
+
+## 4. R1 体重录入功能
+
+### 4.1 入口
+
+设置页「热量」分组新增一行（现有展示行 + 更新数据按钮不动）：
+
+```
+热量
+├ 基础消耗(TDEE)   2000 kcal      仅展示
+├ 每日目标摄入     1400 kcal      仅展示
+├ 基础信息         男 · 28岁 · 170cm · 60kg · 久坐   仅展示（profile 已存时显示）
+├ [更新数据]                      → 热量设置弹层（现有，可修改重新估测）
+└ 体重记录         68.5 kg · 09-03 → 体重记录弹层（新增）
+                                   未记录时 value 显示「未记录」
+```
+
+### 4.2 体重记录弹层（bottom sheet）
+
+- **顶部录入区**：日期固定为今天 + 体重输入框（数字键盘，允许两位小数；已录入今天则预填当前值）+「保存」按钮。
+- **实时预览行**：输入合法体重时即时显示「按此体重与基础信息估算：BMR ≈ 1512 kcal · 基础消耗 ≈ 1814 kcal（BMR×1.2）」；基础信息不完整时显示引导文案「完善基础信息（性别/年龄/身高，在热量设置中）后，体重才会参与基础消耗计算」。
+- **历史列表**：全部记录倒序，每行 = 日期 + 体重 + 当日生效基础消耗（沿用口径算出）；单条可删（二次确认）。删除仅影响展示与后续沿用，**不回改 baseline**（§3.3）。
+- **保存流程**（顺序固定）：① `ensureBaseline`（固化旧值）→ ② 写 `records[today]`（快照 BMR）→ ③ 基础信息已有内容（`profile` 有 gender/age/height/weight 任一）时**同步 `profile.weight = 本次体重`**（设置页「基础信息」行与体重记录两处体重保持一致）→ ④ 基础信息完整时 `update({'bmr': 新BMR})`（update 内部在 bmr 变化前会再触发一次固化，幂等无副作用）→ ⑤ `notifyListeners` 刷新今日页/统计页，并经现有监听进入自动备份防抖。
+
+### 4.3 边界规则
+
+- 体重合法区间 30.00–300.00 kg（允许两位小数），超出就地红字提示不保存。
+- 体重录入**不记入打卡天**：不影响连续打卡/累计打卡/月历完成度着色（`dayActive` 不感知体重）。
+- 未来日期不可录入（弹层只针对今天；历史补录体重本期不做，见 §9）。
+
+---
+
+## 5. R3 日历与详情展示
+
+### 5.1 月历格子（统计页）
+
+- 当天**有体重录入**的格子：日期数字下方追加 8px 小字体重（如 `68.5`，`AppColors.textSub` 灰色），与现有「开始日绿点」共存（格子纵向空间充足，数字 13px + 小字 8px + 点 5px ≈ 35px < 格高 50px）。
+- 没有录入的天**不在格子上显示沿用值**（避免满屏重复噪音）；沿用值在日详情里可见（§5.2）。
+- 月历卡底部说明行追加一句：「有体重的日子显示体重，未录入的沿用前次数据」。
+
+### 5.2 某日详情弹层（`_DayDetailSheet`）
+
+- 统计行 3 格 → **4 格**：计划完成 / 已摄入 / 热量缺口 / **体重**（生效值 `68.5 kg`；无任何沿用来源显示「未记录」灰字；未来日期显示「—」）。
+- 统计行下新增一行小字（仅 `!future && !beforeStart && hasData` 时）：`基础消耗 N kcal（BMR×1.2，不含运动）· 运动消耗 M kcal`，方便核对缺口 = 基础 + 运动 − 摄入。
+- 沿用语义：未录入体重的天显示沿用后的生效体重与对应基础消耗，与 `baseBurnForDate` 完全同一口径——**用户在详情里看到的数字就是缺口计算实际用的数字**。
+
+---
+
+## 6. R4 运动消耗 AI 测算结合个人基础信息
+
+### 6.1 `estimateBurn` 扩展（`lib/services/ai_service.dart`）
+
+```dart
+Future<Map<String, dynamic>> estimateBurn(
+  AiConfig config,
+  String desc, {
+  num? weight, String? gender, int? age, int? height,
+  void Function(Map<String, dynamic>)? onUsage,
+})
+```
+
+- 系统提示词 `kBurnEstSys` 更新为：结合用户资料（性别/年龄/身高/体重，若提供）按运动强度（MET）估算总消耗；未提供体重时按 65kg 成人兜底。返回 JSON 结构（name/calories/detail）不变。
+- user 消息组装：`运动的描述：{desc}` + 可选 `；用户资料：男性，30岁，身高175cm，体重68.5kg`（资料不完整就不拼对应项）。
+
+### 6.2 调用点改造（2 处）
+
+| 调用点 | 现状 | 改造后 |
+|--------|------|--------|
+| 今日页 `_ExerciseSheet`（today_page.dart） | 只传 `profile.weight` | 体重 = `weightForDate(today)` ?? `profile.weight`；性别/年龄/身高 = profile（complete 才传） |
+| 统计页 `_RecordSheet` 补录锻炼（stats_page.dart） | 同上 | 同上（补录历史日期时体重取 `weightForDate(该日期)`，更贴合当天状态） |
+
+### 6.3 范围说明
+
+- 引导页 `generatePlanFromInput` 已携带 profile 生成计划，**本次不动**（引导期用户尚无体重记录序列，profile 即最准来源）。
+- 计划导入/计划项的 `caloriesBurned` 为计划静态值，不由 AI 按人重算（维持「计划即契约」语义，AI 只用于临时/补录运动与计划生成的估算）。
+
+---
+
+## 7. 备份与数据管理兼容
+
+依据 [backup-design.md](backup-design.md)，快照从 8 项扩为 **9 项**（新增 `weightRecords`，原样透传 Map）：
+
+| 环节 | 改动 |
+|------|------|
+| `BackupData` / `encodeBackup` | 增加 `weightRecords` 字段；`appVersion` 写 `'1.0.1'`；**formatVersion 保持 1**（新增可选字段，双向兼容见下） |
+| `captureBackupData` | 聚合 `record.store.weightRecords` |
+| 增量导入 `mergeRecords` | `records` 逐日期按 `updatedAt` 取较新；`baseline` 双方都有时取 `date` 较早者（保留更长的历史基准），本机为空才直接取备份 |
+| 覆盖导入 `replaceRecords` | 整体替换（含 baseline） |
+| `hasBackupContent` | `weightRecords.records` 非空也视为有实质内容（空数据保护口径同步） |
+| `buildBackupSummary` | 概要新增「体重记录 N 条」 |
+| 清空全部数据 | `RecordProvider.clearRecords` 一并清空 `weightRecords`（设置页确认弹窗文案补「体重记录」） |
+| 自动备份 | RecordProvider 变更即触发现有防抖监听，无需额外接线；设置页开关副标题文案补「含体重记录」 |
+
+**双向兼容**：
+
+- 1.0.0 读 1.0.1 备份：`_normalizeBackup` 白名单取 8 项，`weightRecords` 被忽略不报错 → 体重记录不迁移（已知限制，导入概要提示「检测到新版本字段（体重记录），旧版本导入将丢弃」——1.0.0 无此提示能力，仅在 1.0.1 的导入概要中对「本备份含体重记录」做提示）。
+- 1.0.1 读 1.0.0 备份：`weightRecords` 缺失 → 空对象，走现状 fallback，正常。
+- 覆盖导入确认弹窗的风险文案沿用 backup-design 的现有文案，追加「体重记录将一并替换/恢复」。
+
+---
+
+## 8. 代码改动清单（只增不改约束）
+
+| 文件 | 改动 | 性质 |
+|------|------|------|
+| `lib/models/records.dart` | `RecordStore` 增第 5 个 Map `weightRecords`（+ `fromJson/toJson` 解析、`weightForDate` 辅助） | 增 |
+| `lib/models/weight.dart`（新） | `WeightRecord` 模型 + `WeightData`（baseline + records）序列化 | 新文件 |
+| `lib/utils/calorie_utils.dart` | 新增 `baseBurnForDate()`；`dailySummary()` 内 3 处 `baseBurn(settings)` 改为按日期取值；`baseBurn()` 保留为 fallback 实现 | 改（核心） |
+| `lib/providers/record_provider.dart` | `setWeight / removeWeight / ensureBaseline / replaceRecords / mergeRecords / clearRecords / _load` 接入 weightRecords | 增 |
+| `lib/providers/settings_provider.dart` | `update / applyMeta` 在 bmr/tdee 变更前触发固化回调（构造注入 hook） | 改（小） |
+| `lib/main.dart` | 装配固化回调 | 改（约 3 行） |
+| `lib/models/onboarding.dart` | `UserProfile.weight` `int?` → `double?`（两位小数，与体重记录同口径）；顶层 `fmtWeight` 展示去尾零 | 改（小） |
+| `lib/providers/onboarding_provider.dart` | `saveProfile` 体重 patch 不再 round（保留小数） | 改（小） |
+| `lib/pages/onboarding/onboarding_page.dart` | 引导 Step1 体重输入允许两位小数（预填 `fmtWeight`、`double.tryParse`） | 改（小） |
+| `lib/services/ai_service.dart` | `estimateBurn` 签名与 `kBurnEstSys` 提示词；体重描述保留小数（不 round） | 改 |
+| `lib/pages/today/today_page.dart` | `_ExerciseSheet._aiEstimate` 传完整资料与当天生效体重 | 改（约 8 行） |
+| `lib/pages/stats/stats_page.dart` | `_RecordSheet._aiEstimate` 同上；月历格子体重小字；`_DayDetailSheet` 4 格 + 基础消耗行 | 改 |
+| `lib/pages/settings/settings_page.dart` | 「体重记录」行 + `_WeightSheet` 弹层；保存流程 ③ 同步 `profile.weight`（`_hasProfileBase` 时）；估算器体重输入允许两位小数；版本行 1.0.1 | 增 |
+| `lib/services/backup_service.dart` | 9 项快照 / 合并 / 概要 / appVersion | 改 |
+| `lib/services/auto_backup_service.dart` | 文案「含 AI 配置与体重记录」（若副标题在 settings_page 则随其改） | 文案 |
+| `pubspec.yaml` | `version: 1.0.1+2` | 改 |
+| `test/weight_records_test.dart`（新） | §10 用例 | 新文件 |
+| `test/backup_service_test.dart` | weightRecords roundtrip / 兼容用例 | 增 |
+| `spec/*` | 本文档 + spec.md F10 + README 导航 | 文档 |
+
+明确**不动**：引导页（onboarding）、今日页布局（不加体重卡）、guide 8 篇教程、`planData` 结构、提醒调度、`settings_page` 现有两行入口、`extraFoods` 兼容逻辑。
+
+---
+
+## 9. 不做的事与已知限制
+
+1. **不做**历史日期补录体重（弹层仅今天）；不做腰围/体脂等多指标（保留 P1 候选）；不做体重趋势曲线图（P1）。
+2. **不做**今日页体重快捷入口（P2 候选，先观察设置页入口的使用频率）。
+3. **不做**使用指引新增教程篇（新增一篇需真实截图素材，成本大于收益；弹层内自带说明文案兜底）。
+4. 体重记录**不参与**打卡天/完成度口径。
+5. 一天一条记录：同日内多次称重取最后一次，不做日内曲线。
+6. 不裁剪策略的膨胀上限：一天一条 ≈ 80B，10 年 < 300KB，远低于「单键几百 KB」非功能约束；超出预期时再引入归档。
+7. 1.0.0 老版本导入 1.0.1 备份会丢弃体重记录（§7）。
+8. `design.md` 已于 2026-09-03 重写为 Flutter 版 v2.0（以 `lib/` 实际代码为准）；本 v1.0.1 设计的存储/算法增量以本文档为准，实现后按 §8 改动清单回填 design.md（§6.2 存储键表新增 `weightRecords`、§7.2 缺口算法改 `baseBurnForDate`）。
+
+---
+
+## 10. 测试与验收要点
+
+### 10.1 单元测试（新增 `test/weight_records_test.dart`）
+
+1. **沿用链**：无任何数据 → 现状口径；仅 baseline → `date < baseline.date` 用 baseline、其余现算；有记录 → 最近 ≤date 记录的 `bmr×1.2`；记录 `bmr=0` 跳过继续沿链。
+2. **R2 回归（最关键）**：构造 30 天历史打卡数据 → 记录各日缺口 → 录入新体重（BMR 变化 100kcal）→ **逐日断言 30 天历史缺口与基础消耗完全不变**，仅当天变化。
+3. **固化**：有历史记录时改 bmr/tdee 触发固化且幂等；无历史不固化；覆盖导入不触发。
+4. **体重录入**：同日覆盖刷新 `updatedAt`；信息不全时 `bmr=0` 且不改 `settings.bmr`；信息完整时 `settings.bmr` 同步。
+5. **备份**：roundtrip 含 weightRecords；1.0.0 格式（无 weightRecords）解析正常；增量合并 `updatedAt` 较新者胜、baseline 取较早日期。
+6. **删除回退**：删中间某天 → 该天起沿用更早记录；删光 → baseline 保留。
+
+### 10.2 手工验收清单
+
+- [ ] 设置页出现「体重记录」行，未记录显示「未记录」
+- [ ] 录入 68.5 → 今日页基础消耗立即变化；昨日及更早缺口与录入前**逐日一致**（详情弹层逐日抽查）
+- [ ] 次日再录入不同体重 → 两天的详情分别显示各自的体重与基础消耗
+- [ ] 基础信息不完整时录入 → 预览行显示引导文案，历史缺口不变
+- [ ] 月历有体重的格子显示小字；点开详情 4 格含体重 + 基础消耗行
+- [ ] 当天运动「AI 算」与统计页补录锻炼：AI 拆解结果明显按 68.5kg（而非 65kg 默认）计算
+- [ ] 导出备份文本含 `weightRecords` 且 `appVersion: "1.0.1"`；覆盖导入后体重记录恢复
+- [ ] 清空全部数据后体重记录清空；自动备份文件随体重变更更新
+- [ ] `flutter analyze` 零告警；`env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy flutter test` 全绿
+- [ ] `flutter build apk --release` 出包，真机回归上述清单
+
+---
+
+## 11. 版本信息
+
+> **落地注记（2026-09-03）**：F10 实际与 F11 同日同包落地，版本为 **1.0.2**（见文件头注记）。以下为 F10 独立发版假设下的版本演进记录，以代码为准：
+- `pubspec.yaml`：`1.0.0+1` → **`1.0.1+2`**（versionName 1.0.1 / versionCode 2）
+- 备份 `appVersion`：`1.0.0` → `1.0.1`
+- 设置页「版本」行：`1.0.1`

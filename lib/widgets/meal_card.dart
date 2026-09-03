@@ -1,10 +1,10 @@
-/// 餐食卡片（对应 meal-card.vue）
-/// 左栏 emoji+橙色时间；中栏类型 tag+名称+子行；右栏操作（✎ 调整 / ✕ 删除 / ✓ 打卡）
+/// 餐食卡片（F11 快照版，对应 meal-card.vue + 当日条目快照）
+/// 左栏 emoji+橙色时间；中栏类型 tag(+「已改」)+食物内容 content+子行；右栏 ✎ 调整 / ✕ 删除（计划外）/ ✓ 打卡
 library;
 
 import 'package:flutter/material.dart';
 
-import '../models/plan_data.dart';
+import '../models/records.dart';
 import '../theme/app_theme.dart';
 import '../utils/plan_utils.dart';
 
@@ -46,25 +46,21 @@ class CheckCircle extends StatelessWidget {
 }
 
 class MealCard extends StatelessWidget {
-  final MealItem meal;
+  final DayEntry entry;
+  final int? planCalories; // 计划当前热量（未脱钩计划条目传值，供覆盖划线；其余传 null）
   final bool checked;
-  final bool isTemp; // 临时加餐（非计划餐）
-  final bool focused; // 通知定位高亮
-  final int? actualCal; // 当日实际摄入覆盖
-  final String actualNote;
+  final bool focused;
   final VoidCallback? onTap; // 卡片空白 → 详情
-  final VoidCallback? onCheck; // 打卡
+  final VoidCallback? onCheck; // 打卡（计划条目）
   final VoidCallback? onAdjust; // ✎
-  final VoidCallback? onDelete; // ✕（临时项）
+  final VoidCallback? onDelete; // ✕（计划外条目）
 
   const MealCard({
     super.key,
-    required this.meal,
+    required this.entry,
+    this.planCalories,
     required this.checked,
-    this.isTemp = false,
     this.focused = false,
-    this.actualCal,
-    this.actualNote = '',
     this.onTap,
     this.onCheck,
     this.onAdjust,
@@ -73,6 +69,7 @@ class MealCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isTemp = !entry.isPlan;
     final Color bg = checked
         ? AppColors.primaryBg
         : (isTemp ? const Color(0xFFFCF6EE) : Colors.white);
@@ -98,10 +95,10 @@ class MealCard extends StatelessWidget {
                 width: 46,
                 child: Column(
                   children: [
-                    Text(_typeEmoji[meal.type] ?? '🍽',
+                    Text(_typeEmoji[entry.slot] ?? '🍽',
                         style: const TextStyle(fontSize: 22)),
                     const SizedBox(height: 4),
-                    Text(meal.time,
+                    Text(entry.time,
                         style: const TextStyle(fontSize: 11, color: AppColors.orange)),
                   ],
                 ),
@@ -118,11 +115,15 @@ class MealCard extends StatelessWidget {
                         if (isTemp)
                           const Tag('今日加', color: 'orange')
                         else
-                          Tag(kTypeCn[meal.type] ?? meal.type, color: 'green'),
+                          Tag(kTypeCn[entry.slot] ?? entry.slot, color: 'green'),
+                        if (entry.detached && entry.isPlan) ...[
+                          const SizedBox(width: 4),
+                          const Tag('已改', color: 'orange'),
+                        ],
                         const SizedBox(width: 4),
                         Expanded(
                           child: Text(
-                            meal.name,
+                            entry.content,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -143,10 +144,9 @@ class MealCard extends StatelessWidget {
                 children: [
                   if (isTemp) ...[
                     _iconBtn(Icons.close, AppColors.textSub, onDelete, 18),
-                    const SizedBox(width: 6),
                   ] else ...[
                     _iconBtn(Icons.edit_outlined,
-                        actualCal != null ? AppColors.primary : AppColors.textSub,
+                        entry.caloriesDirty || entry.detached ? AppColors.primary : AppColors.textSub,
                         onAdjust, 17),
                     const SizedBox(width: 8),
                     CheckCircle(checked: checked, onTap: onCheck),
@@ -161,36 +161,17 @@ class MealCard extends StatelessWidget {
   }
 
   Widget _subRow() {
-    if (isTemp) {
+    final cal = entry.calories;
+    if (!entry.isPlan) {
+      // 计划外加餐：即计缺口，展示热量
       return Row(
         children: [
-          Text('${meal.calories ?? 0} kcal',
+          Text('${cal ?? 0} kcal',
               style: const TextStyle(fontSize: 12, color: AppColors.orange)),
-          if (checked) ...[
-            const SizedBox(width: 6),
-            const Tag('已计入', color: 'orange'),
-          ],
-        ],
-      );
-    }
-    // 计划餐
-    final free = meal.calories == null;
-    if (actualCal != null) {
-      // 实际覆盖（老版：橙色实际值 + 灰色删除线计划值）
-      return Row(
-        children: [
-          Text('实际 $actualCal kcal',
-              style: const TextStyle(fontSize: 12, color: AppColors.orange)),
-          if (meal.calories != null) ...[
-            const SizedBox(width: 4),
-            Text('计划 ${meal.calories}',
-                style: const TextStyle(
-                    fontSize: 11, color: AppColors.textSub, decoration: TextDecoration.lineThrough)),
-          ],
-          if (actualNote.isNotEmpty) ...[
+          if (entry.note.isNotEmpty) ...[
             const SizedBox(width: 4),
             Expanded(
-              child: Text(actualNote,
+              child: Text(entry.note,
                   maxLines: 1, overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontSize: 11, color: AppColors.textSub)),
             ),
@@ -198,22 +179,70 @@ class MealCard extends StatelessWidget {
         ],
       );
     }
-    if (free) {
-      return const Row(
+    if (cal == null) {
+      // 待补录（自由餐 / 未测算）
+      return Row(
         children: [
-          Tag('自由餐', color: 'default'),
-          Text('打卡后补录实际热量', style: TextStyle(fontSize: 11, color: AppColors.textSub)),
+          const Tag('自由餐', color: 'default'),
+          const Text('打卡后补录实际热量', style: TextStyle(fontSize: 11, color: AppColors.textSub)),
+          if (entry.note.isNotEmpty) ...[
+            const SizedBox(width: 4),
+            Expanded(
+              child: Text(entry.note,
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 11, color: AppColors.textSub)),
+            ),
+          ],
+        ],
+      );
+    }
+    if (entry.detached) {
+      // 已脱钩：只显示实际值 + 备注（无划线计划值，与计划无关）
+      return Row(
+        children: [
+          Text('$cal kcal',
+              style: const TextStyle(fontSize: 12, color: AppColors.orange)),
+          if (entry.note.isNotEmpty) ...[
+            const SizedBox(width: 4),
+            Expanded(
+              child: Text(entry.note,
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 11, color: AppColors.textSub)),
+            ),
+          ],
+        ],
+      );
+    }
+    // 未脱钩：覆盖则显示实际 + 划线计划值；否则计划值 + 备注
+    final dirty = entry.caloriesDirty && planCalories != null && planCalories != cal;
+    if (dirty) {
+      return Row(
+        children: [
+          Text('实际 $cal kcal',
+              style: const TextStyle(fontSize: 12, color: AppColors.orange)),
+          const SizedBox(width: 4),
+          Text('计划 $planCalories',
+              style: const TextStyle(
+                  fontSize: 11, color: AppColors.textSub, decoration: TextDecoration.lineThrough)),
+          if (entry.note.isNotEmpty) ...[
+            const SizedBox(width: 4),
+            Expanded(
+              child: Text(entry.note,
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 11, color: AppColors.textSub)),
+            ),
+          ],
         ],
       );
     }
     return Row(
       children: [
-        Text('${meal.calories} kcal',
+        Text('$cal kcal',
             style: const TextStyle(fontSize: 12, color: AppColors.orange)),
-        if (meal.note.isNotEmpty) ...[
+        if (entry.note.isNotEmpty) ...[
           const SizedBox(width: 4),
           Expanded(
-            child: Text(meal.note,
+            child: Text(entry.note,
                 maxLines: 1, overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontSize: 11, color: AppColors.textSub)),
           ),

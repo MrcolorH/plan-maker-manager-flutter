@@ -64,6 +64,7 @@ class AppSettings {
   int dailyCalorieTarget;
   bool reminderEnabled;
   int reminderAdvance; // 分钟
+  bool autoBackupEnabled; // 本地自动备份开关（默认关；开启后持久化，除非手动关闭/清空数据否则保持，见 spec/backup-design.md §11）
   AiConfig ai;
 
   AppSettings({
@@ -72,6 +73,7 @@ class AppSettings {
     this.dailyCalorieTarget = 1400,
     this.reminderEnabled = true,
     this.reminderAdvance = 0,
+    this.autoBackupEnabled = false,
     AiConfig? ai,
   }) : ai = ai ?? AiConfig();
 
@@ -85,6 +87,9 @@ class AppSettings {
             ? json['reminderEnabled'] as bool
             : true,
         reminderAdvance: _int(json['reminderAdvance'], 0),
+        autoBackupEnabled: json['autoBackupEnabled'] is bool
+            ? json['autoBackupEnabled'] as bool
+            : false, // 老版本存储无此字段 → 默认关，由用户在设置页主动开启
         ai: json['ai'] is Map
             ? AiConfig.fromJson(Map<String, dynamic>.from(json['ai'] as Map))
             : AiConfig(),
@@ -96,19 +101,20 @@ class AppSettings {
         'dailyCalorieTarget': dailyCalorieTarget,
         'reminderEnabled': reminderEnabled,
         'reminderAdvance': reminderAdvance,
+        'autoBackupEnabled': autoBackupEnabled,
         'ai': ai.toJson(),
       };
 
   static int _int(dynamic v, int def) => v is num ? v.round() : def;
 }
 
-/// Mifflin-St Jeor 公式估算 BMR（基础代谢）
-int estimateBmr({required String gender, required int height, required int weight, required int age}) {
+/// Mifflin-St Jeor 公式估算 BMR（基础代谢）；weight 支持两位小数（F10 体重记录）
+int estimateBmr({required String gender, required int height, required num weight, required int age}) {
   return (10 * weight + 6.25 * height - 5 * age + (gender == 'male' ? 5 : -161)).round();
 }
 
 /// 按活动系数估算 TDEE（仅用于定每日目标摄入参考，不参与当日缺口统计）
-int estimateTdee({required String gender, required int height, required int weight, required int age, required double activity}) {
+int estimateTdee({required String gender, required int height, required num weight, required int age, required double activity}) {
   return (estimateBmr(gender: gender, height: height, weight: weight, age: age) * activity).round();
 }
 
