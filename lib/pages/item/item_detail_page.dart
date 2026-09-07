@@ -10,11 +10,28 @@ import '../../providers/plan_provider.dart';
 import '../../theme/app_theme.dart';
 import '../../utils/date_utils.dart';
 import '../../utils/plan_utils.dart';
+import '../../widgets/plan_item_edit.dart';
 
 class ItemDetailPage extends StatelessWidget {
   final String type; // meal | exercise
   final String itemId;
   const ItemDetailPage({super.key, required this.type, required this.itemId});
+
+  /// 「编辑」：弹完整编辑器（餐食含食材/做法，运动含训练内容），保存后整项落盘
+  Future<void> _edit(BuildContext context) async {
+    final planP = context.read<PlanProvider>();
+    if (type == 'meal') {
+      final list = planP.plan.meals.where((m) => m.id == itemId).toList();
+      if (list.isEmpty) return;
+      final r = await showPlanItemEditor(context: context, meal: list.first);
+      if (r is MealItem) await planP.replaceItem('meal', r);
+    } else {
+      final list = planP.plan.exercises.where((e) => e.id == itemId).toList();
+      if (list.isEmpty) return;
+      final r = await showPlanItemEditor(context: context, exercise: list.first);
+      if (r is ExerciseItem) await planP.replaceItem('exercise', r);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -38,7 +55,17 @@ class ItemDetailPage extends StatelessWidget {
       );
     }
     return Scaffold(
-      appBar: AppBar(title: Text(meal?.name ?? exercise!.name, maxLines: 1, overflow: TextOverflow.ellipsis)),
+      appBar: AppBar(
+        title: Text(meal?.name ?? exercise!.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+        actions: [
+          TextButton(
+            onPressed: () => _edit(context),
+            child: const Text('编辑',
+                style: TextStyle(fontSize: 14, color: AppColors.primary, fontWeight: FontWeight.w500)),
+          ),
+          const SizedBox(width: 4),
+        ],
+      ),
       backgroundColor: AppColors.bg,
       body: ListView(
         padding: const EdgeInsets.only(bottom: 24),

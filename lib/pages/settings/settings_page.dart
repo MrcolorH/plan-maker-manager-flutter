@@ -71,7 +71,11 @@ class SettingsPage extends StatelessWidget {
                 onTap: () => _openAdvanceDialog(context)),
             _Row('通知权限', null, onTap: () => _checkPermission(context)),
             const _GroupLabel('AI 服务'),
-            _Row('AI 服务', '${_providerLabel(settings.ai.provider)} · ${settings.ai.model}',
+            _Row(
+                'AI 服务',
+                settings.ai.hasConfig
+                    ? '已启用 ${_providerLabel(settings.ai.provider)} · ${settings.ai.model}'
+                    : '未配置',
                 onTap: () => Navigator.of(context).push(
                     AppRoutes.fade<void>(const AiConfigPage()))),
             const _GroupLabel('数据与计划'),

@@ -23,6 +23,13 @@ const String kMealEstSys = '''你是营养估算助手。用户会描述这一�
 {"calories":实际总热量整数kcal,"detail":"一句话拆解，如：黄焖鸡米饭1份≈640，可乐没喝0，合计640"}
 描述模糊时按常见份量估。''';
 
+/// FR6.9：计划条目编辑器专用——输入是结构化食材清单（含用量）+ 做法步骤，非口语描述
+const String kItemCalSys = '''你是减脂计划餐食的热量估算助手。用户给出一份计划餐食的结构化描述：餐名、食材清单（含用量）、做法步骤、备注。
+请按中国常见食物热量，对食材清单逐项按给出的用量估算；做法步骤中提到的烹饪用油/糖/酱料/勾芡等隐藏热量必须计入；未标注用量的食材按常见份量估算。
+严格只返回一个 JSON 对象，不要输出任何其他文字：
+{"calories":整餐总热量整数kcal,"detail":"一句话拆解，如：鸡胸肉150g≈250，橄榄油10g≈90，合计340"}
+备注中提到的替代/增减（如"不放糖"）以备注为准。''';
+
 const String kBurnEstSys = '''你是运动消耗估算助手。用户会描述一次实际做的运动（项目 + 时长/距离/强度，可能带备注）。
 请结合用户的基础资料（性别/年龄/身高/体重，若提供）按运动强度（MET 参照）估算总消耗；未提供体重时按 65kg 成人估算。
 严格只返回一个 JSON 对象，不要输出任何其他文字：
@@ -248,6 +255,28 @@ class AiService {
       [
         {'role': 'system', 'content': kMealEstSys},
         {'role': 'user', 'content': '这一餐的描述：$desc'},
+      ],
+      onUsage: onUsage,
+    );
+    final obj = extractJsonObj(content);
+    if (obj == null) throw Exception('AI 返回格式异常，请手动填写热量');
+    final cal = num.tryParse('${obj['calories']}');
+    if (cal == null || cal < 0 || cal > 5000) throw Exception('AI 估算的热量超出合理范围，请手动填写');
+    return {
+      'calories': cal.round(),
+      'detail': obj['detail'] is String ? obj['detail'] : '',
+    };
+  }
+
+  /// FR6.9：计划条目编辑器整餐热量估算——输入为结构化食材清单（含用量）+ 做法步骤 + 备注，
+  /// 专用提示词强调按用量逐项估算并计入烹饪隐藏热量；resolve { calories, detail }
+  Future<Map<String, dynamic>> estimateItemMeal(AiConfig config, String desc,
+      {void Function(Map<String, dynamic>)? onUsage}) async {
+    final content = await chat(
+      config,
+      [
+        {'role': 'system', 'content': kItemCalSys},
+        {'role': 'user', 'content': '计划餐食的描述：\n$desc'},
       ],
       onUsage: onUsage,
     );

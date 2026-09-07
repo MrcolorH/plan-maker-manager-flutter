@@ -17,6 +17,8 @@
 | [weight-design.md](weight-design.md) | 体重记录与基础消耗按日沿用设计方案（v1.0，App v1.0.2 **已实现**）：体重录入、历史缺口稳定机制（基准固化 + 按日沿用链）、日历展示、运动 AI 测算结合个人资料、备份 10 项快照 | 了解 F10 的设计推演与实现约束 |
 | [day-snapshot-design.md](day-snapshot-design.md) | 当日条目快照与历史固化设计方案·餐食+运动（v1.2，App v1.0.2 **已实现**）：计划=模板/快照=事实、DayEntry 统一模型（内容/热量/备注，kind 区分餐食与运动）、实例化与同步算法、修改即脱钩、AI 单餐单次测算、旧数据→快照（启动迁移 + **v1 老备份导入管线内直接转换**，共用转换核心）、备份 formatVersion 2 | 了解 F11 的设计推演与实现约束 |
 | [cloud-sync-design.md](cloud-sync-design.md) | 云端账号与数据同步方案（v0.1 草案，待评审）：技术选型、目标架构、接口契约、快照同步策略、**学习清单与准备清单**、路线图 P0-P4 | 规划「服务器+账号+云同步」时按此学习和采购，拍板后动工 |
+| [ai-profile-design.md](ai-profile-design.md) | AI 服务商多配置管理设计方案（v1.0，**设计中待评审**）：AiProfile 配置档案 + 激活指针（修复切服务商 baseUrl 不跟随的 bug）、同刻仅启用一个、已配置项只读不展示（仅服务商名+配置时间）、旧单配置迁移与备份双向兼容 | 了解 AI 服务配置页重构的设计推演与实现约束 |
+| [plan-item-ai-estimate-design.md](plan-item-ai-estimate-design.md) | 计划条目编辑 AI 估算设计方案（v1.0，App **已实现**）：条目编辑器（导入预览+详情页共用）热量/消耗旁 ✨ 估算按钮、结构化食材清单+做法的描述拼装与专用提示词（estimateItemMeal）、运动复用 estimateBurn、行内拆解展示（弹层遮挡 SnackBar 规避）与边界清单 | 了解 FR6.9 的设计推演与实现约束 |
 
 ## 一句话产品定义
 

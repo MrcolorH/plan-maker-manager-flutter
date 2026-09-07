@@ -187,6 +187,33 @@ Phase 4（提醒）是最大技术风险点，刻意提前到核心 UI 之后、
 
 **完成标准**：真机上开关默认关，开启后 Download 只有一份 auto 文件且重启不丢开关状态；改数据后退后台 15 秒内更新时间变化；关闭后不再写入；空数据不冲掉好备份；覆盖导入/清空全部前均有带时间戳留底；导入页一键恢复全流程可用。
 
+## Phase 14 ｜ AI 服务商多配置管理（2026-09-04 增补；对应 ai-profile-design.md v1.0，已实现）
+
+设计依据：[ai-profile-design.md](ai-profile-design.md) v1.0；需求：切换服务商 baseUrl 不跟随的 bug + 多服务商仅启用一个 + 已配置项只读不展示。
+
+- [x] `lib/models/settings.dart`：新增 `AiProfile`（id/provider/endpoint/apiKey/model/createdAt，只读）；`AppSettings` 增加 `aiProfiles`/`activeAiProfileId`，`ai` 改为 getter 实时映射激活档案；`fromJson`/`toJson` 支持旧单 `ai` 迁移与备份兼容
+- [x] `lib/providers/settings_provider.dart`：删除 `switchProvider`/`updateAI`；新增 `addAiProfile`（保存即启用、上限 5 条）/`activateAiProfile`（只改指针）/`removeAiProfile`（删激活项自动切第一条）；`_load` 与 `replaceSettings` 加迁移与 `kRetiredModelMap` 映射
+- [x] `lib/widgets/ai_config_sheet.dart`：改为仅新建模式，切 chip 只改本地表单不持久化，保存调 `addAiProfile`
+- [x] `lib/pages/settings/ai_config_page.dart`：重构为配置管理页（列表仅服务商名+配置时间+激活标记，无任何明文 key/endpoint；点击切换确认、滑动/按钮删除、添加复用弹层；测试连接/余额查询作用于激活档案）
+- [x] `lib/pages/settings/settings_page.dart`：入口行副标题改为「已启用 {服务商} · {模型} / 未配置」
+- [x] `test/backup_service_test.dart`：构造改用 `aiProfiles` 新格式
+- [x] `flutter analyze`：No issues found
+
+**完成标准**：切换服务商后 endpoint/key/model 整体跟随（不再出现 A provider + B baseUrl）；列表仅显示服务商名与配置时间；已配置项不可编辑、不展示明文；同一时刻仅一个生效；旧单配置首次升级自动迁移为一条档案并激活；新旧备份格式导入均兼容。
+
+## Phase 15 ｜ 计划条目编辑 AI 估算（2026-09-04 增补；对应 plan-item-ai-estimate-design.md v1.0）
+
+设计依据：[plan-item-ai-estimate-design.md](plan-item-ai-estimate-design.md) v1.0；需求：spec.md FR6.9。编辑器为导入预览（FR1.4）与详情页（FR6.8）共用，两处自动生效。
+
+- [x] `spec/plan-item-ai-estimate-design.md`：交互设计（✨ 按钮/行内拆解展示规避弹层遮挡 SnackBar）、描述拼装规则、专用提示词 kItemCalSys、边界清单与验收要点
+- [x] spec.md 增补 FR6.9 + 版本行 v1.6 + 配套文档；README 导航增补；checklist 第 13 节增补；design.md §9.3 函数面表补行
+- [x] `lib/services/ai_service.dart`：新增 `kItemCalSys` 提示词与 `estimateItemMeal`（校验 0-5000，返回 {calories, detail}，DeepSeek 禁思考/usage 上报复用 chat 现状）
+- [x] `lib/widgets/plan_item_edit.dart`：餐食热量行/运动消耗行 ✨ 按钮（Loading 转圈禁用）、`_mealDesc/_exDesc` 拼装、`_aiEstimate`（ensureAiConfigured → 估算 → 回填 + 行内提示）、Provider 引入（Settings/Usage/Onboarding/Record）
+- [x] `flutter analyze` 通过（No issues found）；全量 `flutter test` 108/108（顺手修复 weight_records_test 硬编码「2026-09-03」致跨天必挂的存量缺陷 → 改用 todayStr()）；真机回归两处入口待自测
+- [ ] checklist.md 第 13 节真机自测
+
+**完成标准**：编辑器内改食材用量/做法/训练环节后点 ✨ 即得新热量/消耗并展示拆解明细；未配置 Key 引导配置后自动继续；失败原值不变行内报错；两处入口行为一致；不点保存计划数据零变化。
+
 ---
 
 ## 依赖关系

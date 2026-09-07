@@ -15,6 +15,7 @@ import 'package:jianfei_dazi/models/weight.dart';
 import 'package:jianfei_dazi/providers/record_provider.dart';
 import 'package:jianfei_dazi/services/storage_service.dart';
 import 'package:jianfei_dazi/utils/calorie_utils.dart';
+import 'package:jianfei_dazi/utils/date_utils.dart' show todayStr;
 
 final AppSettings _settings = AppSettings(tdee: 2000, bmr: 1500); // 现状口径 = 1500×1.2 = 1800
 
@@ -160,7 +161,7 @@ void main() {
       await p.toggleCheck('2026-09-01', 'meal', 'm1');
       await p.ensureBaseline(1800);
       expect(p.store.weightRecords.baseline!.base, 1800);
-      expect(p.store.weightRecords.baseline!.date, '2026-09-03'); // todayStr
+      expect(p.store.weightRecords.baseline!.date, todayStr()); // 固化日 = 运行当天（勿硬编码日期）
       // 幂等：再次调用不覆盖
       await p.ensureBaseline(9999);
       expect(p.store.weightRecords.baseline!.base, 1800);

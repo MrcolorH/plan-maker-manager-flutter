@@ -38,14 +38,18 @@ class SettingsProvider extends ChangeNotifier {
       return;
     }
     final merged = AppSettings.fromJson(d);
-    // 本地存储的值优先于 DEFAULTS，所以新默认值无法覆盖老用户的旧模型名，必须显式迁移
-    final m = merged.ai.model.trim();
-    if (kRetiredModelMap.containsKey(m)) {
-      merged.ai.model = kRetiredModelMap[m]!;
-      // 回写存储，避免每次启动重复映射
-      _persist();
+    // 本地存储的值优先于 DEFAULTS，老用户的旧模型名需显式迁移（逐条 profile）
+    var dirty = false;
+    for (var i = 0; i < merged.aiProfiles.length; i++) {
+      final p = merged.aiProfiles[i];
+      final m = p.model.trim();
+      if (kRetiredModelMap.containsKey(m)) {
+        merged.aiProfiles[i] = p.copyWithModel(kRetiredModelMap[m]!);
+        dirty = true;
+      }
     }
     settings = merged;
+    if (dirty) _persist(); // 回写存储，避免每次启动重复映射
   }
 
   Future<void> _persist() async {
@@ -75,22 +79,42 @@ class SettingsProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> updateAI(Map<String, dynamic> patch) async {
-    if (patch['provider'] is String) settings.ai.provider = patch['provider'] as String;
-    if (patch['endpoint'] is String) settings.ai.endpoint = patch['endpoint'] as String;
-    if (patch['apiKey'] is String) settings.ai.apiKey = patch['apiKey'] as String;
-    if (patch['model'] is String) settings.ai.model = patch['model'] as String;
+  /// 新增一条服务商配置档案并立即启用（上限 kMaxAiProfiles 条）。
+  /// 校验 endpoint/key 非空；生成 id/createdAt；保存即激活。
+  /// 见 spec/ai-profile-design.md（替换旧 updateAI/switchProvider）。
+  static const int kMaxAiProfiles = 5;
+
+  Future<AiProfile> addAiProfile(AiConfig cfg) async {
+    final endpoint = cfg.endpoint.trim();
+    final apiKey = cfg.apiKey.trim();
+    if (endpoint.isEmpty || apiKey.isEmpty) {
+      throw Exception('请填写接口地址与 API Key');
+    }
+    if (settings.aiProfiles.length >= kMaxAiProfiles) {
+      throw Exception('最多保存 $kMaxAiProfiles 个服务商配置，请先删除旧配置');
+    }
+    final profile = AiProfile.create(cfg);
+    settings.aiProfiles.add(profile);
+    settings.activeAiProfileId = profile.id;
+    notifyListeners();
+    await _persist();
+    return profile;
+  }
+
+  /// 仅切换启用指针（不触碰任何档案内容）；endpoint/key/model 随激活档案整体生效
+  Future<void> activateAiProfile(String id) async {
+    if (!settings.aiProfiles.any((p) => p.id == id)) return;
+    settings.activeAiProfileId = id;
     notifyListeners();
     await _persist();
   }
 
-  /// 切换服务商时预填 endpoint/model（用户可再改）
-  Future<void> switchProvider(String provider) async {
-    final p = kAiProviders.where((x) => x.value == provider).toList();
-    settings.ai.provider = provider;
-    if (p.isNotEmpty) {
-      settings.ai.endpoint = p.first.endpoint;
-      settings.ai.model = p.first.model;
+  /// 删除一条档案；若删除的是启用项，自动启用剩余第一条；无剩余则清空指针
+  Future<void> removeAiProfile(String id) async {
+    settings.aiProfiles.removeWhere((p) => p.id == id);
+    if (settings.activeAiProfileId == id) {
+      settings.activeAiProfileId =
+          settings.aiProfiles.isNotEmpty ? settings.aiProfiles.first.id : '';
     }
     notifyListeners();
     await _persist();
@@ -126,6 +150,17 @@ class SettingsProvider extends ChangeNotifier {
 
   /// 覆盖替换整个设置（历史备份「覆盖导入」使用；默认值深度合并补缺）
   Future<void> replaceSettings(AppSettings data) async {
+    // data 来自备份解析（AppSettings.fromJson），其 aiProfiles 已含旧单 ai 迁移与 activeId 校验
+    final profiles = List<AiProfile>.from(data.aiProfiles);
+    // 老备份可能残留已退役模型名 → 一并映射
+    for (var i = 0; i < profiles.length; i++) {
+      final p = profiles[i];
+      final m = p.model.trim();
+      if (kRetiredModelMap.containsKey(m)) profiles[i] = p.copyWithModel(kRetiredModelMap[m]!);
+    }
+    var activeId = data.activeAiProfileId;
+    if (activeId.isNotEmpty && !profiles.any((p) => p.id == activeId)) activeId = '';
+    if (activeId.isEmpty && profiles.isNotEmpty) activeId = profiles.first.id;
     final merged = AppSettings(
       tdee: data.tdee,
       bmr: data.bmr,
@@ -133,12 +168,8 @@ class SettingsProvider extends ChangeNotifier {
       reminderEnabled: data.reminderEnabled,
       reminderAdvance: data.reminderAdvance,
       autoBackupEnabled: data.autoBackupEnabled,
-      ai: AiConfig(
-        provider: data.ai.provider,
-        endpoint: data.ai.endpoint,
-        apiKey: data.ai.apiKey,
-        model: data.ai.model,
-      ),
+      aiProfiles: profiles,
+      activeAiProfileId: activeId,
     );
     settings = merged;
     notifyListeners();

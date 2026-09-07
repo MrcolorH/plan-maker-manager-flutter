@@ -95,7 +95,8 @@ lib/
 │   ├── meal_card.dart           # 餐食卡片（含打卡）
 │   ├── exercise_card.dart       # 运动卡片（含打卡）
 │   ├── calorie_summary.dart     # 今日热量汇总卡
-│   └── ai_config_sheet.dart     # AI 配置弹层（showAiConfigSheet + ensureAiConfigured 前置校验）
+│   ├── ai_config_sheet.dart     # AI 配置弹层（showAiConfigSheet + ensureAiConfigured 前置校验）
+│   └── plan_item_edit.dart      # 计划条目全量编辑器（导入预览/详情页共用底部弹层）
 └── pages/
     ├── main_shell.dart          # 主壳：IndexedStack 4 Tab + 底部导航 + 首启引导拦截
     ├── today/today_page.dart    # Tab：今日（打卡/缺口/加餐/加练）
@@ -106,7 +107,7 @@ lib/
     ├── settings/ai_config_page.dart # AI 配置页
     ├── food/food_add_page.dart  # 加餐录入（食物库/AI/手动）
     ├── import/import_page.dart  # 导入计划（AI 生成 / 手动 JSON 双模式 + 预览确认）
-    ├── item/item_detail_page.dart   # 计划项详情（食材/步骤/训练内容/单项提醒开关/删除）
+    ├── item/item_detail_page.dart   # 计划项详情（食材/步骤/训练内容/单项提醒开关/编辑/删除）
     ├── onboarding/onboarding_page.dart  # 首次使用引导（Step0~5，含页内 AI 配置弹层）
     └── guide/guide_page.dart    # 使用指引：列表 + 详情两态
 ```
@@ -153,14 +154,14 @@ lib/
 
 - 顶部：当前计划卡片（名称、时间段、基础→目标体重、每日目标热量、计划开始日）。
 - 子 Tab 切换：餐食 / 运动，按时间排序列出全部计划项（星期徽标如「一三五」）。
-- 每项可点进详情；详情页可删除单项（写入 `deletedIds`，不回写 JSON）。
+- 每项可点进详情；详情页可「编辑」整项（弹 `widgets/plan_item_edit.dart`：餐食=名称/类型/时间/热量/食材清单/做法步骤/备注，运动=名称/时间/时长/预计消耗/训练内容/注意事项；保存走 `PlanProvider.replaceItem` → 提醒重排 + 今日未脱钩快照跟随）；也可删除单项（写入 `deletedIds`，不回写 JSON）。
 - 底部：「＋ 导入计划」（进导入页）等主操作；分模块清空入口（跟随子 Tab）。
 
 ### 5.3 导入页
 
 1. 双模式切换：**AI 生成**（粘贴计划文档 → AI 转 JSON）｜ **手动 JSON**（粘贴/选择 .json 文件，`file_picker`）。
 2. 「解析校验」→ 错误：中文错误列表（定位第 N 条/字段，`validateRaw`）；成功 → 预览。
-3. 预览卡：meta 摘要（计划名/时间段/目标摄入）+ 条目列表（可删除/编辑）+ 实时统计（摄入Σ/消耗Σ/预计缺口）；提示「增量合并现有计划（同 id 更新，新增追加）」。
+3. 预览卡：meta 摘要（计划名/时间段/目标摄入）+ 条目列表 + 实时统计（摄入Σ/消耗Σ/预计缺口）；提示「增量合并现有计划（同 id 更新，新增追加）」。每个条目行内直接展示完整细节（餐食=食材清单/做法步骤/备注，运动=训练内容各环节·分钟/注意事项），点条目弹全量编辑器逐条调整、✕ 删除；**预览中所有增删改在确认导入时生效（确认导入以预览数据 `plan.toJson()` 为准，而非原始 raw——避免「编辑后导入仍是原样」）**。
 4. 「确认导入」→ `PlanProvider.importPlan`（normalize + 增量合并 + 吸收 meta）→ 立即重调度提醒 → 跳转今日页。
 5. AI 生成未配 Key 时弹统一 AI 配置弹层（`ensureAiConfigured`），配置后原操作继续。
 
@@ -288,7 +289,7 @@ class PlanData {
 | AppProvider | 全局 UI 态（不持久化） | `setActiveTab` / `refreshToday()`（跨天刷新）/ `onNotificationTap(focus)` |
 | PlanProvider | planData 读写 | `importPlan`（校验+增量合并+调度）/ `removeItem` / `clearMeals` / `clearExercises` / `hasPlan` |
 | RecordProvider | 打卡/临时任务/调整 | `toggleCheck`（任意日期可写，供补打卡）/ `addTempTask` / `removeTempTask` / `setAdjust` / `clearRecords` |
-| SettingsProvider | settings 读写 | `update(patch)`（联动重调度）/ `applyMeta`（导入吸收 tdee/目标摄入）/ `estimateTdee` / `switchProvider` / `replaceSettings` |
+| SettingsProvider | settings 读写 | `update(patch)`（联动重调度）/ `applyMeta`（导入吸收 tdee/目标摄入）/ `estimateTdee` / AI 多配置 `addAiProfile`/`activateAiProfile`/`removeAiProfile`/`replaceSettings`（多服务商、仅启用一个、已配置只读，详见 ai-profile-design.md） |
 | UsageProvider | AI 用量统计 | `recordUsage`（chat 响应埋点）/ `clearUsage` |
 | OnboardingProvider | 引导状态 | `shouldOnboard()`（!done && !isLegacyUser）/ `finish` / `skip` / `rerun` |
 
@@ -424,7 +425,8 @@ Authorization: Bearer {apiKey}
 |------|------|
 | `queryCalorie(desc)` | 食物热量查询（加餐页/AI 估算/重估） |
 | `estimateMeal(...)` | 计划生成前的单餐估算（引导/导入编辑态） |
-| `estimateBurn(desc, weight, ...)` | 运动消耗估算（带体重）；**v1.0.1 扩展 gender/age/height 个人基础信息**（weight-design.md §6） |
+| `estimateItemMeal(desc)` | **v1.6 增补**：计划条目编辑器整餐估算——结构化食材清单（含用量）+ 做法步骤 + 备注，专用提示词强调按用量逐项与烹饪隐藏热量（plan-item-ai-estimate-design.md §4.1） |
+| `estimateBurn(desc, weight, ...)` | 运动消耗估算（带体重）；**v1.0.1 扩展 gender/age/height 个人基础信息**（weight-design.md §6）；v1.6 起计划条目编辑器复用（当天生效体重口径） |
 | `generatePlan(doc)` | 文档转计划 JSON（导入页 AI 模式） |
 | `testAI(config)` | 测试连接（固定询问「一个水煮蛋的热量」） |
 | `queryBalance()` | DeepSeek 账户余额（仅 deepseek 端点显示） |

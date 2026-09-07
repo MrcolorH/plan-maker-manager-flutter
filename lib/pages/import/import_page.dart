@@ -16,6 +16,7 @@ import '../../services/ai_service.dart';
 import '../../theme/app_theme.dart';
 import '../../utils/plan_utils.dart';
 import '../../widgets/ai_config_sheet.dart';
+import '../../widgets/plan_item_edit.dart';
 
 class ImportPage extends StatefulWidget {
   const ImportPage({super.key});
@@ -30,7 +31,6 @@ class _ImportPageState extends State<ImportPage> {
   final TextEditingController _jsonCtrl = TextEditingController();
   bool _loading = false;
 
-  Map<String, dynamic>? _raw;
   PlanData? _preview;
 
   bool get _hasPreview => _preview != null;
@@ -44,7 +44,6 @@ class _ImportPageState extends State<ImportPage> {
 
   void _backToInput() {
     setState(() {
-      _raw = null;
       _preview = null;
     });
   }
@@ -109,109 +108,41 @@ class _ImportPageState extends State<ImportPage> {
       return;
     }
     setState(() {
-      _raw = raw;
       _preview = normalizePlan(raw);
     });
   }
 
   // ---------- 预览：编辑 / 删除 ----------
 
+  /// 全量编辑餐食（名称/类型/时间/热量/食材清单/做法步骤/备注）
   Future<void> _editMeal(MealItem m) async {
-    final nameCtrl = TextEditingController(text: m.name);
-    final timeCtrl = TextEditingController(text: m.time);
-    final calCtrl = TextEditingController(text: m.calories != null ? '${m.calories}' : '');
-    final saved = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('编辑餐食', style: TextStyle(fontSize: 16)),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: '名称')),
-              TextField(controller: timeCtrl, decoration: const InputDecoration(labelText: '时间 HH:mm')),
-              TextField(
-                  controller: calCtrl,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: '热量 kcal（留空=自由餐）')),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消', style: TextStyle(color: AppColors.textSub))),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('保存', style: TextStyle(color: AppColors.primary)),
-          ),
-        ],
-      ),
-    );
-    if (saved == true && _preview != null) {
+    final r = await showPlanItemEditor(context: context, meal: m);
+    if (r is MealItem && _preview != null) {
       setState(() {
-        m.name = nameCtrl.text.trim().isEmpty ? '未命名' : nameCtrl.text.trim();
-        final t = timeCtrl.text.trim();
-        if (RegExp(r'^([01]\d|2[0-3]):[0-5]\d$').hasMatch(t)) m.time = t;
-        final cal = int.tryParse(calCtrl.text.trim());
-        m.calories = (cal != null && cal >= 0) ? cal : null;
+        final i = _preview!.meals.indexWhere((x) => x.id == r.id);
+        if (i >= 0) _preview!.meals[i] = r;
       });
     }
   }
 
+  /// 全量编辑运动（名称/时间/时长/预计消耗/训练内容/注意事项）
   Future<void> _editExercise(ExerciseItem e) async {
-    final nameCtrl = TextEditingController(text: e.name);
-    final timeCtrl = TextEditingController(text: e.time);
-    final durCtrl = TextEditingController(text: '${e.duration}');
-    final burnCtrl = TextEditingController(text: '${e.caloriesBurned}');
-    final saved = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('编辑运动', style: TextStyle(fontSize: 16)),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: '名称')),
-              TextField(controller: timeCtrl, decoration: const InputDecoration(labelText: '时间 HH:mm')),
-              TextField(
-                  controller: durCtrl, keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: '时长（分钟）')),
-              TextField(
-                  controller: burnCtrl, keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: '预计消耗 kcal')),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消', style: TextStyle(color: AppColors.textSub))),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('保存', style: TextStyle(color: AppColors.primary)),
-          ),
-        ],
-      ),
-    );
-    if (saved == true && _preview != null) {
+    final r = await showPlanItemEditor(context: context, exercise: e);
+    if (r is ExerciseItem && _preview != null) {
       setState(() {
-        e.name = nameCtrl.text.trim().isEmpty ? '未命名' : nameCtrl.text.trim();
-        final t = timeCtrl.text.trim();
-        if (RegExp(r'^([01]\d|2[0-3]):[0-5]\d$').hasMatch(t)) e.time = t;
-        final dur = int.tryParse(durCtrl.text.trim());
-        if (dur != null && dur > 0 && dur <= 600) e.duration = dur;
-        final burn = int.tryParse(burnCtrl.text.trim());
-        if (burn != null && burn >= 0) e.caloriesBurned = burn;
+        final i = _preview!.exercises.indexWhere((x) => x.id == r.id);
+        if (i >= 0) _preview!.exercises[i] = r;
       });
     }
   }
 
   Future<void> _confirmImport() async {
-    final raw = _raw;
     final plan = _preview;
-    if (raw == null || plan == null) return;
+    if (plan == null) return;
     setState(() => _loading = true);
     try {
-      await context.read<PlanProvider>().importPlan(raw);
+      // 用预览编辑后的结果导入（而非原始 raw）：预览里的增删改（含食材做法/训练内容）必须生效
+      await context.read<PlanProvider>().importPlan(plan.toJson());
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text('已导入：餐食 ${plan.meals.length} 条 · 运动 ${plan.exercises.length} 条（增量合并，记录保留）')));
@@ -398,11 +329,11 @@ class _ImportPageState extends State<ImportPage> {
               style: TextStyle(fontSize: 10, color: AppColors.textSub)),
         ),
         if (plan.meals.isNotEmpty) ...[
-          const SectionTitle('餐食（点条目可编辑）'),
+          const SectionTitle('餐食（点条目查看/编辑食材做法）'),
           ...plan.meals.map((m) => _mealPreviewRow(m)),
         ],
         if (plan.exercises.isNotEmpty) ...[
-          const SectionTitle('运动（点条目可编辑）'),
+          const SectionTitle('运动（点条目查看/编辑训练内容）'),
           ...plan.exercises.map((e) => _exercisePreviewRow(e)),
         ],
         const SizedBox(height: 16),
@@ -432,6 +363,7 @@ class _ImportPageState extends State<ImportPage> {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10)),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
             child: GestureDetector(
@@ -439,7 +371,20 @@ class _ImportPageState extends State<ImportPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(m.name, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Text(m.name,
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                      ),
+                      if (m.calories != null)
+                        Text('${m.calories} kcal',
+                            style: const TextStyle(fontSize: 12, color: AppColors.orange))
+                      else
+                        const Text('自由餐', style: TextStyle(fontSize: 12, color: AppColors.textSub)),
+                    ],
+                  ),
                   const SizedBox(height: 3),
                   Row(
                     children: [
@@ -447,14 +392,11 @@ class _ImportPageState extends State<ImportPage> {
                       Text(m.time, style: const TextStyle(fontSize: 11, color: AppColors.textSub)),
                     ],
                   ),
+                  ..._mealDetailBlock(m),
                 ],
               ),
             ),
           ),
-          if (m.calories != null)
-            Text('${m.calories} kcal', style: const TextStyle(fontSize: 12, color: AppColors.orange))
-          else
-            const Text('自由餐', style: TextStyle(fontSize: 12, color: AppColors.textSub)),
           IconButton(
             onPressed: () => setState(() => planRemoveMeal(m.id)),
             icon: const Icon(Icons.close, size: 16, color: AppColors.textSub),
@@ -462,6 +404,19 @@ class _ImportPageState extends State<ImportPage> {
         ],
       ),
     );
+  }
+
+  /// 预览行内的餐食细节：食材清单 / 做法步骤 / 备注（点击行可编辑）
+  List<Widget> _mealDetailBlock(MealItem m) {
+    final out = <Widget>[];
+    if (m.details.isNotEmpty) {
+      out.addAll(_kvLines('食材', m.details.map((d) => d.amount.isEmpty ? d.item : '${d.item} ${d.amount}').toList()));
+    }
+    if (m.steps.isNotEmpty) {
+      out.addAll(_kvLines('做法', [for (var i = 0; i < m.steps.length; i++) '${i + 1}. ${m.steps[i]}']));
+    }
+    if (m.note.isNotEmpty) out.addAll(_kvLines('备注', [m.note]));
+    return out;
   }
 
   void planRemoveMeal(String id) {
@@ -474,6 +429,7 @@ class _ImportPageState extends State<ImportPage> {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10)),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
             child: GestureDetector(
@@ -481,15 +437,25 @@ class _ImportPageState extends State<ImportPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(e.name, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Text(e.name,
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                      ),
+                      Text('≈-${e.caloriesBurned} kcal',
+                          style: const TextStyle(fontSize: 12, color: AppColors.primary)),
+                    ],
+                  ),
                   const SizedBox(height: 3),
                   Text('${e.time} · ${e.duration} 分钟',
                       style: const TextStyle(fontSize: 11, color: AppColors.textSub)),
+                  ..._exerciseDetailBlock(e),
                 ],
               ),
             ),
           ),
-          Text('≈-${e.caloriesBurned} kcal', style: const TextStyle(fontSize: 12, color: AppColors.primary)),
           IconButton(
             onPressed: () => setState(() => planRemoveExercise(e.id)),
             icon: const Icon(Icons.close, size: 16, color: AppColors.textSub),
@@ -497,6 +463,46 @@ class _ImportPageState extends State<ImportPage> {
         ],
       ),
     );
+  }
+
+  /// 预览行内的训练内容：每个环节（名称/具体内容/分钟数），另有注意事项（点击行可编辑）
+  List<Widget> _exerciseDetailBlock(ExerciseItem e) {
+    final out = <Widget>[];
+    if (e.content.isNotEmpty) {
+      final lines = e.content.map((c) {
+        final min = c.minutes > 0 ? '（${c.minutes} 分钟）' : '';
+        return c.detail.isEmpty ? '${c.item}$min' : '${c.item}：${c.detail}$min';
+      }).toList();
+      out.addAll(_kvLines('内容', lines));
+    }
+    if (e.note.isNotEmpty) out.addAll(_kvLines('注意', [e.note]));
+    return out;
+  }
+
+  /// 「标签：内容」紧凑两列行（标签列固定宽，内容可换行）
+  List<Widget> _kvLines(String label, List<String> lines) {
+    return [
+      Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 36,
+              child: Text(label,
+                  style: const TextStyle(
+                      fontSize: 10, color: AppColors.textFaint, fontWeight: FontWeight.w600)),
+            ),
+            Expanded(
+              child: Text(
+                lines.join('\n'),
+                style: const TextStyle(fontSize: 11, color: AppColors.textSub, height: 1.5),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ];
   }
 
   void planRemoveExercise(String id) {

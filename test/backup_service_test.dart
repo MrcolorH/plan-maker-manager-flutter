@@ -42,7 +42,21 @@ BackupData buildData({String aiKey = ''}) => BackupData(
         ],
       },
       extraFoods: const {},
-      settings: AppSettings(tdee: 2000, bmr: 1500, ai: AiConfig(apiKey: aiKey)),
+      settings: AppSettings(
+        tdee: 2000,
+        bmr: 1500,
+        aiProfiles: [
+          AiProfile(
+            id: 'legacy-1',
+            provider: 'deepseek',
+            endpoint: 'https://api.deepseek.com',
+            apiKey: aiKey,
+            model: 'deepseek-v4-flash',
+            createdAt: 0,
+          ),
+        ],
+        activeAiProfileId: 'legacy-1',
+      ),
       onboardingState: OnboardingState(done: true),
       apiUsage: ApiUsage(calls: 2, promptTokens: 100),
     );

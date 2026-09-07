@@ -133,6 +133,28 @@ class PlanProvider extends ChangeNotifier {
     await _reminder.fullReschedule(plan, _settings.settings);
   }
 
+  /// 整项替换（导入预览/详情页「编辑」落盘用）：按 id 定位原位替换；
+  /// 名称/时间/内容等变化会影响当日快照与提醒，故联动重调度 + 同步今天
+  Future<void> replaceItem(String type, Object item) async {
+    if (type == 'meal') {
+      if (item is! MealItem) return;
+      final i = plan.meals.indexWhere((x) => x.id == item.id);
+      if (i < 0) return;
+      plan.meals[i] = item;
+    } else if (type == 'exercise') {
+      if (item is! ExerciseItem) return;
+      final i = plan.exercises.indexWhere((x) => x.id == item.id);
+      if (i < 0) return;
+      plan.exercises[i] = item;
+    } else {
+      return;
+    }
+    notifyListeners();
+    await _persist();
+    await _reminder.fullReschedule(plan, _settings.settings);
+    await _syncToday();
+  }
+
   /// 删除单个计划项
   Future<void> removeItem(String type, String id) async {
     if (type == 'meal') {

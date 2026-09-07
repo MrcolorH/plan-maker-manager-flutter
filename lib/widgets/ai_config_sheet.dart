@@ -1,6 +1,8 @@
 /// AI 配置弹层：未配置 AI 服务时，任意 AI 能力入口统一弹出
 /// 页内填写服务商 / 接口地址 / API Key / 模型 → 可测试连接 → 保存后立即继续原操作
-/// 复用现有 SettingsProvider（switchProvider / updateAI）与 AiService.testAI，不改设置页
+/// 仅「新建」模式：填服务商 / 接口地址 / API Key / 模型 → 测试连接 → 保存即新增一条档案并启用。
+/// 切换服务商 chip 只更新本地表单（不持久化），保存时才整体落库（SettingsProvider.addAiProfile），杜绝半成品配置。
+/// 已配置项不可编辑（改 = 删了重配），见 spec/ai-profile-design.md。
 library;
 
 import 'package:flutter/material.dart';
@@ -84,14 +86,20 @@ class _AiConfigSheetState extends State<_AiConfigSheet> {
   bool _saving = false;
   String? _status;
   bool _statusOk = false;
+  late String _selectedProvider; // 当前表单选中的服务商（仅本地，不持久化）
 
   @override
   void initState() {
     super.initState();
-    final ai = context.read<SettingsProvider>().settings.ai;
-    _endpointCtrl = TextEditingController(text: ai.endpoint);
-    _keyCtrl = TextEditingController(text: ai.apiKey);
-    _modelCtrl = TextEditingController(text: ai.model);
+    // 新建模式：以当前激活档案（或默认 deepseek）的预设预填 endpoint/model，key 始终清空
+    final sp = context.read<SettingsProvider>();
+    _selectedProvider = sp.settings.activeProfile?.provider ?? kAiProviders.first.value;
+    final preset = kAiProviders.where((x) => x.value == _selectedProvider).toList();
+    final e = preset.isNotEmpty ? preset.first.endpoint : '';
+    final m = preset.isNotEmpty ? preset.first.model : '';
+    _endpointCtrl = TextEditingController(text: e);
+    _keyCtrl = TextEditingController(text: ''); // 新配置必须重新填 key，不预填/不泄露
+    _modelCtrl = TextEditingController(text: m);
   }
 
   @override
@@ -102,12 +110,9 @@ class _AiConfigSheetState extends State<_AiConfigSheet> {
     super.dispose();
   }
 
-  /// 仅用于 build 中读取（会订阅变化）
-  AiConfig get _ai => context.watch<SettingsProvider>().settings.ai;
-
-  /// 回调里使用（不建立订阅）
+  /// 回调里使用（不建立订阅）：provider 取本地选中，endpoint/key/model 取表单
   AiConfig _currentConfig() => AiConfig(
-        provider: context.read<SettingsProvider>().settings.ai.provider,
+        provider: _selectedProvider,
         endpoint: _endpointCtrl.text.trim(),
         apiKey: _keyCtrl.text.trim(),
         model: _modelCtrl.text.trim(),
@@ -121,14 +126,17 @@ class _AiConfigSheetState extends State<_AiConfigSheet> {
     });
   }
 
-  Future<void> _switchProvider(String value) async {
-    final sp = context.read<SettingsProvider>();
-    await sp.switchProvider(value);
-    if (!mounted) return;
-    final ai = sp.settings.ai;
+  /// 仅更新本地表单（按预设预填 endpoint/model、清空 key），**不持久化**——
+  /// 半成品配置问题从源头消除；保存时才整体落库为一条新档案
+  void _onProviderPicked(String value) {
+    final preset = kAiProviders.where((x) => x.value == value).toList();
     setState(() {
-      _endpointCtrl.text = ai.endpoint;
-      _modelCtrl.text = ai.model;
+      _selectedProvider = value;
+      if (preset.isNotEmpty) {
+        _endpointCtrl.text = preset.first.endpoint;
+        _modelCtrl.text = preset.first.model;
+      }
+      _keyCtrl.text = ''; // 切换服务商必须重新填 key
       _status = null;
     });
   }
@@ -155,25 +163,19 @@ class _AiConfigSheetState extends State<_AiConfigSheet> {
   }
 
   Future<void> _save() async {
-    final endpoint = _endpointCtrl.text.trim();
-    final key = _keyCtrl.text.trim();
-    final model = _modelCtrl.text.trim();
-    if (endpoint.isEmpty || key.isEmpty) {
-      _setStatus('请填写接口地址与 API Key');
-      return;
-    }
+    final cfg = _currentConfig();
     setState(() {
       _saving = true;
       _status = null;
     });
     try {
-      await context.read<SettingsProvider>().updateAI({
-        'endpoint': endpoint,
-        'apiKey': key,
-        'model': model,
-      });
+      // 保存即新增一条档案并立即启用（上限校验 / 必填校验在 provider 内）
+      await context.read<SettingsProvider>().addAiProfile(cfg);
       if (!mounted) return;
       Navigator.pop(context, AiConfigSheetResult.configured);
+    } catch (e) {
+      if (!mounted) return;
+      _setStatus(e.toString().replaceFirst('Exception: ', ''));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -182,7 +184,7 @@ class _AiConfigSheetState extends State<_AiConfigSheet> {
   @override
   Widget build(BuildContext context) {
     final bottom = MediaQuery.of(context).viewInsets.bottom;
-    final provider = _ai.provider;
+    final provider = _selectedProvider;
     return Container(
       decoration: const BoxDecoration(
         color: AppColors.bg,
@@ -232,7 +234,7 @@ class _AiConfigSheetState extends State<_AiConfigSheet> {
                 return ChoiceChip(
                   label: Text(p.label, style: const TextStyle(fontSize: 12)),
                   selected: selected,
-                  onSelected: (_) => _switchProvider(p.value),
+                  onSelected: (_) => _onProviderPicked(p.value),
                   selectedColor: AppColors.primaryBg,
                   labelStyle: TextStyle(
                     color: selected ? AppColors.primary : AppColors.textSub,
