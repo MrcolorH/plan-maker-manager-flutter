@@ -13,6 +13,12 @@ class CalorieSummary extends StatelessWidget {
   final int intake;
   final int plannedIntake;
   final num deficit;
+  final int intakeProtein;
+  final int intakeCarbs;
+  final int intakeFat;
+  final int plannedProtein;
+  final int plannedCarbs;
+  final int plannedFat;
 
   const CalorieSummary({
     super.key,
@@ -21,6 +27,12 @@ class CalorieSummary extends StatelessWidget {
     required this.intake,
     required this.plannedIntake,
     required this.deficit,
+    this.intakeProtein = 0,
+    this.intakeCarbs = 0,
+    this.intakeFat = 0,
+    this.plannedProtein = 0,
+    this.plannedCarbs = 0,
+    this.plannedFat = 0,
   });
 
   Color get _levelColor {
@@ -50,6 +62,8 @@ class CalorieSummary extends StatelessWidget {
     final color = _levelColor;
     final hint = _hint;
     final sign = deficit > 0 ? '+' : '';
+    final hasMacros = intakeProtein > 0 || intakeCarbs > 0 || intakeFat > 0 || plannedProtein > 0;
+
     return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -104,7 +118,61 @@ class CalorieSummary extends StatelessWidget {
               _item('计划摄入\n目标', '$plannedIntake', AppColors.text),
             ],
           ),
+          if (hasMacros) ...[
+            const SizedBox(height: 12),
+            Container(height: 0.5, color: const Color(0xFFEFEFEA)),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                _macroBadge('蛋白质', intakeProtein, plannedProtein, const Color(0xFF4CAF50)),
+                const SizedBox(width: 8),
+                _macroBadge('碳水', intakeCarbs, plannedCarbs, const Color(0xFF2196F3)),
+                const SizedBox(width: 8),
+                _macroBadge('脂肪', intakeFat, plannedFat, const Color(0xFFFF9800)),
+              ],
+            ),
+          ],
         ],
+      ),
+    );
+  }
+
+  Widget _macroBadge(String name, int current, int planned, Color accent) {
+    final showPlan = planned > 0;
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        decoration: BoxDecoration(
+          color: accent.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(name, style: TextStyle(fontSize: 11, color: accent, fontWeight: FontWeight.w600)),
+                Text(
+                  showPlan ? '$current/${planned}g' : '${current}g',
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.text),
+                ),
+              ],
+            ),
+            if (showPlan) ...[
+              const SizedBox(height: 4),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(2),
+                child: LinearProgressIndicator(
+                  value: planned > 0 ? (current / planned).clamp(0.0, 1.0) : 0,
+                  backgroundColor: accent.withValues(alpha: 0.2),
+                  valueColor: AlwaysStoppedAnimation<Color>(accent),
+                  minHeight: 3.5,
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }

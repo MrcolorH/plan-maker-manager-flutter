@@ -46,3 +46,6 @@ app.*.map.json
 
 # 本机 WorkBuddy 工作数据（不入库）
 .workbuddy/
+
+# APK binaries
+*.apk

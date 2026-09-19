@@ -177,5 +177,63 @@ void main() {
       await p.removeWeightRecord('2026-09-01');
       expect(p.store.weightRecords.records, isEmpty);
     });
+
+    test('录入体脂率持久化与读取', () async {
+      final p = newProvider();
+      await p.setWeightRecord(70.0, 1600, date: '2026-09-01', bodyFat: 21.5);
+      expect(p.store.weightRecords.records['2026-09-01']!.bodyFat, 21.5);
+    });
+  });
+
+  group('WeightEntry & WeightData 体脂率（bodyFat）', () {
+    test('WeightEntry json 往返', () {
+      final entry = WeightEntry(weight: 68.5, bmr: 1500, updatedAt: 1000, bodyFat: 19.8);
+      final json = entry.toJson();
+      expect(json['bodyFat'], 19.8);
+      final restored = WeightEntry.fromJson(json);
+      expect(restored.bodyFat, 19.8);
+    });
+
+    test('WeightEntry bodyFat 缺省为 null 向后兼容', () {
+      final restored = WeightEntry.fromJson({'weight': 68.5, 'bmr': 1500, 'updatedAt': 1000});
+      expect(restored.bodyFat, isNull);
+    });
+
+    test('bodyFatFor 智能沿用链（体脂秤多日测一次场景）', () {
+      final data = WeightData(records: {
+        '2026-09-01': WeightEntry(weight: 70.0, bmr: 1600, updatedAt: 1, bodyFat: 22.0),
+        '2026-09-03': WeightEntry(weight: 69.5, bmr: 1590, updatedAt: 2), // 当天只称体重没测体脂
+        '2026-09-05': WeightEntry(weight: 69.0, bmr: 1580, updatedAt: 3, bodyFat: 21.0),
+      });
+
+      expect(data.bodyFatFor('2026-08-31'), isNull);
+      expect(data.bodyFatFor('2026-09-01'), 22.0);
+      expect(data.bodyFatFor('2026-09-02'), 22.0); // 沿用 09-01
+      expect(data.bodyFatFor('2026-09-03'), 22.0); // 09-03 没填体脂，向前回溯沿用 09-01 的 22.0%
+      expect(data.bodyFatFor('2026-09-04'), 22.0);
+      expect(data.bodyFatFor('2026-09-05'), 21.0); // 09-05 测了新体脂
+      expect(data.bodyFatFor('2026-09-10'), 21.0); // 之后继续沿用 09-05 的 21.0%
+    });
+
+    test('bodyFatForDate 联动每日减脂宏量计算', () {
+      final plan = PlanData(
+        meta: PlanMeta(startedAt: '2026-09-01'),
+        meals: [], // 无计划餐，走目标推荐
+      );
+      final store = RecordStore(
+        weightRecords: WeightData(records: {
+          '2026-09-01': WeightEntry(weight: 80.0, bmr: 1700, updatedAt: 1, bodyFat: 20.0), // 去脂体重 = 64kg
+        }),
+      );
+      final s = dailySummary(
+        plan,
+        AppSettings(tdee: 2200, dailyCalorieTarget: 1800),
+        store,
+        '2026-09-01',
+        profile: UserProfile(gender: 'male', weight: 80.0),
+      );
+      // 蛋白质保肌约 2.0g/kg 去脂体重 = 128g
+      expect(s.plannedProtein, 128);
+    });
   });
 }

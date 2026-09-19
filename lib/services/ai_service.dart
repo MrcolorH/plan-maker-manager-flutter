@@ -12,22 +12,28 @@ import '../models/onboarding.dart';
 import '../models/settings.dart';
 import '../utils/date_utils.dart';
 
-const String kCalorieSys = '''你是食物热量估算助手。用户描述一份食物或套餐，请估算总热量。
-严格只返回一个 JSON 对象，不要输出任何其他文字：
-{"name":"食物名","calories":总热量整数kcal,"unit":"份量描述","confidence":0到1}
-描述含多种食物时合并估算总值。无法判断时 confidence 给低值。''';
+const String kCalorieSys = '''你是中国营养学会专业营养师。用户描述一份食物或饮品，请估算总热量及三大营养素。
+严格遵循营养守恒：总热量 ≈ 蛋白质*4 + 碳水*4 + 脂肪*9。
+外卖/炒菜默认含8-15g烹饪油；肉类默认按熟重计算。
+严格只返回一个 JSON 对象，不要输出任何其他文字或代码块：
+{"name":"规范食物名","calories":总热量整数kcal,"protein":蛋白质克数整数g,"carbs":碳水克数整数g,"fat":脂肪克数整数g,"unit":"份量描述","confidence":0到1}
+描述含多种食物时合并估算。无法判断时 confidence 给低值。''';
 
-const String kMealEstSys = '''你是营养估算助手。用户会描述这一餐实际吃了什么——可能是完整菜名或食物清单，也可能是"计划的餐食 + 今天少了/换了/多了什么"的口语描述，还可能带份量备注。
-请根据中国常见食物热量常识，估算这一餐的实际总热量。
-严格只返回一个 JSON 对象，不要输出任何其他文字：
-{"calories":实际总热量整数kcal,"detail":"一句话拆解，如：黄焖鸡米饭1份≈640，可乐没喝0，合计640"}
-描述模糊时按常见份量估。''';
+const String kMealEstSys = '''你是减脂临床营养与食物成分分析专家。用户会描述这一餐实际吃了什么（可能是完整菜名、食材用量，或是"原计划+今天少了/多了什么"的大白话描述，带备注）。
+请按中国常见食物热量与烹饪常识精确估算。
+规则：
+1. 炒菜/外卖考虑烹饪底油（每份约8-15g油即70-135kcal）；凉拌水煮清蒸考虑少油；
+2. 严格核验能量守恒：总热量必须约等于 (蛋白质*4 + 碳水*4 + 脂肪*9)；
+3. 严格只返回一个 JSON 对象，不要输出任何其他文字或代码块：
+{"calories":实际总热量整数kcal,"protein":蛋白质整数g,"carbs":碳水整数g,"fat":脂肪整数g,"detail":"一句话分项拆解，如：黄焖鸡熟鸡肉120g≈190，米饭150g≈175，烹饪油酱汁≈150，合计515"}
+描述模糊时按常规单人堂食/外卖份量估算。''';
 
 /// FR6.9：计划条目编辑器专用——输入是结构化食材清单（含用量）+ 做法步骤，非口语描述
-const String kItemCalSys = '''你是减脂计划餐食的热量估算助手。用户给出一份计划餐食的结构化描述：餐名、食材清单（含用量）、做法步骤、备注。
-请按中国常见食物热量，对食材清单逐项按给出的用量估算；做法步骤中提到的烹饪用油/糖/酱料/勾芡等隐藏热量必须计入；未标注用量的食材按常见份量估算。
+const String kItemCalSys = '''你是减脂计划餐食的热量与宏量营养素估算助手。用户给出一份计划餐食的结构化描述：餐名、食材清单（含用量）、做法步骤、备注。
+请按中国常见食物热量成分，对食材清单逐项按给出的用量估算；做法步骤中提到的烹饪用油/糖/酱料等隐藏热量必须计入；未标注用量的食材按常见份量估算。
+严格遵循营养守恒：总热量 ≈ 蛋白质*4 + 碳水*4 + 脂肪*9。
 严格只返回一个 JSON 对象，不要输出任何其他文字：
-{"calories":整餐总热量整数kcal,"detail":"一句话拆解，如：鸡胸肉150g≈250，橄榄油10g≈90，合计340"}
+{"calories":整餐总热量整数kcal,"protein":蛋白质整数g,"carbs":碳水整数g,"fat":脂肪整数g,"detail":"一句话拆解，如：鸡胸肉150g≈200(P45g)，橄榄油10g≈90，米饭150g≈175，合计465"}
 备注中提到的替代/增减（如"不放糖"）以备注为准。''';
 
 const String kBurnEstSys = '''你是运动消耗估算助手。用户会描述一次实际做的运动（项目 + 时长/距离/强度，可能带备注）。
@@ -132,15 +138,18 @@ class AiService {
 
   /// 通用 chat/completions 调用 → 返回助手回复文本
   /// 默认接收超时 60s：DeepSeek 高峰期非流式生成经常 >20s，20s 过紧会误报「网络超时」
+  /// 通用 chat/completions 调用 → 返回助手回复文本
+  /// enableThinking: 是否开启思考模式（DeepSeek 等）；默认 false（秒级响应）；
+  /// 当用户开启深度思考或重算时设为 true。
   Future<String> chat(AiConfig config, List<Map<String, String>> messages,
-      {int timeoutMs = 60000, void Function(Map<String, dynamic> usage)? onUsage}) async {
+      {int timeoutMs = 60000, bool enableThinking = false, void Function(Map<String, dynamic> usage)? onUsage}) async {
     if (config.apiKey.isEmpty || config.endpoint.isEmpty) {
       throw Exception('未配置 AI：请到「设置 → AI 服务」填写 API Key');
     }
     final base = normalizeEndpoint(config.endpoint);
     final model = config.model.isEmpty ? 'deepseek-v4-flash' : config.model;
     final sw = Stopwatch()..start();
-    debugPrint('[AiService] >>> $base/chat/completions model=$model '
+    debugPrint('[AiService] >>> $base/chat/completions model=$model thinking=$enableThinking '
         'msg=${messages.map((m) => '${m['role']}:${(m['content'] ?? '').length}字').join(' | ')}');
     try {
       final isDeepSeek = config.provider == 'deepseek' ||
@@ -151,15 +160,13 @@ class AiService {
           'model': model,
           'temperature': 0.2,
           'messages': messages,
-          // deepseek-v4-flash / v4-pro 默认开启思考模式（effort=high）：
-          // 估算热量/消耗这类结构化小任务会被内部链式推理拖慢到数十秒，
-          // 显式禁用思考模式换取秒级响应（非 DeepSeek 服务商不传此字段）
-          if (isDeepSeek) 'thinking': {'type': 'disabled'},
+          // 仅在显式不开启思考模式时给 DeepSeek 传 disabled；开启思考模式时不传 disabled（让模型进入 chain-of-thought 推理）
+          if (isDeepSeek && !enableThinking) 'thinking': {'type': 'disabled'},
         },
         options: Options(
           headers: {'Authorization': 'Bearer ${config.apiKey}'},
-          // 接收超时按调用场景定（如生成计划 90s），连接超时全局固定 15s
-          receiveTimeout: Duration(milliseconds: timeoutMs),
+          // 深度思考模式放宽到 90s 超时，普通模式 60s
+          receiveTimeout: Duration(milliseconds: enableThinking ? 90000 : timeoutMs),
         ),
       );
       debugPrint('[AiService] <<< HTTP ${res.statusCode} 耗时 ${sw.elapsedMilliseconds}ms');
@@ -200,15 +207,16 @@ class AiService {
 
   bool hasConfig(AiConfig config) => config.hasConfig;
 
-  /// 食物热量查询
+  /// 食物热量及营养素查询（支持本地缓存）
   Future<Map<String, dynamic>> queryCalorie(AiConfig config, String foodDesc,
-      {void Function(Map<String, dynamic>)? onUsage}) async {
+      {bool enableThinking = false, void Function(Map<String, dynamic>)? onUsage}) async {
     final content = await chat(
       config,
       [
         {'role': 'system', 'content': kCalorieSys},
         {'role': 'user', 'content': '食物描述：$foodDesc'},
       ],
+      enableThinking: enableThinking,
       onUsage: onUsage,
     );
     final obj = extractJsonObj(content);
@@ -218,6 +226,9 @@ class AiService {
     return {
       'name': (obj['name'] is String && (obj['name'] as String).isNotEmpty) ? obj['name'] : '食物',
       'calories': cal.round(),
+      'protein': num.tryParse('${obj['protein']}')?.round(),
+      'carbs': num.tryParse('${obj['carbs']}')?.round(),
+      'fat': num.tryParse('${obj['fat']}')?.round(),
       'unit': obj['unit'] is String ? obj['unit'] : '',
       'confidence': obj['confidence'] is num ? obj['confidence'] : 0.5,
     };
@@ -247,15 +258,16 @@ class AiService {
     await queryCalorie(config, '一个水煮蛋', onUsage: onUsage);
   }
 
-  /// 一餐实际热量估算（支持"计划+少了什么"的口语描述），resolve { calories, detail }
+  /// 一餐实际热量与三大营养素估算（支持"计划+少了什么"的口语描述及深度思考），resolve { calories, protein, carbs, fat, detail }
   Future<Map<String, dynamic>> estimateMeal(AiConfig config, String desc,
-      {void Function(Map<String, dynamic>)? onUsage}) async {
+      {bool enableThinking = false, void Function(Map<String, dynamic>)? onUsage}) async {
     final content = await chat(
       config,
       [
         {'role': 'system', 'content': kMealEstSys},
         {'role': 'user', 'content': '这一餐的描述：$desc'},
       ],
+      enableThinking: enableThinking,
       onUsage: onUsage,
     );
     final obj = extractJsonObj(content);
@@ -264,20 +276,24 @@ class AiService {
     if (cal == null || cal < 0 || cal > 5000) throw Exception('AI 估算的热量超出合理范围，请手动填写');
     return {
       'calories': cal.round(),
+      'protein': num.tryParse('${obj['protein']}')?.round(),
+      'carbs': num.tryParse('${obj['carbs']}')?.round(),
+      'fat': num.tryParse('${obj['fat']}')?.round(),
       'detail': obj['detail'] is String ? obj['detail'] : '',
     };
   }
 
   /// FR6.9：计划条目编辑器整餐热量估算——输入为结构化食材清单（含用量）+ 做法步骤 + 备注，
-  /// 专用提示词强调按用量逐项估算并计入烹饪隐藏热量；resolve { calories, detail }
+  /// 专用提示词强调按用量逐项估算并计入烹饪隐藏热量与三大营养素；resolve { calories, protein, carbs, fat, detail }
   Future<Map<String, dynamic>> estimateItemMeal(AiConfig config, String desc,
-      {void Function(Map<String, dynamic>)? onUsage}) async {
+      {bool enableThinking = false, void Function(Map<String, dynamic>)? onUsage}) async {
     final content = await chat(
       config,
       [
         {'role': 'system', 'content': kItemCalSys},
         {'role': 'user', 'content': '计划餐食的描述：\n$desc'},
       ],
+      enableThinking: enableThinking,
       onUsage: onUsage,
     );
     final obj = extractJsonObj(content);
@@ -286,6 +302,9 @@ class AiService {
     if (cal == null || cal < 0 || cal > 5000) throw Exception('AI 估算的热量超出合理范围，请手动填写');
     return {
       'calories': cal.round(),
+      'protein': num.tryParse('${obj['protein']}')?.round(),
+      'carbs': num.tryParse('${obj['carbs']}')?.round(),
+      'fat': num.tryParse('${obj['fat']}')?.round(),
       'detail': obj['detail'] is String ? obj['detail'] : '',
     };
   }

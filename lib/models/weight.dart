@@ -16,16 +16,28 @@ class WeightEntry {
   double weight; // kg，允许两位小数（如 68.55）
   int bmr; // 录入时按当时基础信息快照的 BMR；0 = 录入时基础信息不完整（不参与基础消耗）
   int updatedAt; // 毫秒时间戳
+  double? bodyFat; // 体脂率（%），如 20.5，选填（体脂秤参考）
 
-  WeightEntry({required this.weight, required this.bmr, required this.updatedAt});
+  WeightEntry({
+    required this.weight,
+    required this.bmr,
+    required this.updatedAt,
+    this.bodyFat,
+  });
 
   factory WeightEntry.fromJson(Map<String, dynamic> json) => WeightEntry(
         weight: json['weight'] is num ? (json['weight'] as num).toDouble() : 0,
         bmr: json['bmr'] is num ? (json['bmr'] as num).round() : 0,
         updatedAt: json['updatedAt'] is num ? (json['updatedAt'] as num).round() : 0,
+        bodyFat: json['bodyFat'] is num ? (json['bodyFat'] as num).toDouble() : null,
       );
 
-  Map<String, dynamic> toJson() => {'weight': weight, 'bmr': bmr, 'updatedAt': updatedAt};
+  Map<String, dynamic> toJson() => {
+        'weight': weight,
+        'bmr': bmr,
+        'updatedAt': updatedAt,
+        if (bodyFat != null) 'bodyFat': bodyFat,
+      };
 }
 
 /// 基准固化（历史稳定锚点）
@@ -89,6 +101,17 @@ class WeightData {
       }
     }
     return hit;
+  }
+
+  /// 查找 ≤ [dateStr] 的最近一条记录中的体脂率（沿用链：体脂秤并非每天测，优先取最近一次测量的有效值）
+  double? bodyFatFor(String dateStr) {
+    final sortedDates = records.keys.where((d) => d.compareTo(dateStr) <= 0).toList()
+      ..sort((a, b) => b.compareTo(a));
+    for (final d in sortedDates) {
+      final bf = records[d]?.bodyFat;
+      if (bf != null && bf > 0) return bf;
+    }
+    return null;
   }
 
   /// 今天（同日重复录入覆盖）

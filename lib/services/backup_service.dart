@@ -146,7 +146,7 @@ String encodeBackup(BackupData data, {DateTime? now}) =>
       'type': 'backup',
       'formatVersion': 2,
       'exportedAt': (now ?? DateTime.now()).toIso8601String(),
-      'appVersion': '1.0.2',
+      'appVersion': '1.0.3',
       'data': data.toJson(),
     });
 

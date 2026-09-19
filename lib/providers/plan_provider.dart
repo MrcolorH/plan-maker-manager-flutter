@@ -133,6 +133,43 @@ class PlanProvider extends ChangeNotifier {
     await _reminder.fullReschedule(plan, _settings.settings);
   }
 
+  /// 当日快照修改反向同步回长期计划模板（用户勾选「同步更新回长期计划」）
+  Future<void> syncMealItemFromSnapshot({
+    required String mealId,
+    required String newName,
+    required int? newCalories,
+    int? protein,
+    int? carbs,
+    int? fat,
+    String? note,
+  }) async {
+    final i = plan.meals.indexWhere((x) => x.id == mealId);
+    if (i < 0) return;
+    final old = plan.meals[i];
+    final updated = MealItem(
+      id: old.id,
+      type: old.type,
+      name: newName,
+      time: old.time,
+      calories: newCalories,
+      protein: protein ?? old.protein,
+      carbs: carbs ?? old.carbs,
+      fat: fat ?? old.fat,
+      days: old.days,
+      reminder: old.reminder,
+      note: note ?? old.note,
+      details: old.details,
+      steps: old.steps,
+      dates: old.dates,
+      startDate: old.startDate,
+      endDate: old.endDate,
+    );
+    plan.meals[i] = updated;
+    notifyListeners();
+    await _persist();
+    await _reminder.fullReschedule(plan, _settings.settings);
+  }
+
   /// 整项替换（导入预览/详情页「编辑」落盘用）：按 id 定位原位替换；
   /// 名称/时间/内容等变化会影响当日快照与提醒，故联动重调度 + 同步今天
   Future<void> replaceItem(String type, Object item) async {

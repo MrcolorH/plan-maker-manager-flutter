@@ -9,6 +9,7 @@ import 'pages/main_shell.dart';
 import 'providers/app_provider.dart';
 import 'providers/onboarding_provider.dart';
 import 'providers/plan_provider.dart';
+import 'providers/preset_provider.dart';
 import 'providers/record_provider.dart';
 import 'providers/settings_provider.dart';
 import 'providers/usage_provider.dart';
@@ -39,6 +40,7 @@ class _JianfeiDaziAppState extends State<JianfeiDaziApp> {
   late final RecordProvider recordProvider;
   late final PlanProvider planProvider;
   late final OnboardingProvider onboardingProvider;
+  late final PresetProvider presetProvider;
   late final AutoBackupService autoBackup;
 
   @override
@@ -49,6 +51,7 @@ class _JianfeiDaziAppState extends State<JianfeiDaziApp> {
     appProvider = AppProvider();
     usageProvider = UsageProvider(storage);
     recordProvider = RecordProvider(storage);
+    presetProvider = PresetProvider();
     settingsProvider = SettingsProvider(
       storage,
       reminder,
@@ -80,6 +83,7 @@ class _JianfeiDaziAppState extends State<JianfeiDaziApp> {
         ChangeNotifierProvider.value(value: recordProvider),
         ChangeNotifierProvider.value(value: planProvider),
         ChangeNotifierProvider.value(value: onboardingProvider),
+        ChangeNotifierProvider.value(value: presetProvider),
       ],
       child: MaterialApp(
         title: '知轻',

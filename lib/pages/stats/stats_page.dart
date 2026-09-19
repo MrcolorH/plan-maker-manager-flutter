@@ -7,6 +7,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../models/onboarding.dart' show fmtBodyFat;
 import '../../models/plan_data.dart';
 import '../../models/records.dart';
 import '../../providers/onboarding_provider.dart';
@@ -479,7 +480,8 @@ class _StatsPageState extends State<StatsPage> {
     final plan = context.read<PlanProvider>().plan;
     final records = context.read<RecordProvider>();
     final settings = context.read<SettingsProvider>().settings;
-    final detail = dayDetail(plan, settings, records.store, date);
+    final profile = context.read<OnboardingProvider>().state.profile;
+    final detail = dayDetail(plan, settings, records.store, date, profile: profile);
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -655,9 +657,39 @@ class _DayDetailSheet extends StatelessWidget {
                   Expanded(child: _stat('计划完成', '${s.doneCount}/${s.taskCount}', AppColors.text)),
                   Expanded(child: _stat('已摄入', detail.future ? '—' : '${s.intake.round()}', detail.future ? AppColors.textSub : AppColors.orange)),
                   Expanded(child: _stat('热量缺口', _defText(), _defColor())),
-                  Expanded(child: _stat('体重', _weightText(records.store), _weightColor(records.store))),
+                  Expanded(
+                    child: _stat(
+                      '体重',
+                      _weightText(records.store),
+                      _weightColor(records.store),
+                      subValue: () {
+                        if (detail.future) return null;
+                        final bf = bodyFatForDate(records.store, date);
+                        return (bf != null && bf > 0) ? '体脂 ${fmtBodyFat(bf)}%' : null;
+                      }(),
+                    ),
+                  ),
                 ],
               ),
+              if (!detail.future && !detail.beforeStart && (s.intakeProtein > 0 || s.intakeCarbs > 0 || s.intakeFat > 0))
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: AppColors.tagBg,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      children: [
+                        Text('蛋白质: ${s.intakeProtein}g', style: const TextStyle(fontSize: 11, color: Color(0xFF4CAF50), fontWeight: FontWeight.w600)),
+                        Text('碳水: ${s.intakeCarbs}g', style: const TextStyle(fontSize: 11, color: Color(0xFF2196F3), fontWeight: FontWeight.w600)),
+                        Text('脂肪: ${s.intakeFat}g', style: const TextStyle(fontSize: 11, color: Color(0xFFFF9800), fontWeight: FontWeight.w600)),
+                      ],
+                    ),
+                  ),
+                ),
               if (!detail.future && !detail.beforeStart && s.hasData)
                 Padding(
                   padding: const EdgeInsets.only(top: 6),
@@ -713,10 +745,18 @@ class _DayDetailSheet extends StatelessWidget {
     );
   }
 
-  Widget _stat(String label, String value, Color color) {
+  Widget _stat(String label, String value, Color color, {String? subValue}) {
     return Column(
       children: [
         Text(value, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: color)),
+        if (subValue != null && subValue.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 1),
+            child: Text(
+              subValue,
+              style: const TextStyle(fontSize: 10, color: AppColors.primary, fontWeight: FontWeight.w600),
+            ),
+          ),
         const SizedBox(height: 2),
         Text(label, style: const TextStyle(fontSize: 11, color: AppColors.textSub)),
       ],
@@ -724,6 +764,12 @@ class _DayDetailSheet extends StatelessWidget {
   }
 
   Widget _mealRow(BuildContext context, RecordProvider records, DayDetailItem m, bool canAdjust) {
+    final macroParts = <String>[];
+    if (m.protein != null) macroParts.add('P ${m.protein}g');
+    if (m.carbs != null) macroParts.add('C ${m.carbs}g');
+    if (m.fat != null) macroParts.add('F ${m.fat}g');
+    final macroStr = macroParts.isNotEmpty ? macroParts.join(' · ') : null;
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
@@ -740,6 +786,8 @@ class _DayDetailSheet extends StatelessWidget {
                 Text(m.name, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
                 const SizedBox(height: 2),
                 Text('${kTypeCn[m.type] ?? ''} · ${m.time}', style: const TextStyle(fontSize: 11, color: AppColors.textSub)),
+                if (macroStr != null)
+                  Text(macroStr, style: const TextStyle(fontSize: 10, color: AppColors.primary, fontWeight: FontWeight.w500)),
                 if (m.note.isNotEmpty)
                   Text(m.note, style: const TextStyle(fontSize: 11, color: AppColors.textSub)),
               ],
@@ -752,6 +800,12 @@ class _DayDetailSheet extends StatelessWidget {
   }
 
   Widget _snackRow(BuildContext context, RecordProvider records, DaySnack t) {
+    final macroParts = <String>[];
+    if (t.protein != null) macroParts.add('P ${t.protein}g');
+    if (t.carbs != null) macroParts.add('C ${t.carbs}g');
+    if (t.fat != null) macroParts.add('F ${t.fat}g');
+    final macroStr = macroParts.isNotEmpty ? macroParts.join(' · ') : null;
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
@@ -764,6 +818,8 @@ class _DayDetailSheet extends StatelessWidget {
               children: [
                 Text(t.name, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
                 Text('食物库/AI · ${t.time}', style: const TextStyle(fontSize: 11, color: AppColors.textSub)),
+                if (macroStr != null)
+                  Text(macroStr, style: const TextStyle(fontSize: 10, color: AppColors.primary, fontWeight: FontWeight.w500)),
               ],
             ),
           ),
@@ -1130,7 +1186,8 @@ class _MonthReviewSheet extends StatelessWidget {
               final plan = context.read<PlanProvider>().plan;
               final records = context.read<RecordProvider>();
               final settings = context.read<SettingsProvider>().settings;
-              final detail = dayDetail(plan, settings, records.store, day.date);
+              final profile = context.read<OnboardingProvider>().state.profile;
+              final detail = dayDetail(plan, settings, records.store, day.date, profile: profile);
               showModalBottomSheet<void>(
                 context: context,
                 isScrollControlled: true,

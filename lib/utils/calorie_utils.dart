@@ -5,6 +5,9 @@
 /// 与当前计划无关（删除/清空/覆盖计划不影响历史）；无快照的日期走旧口径 fallback
 library;
 
+import 'dart:math';
+
+import '../models/onboarding.dart';
 import '../models/plan_data.dart';
 import '../models/records.dart';
 import '../models/settings.dart';
@@ -74,11 +77,76 @@ int baseBurnForDate(AppSettings settings, RecordStore records, String dateStr) {
 double? weightForDate(RecordStore records, String dateStr) =>
     records.weightRecords.entryFor(dateStr)?.weight;
 
+/// 某天生效体脂率（与 [weightForDate] 同一沿用链，向前回溯最近一次测量的有效体脂率），无任何来源返回 null
+double? bodyFatForDate(RecordStore records, String dateStr) =>
+    records.weightRecords.bodyFatFor(dateStr);
+
 /// 计划餐计入热量的值：优先当日覆盖，其次计划值；自由餐(null)无覆盖时为 0
 int _mealCal(MealItem m, RecordStore records, String dateStr) {
   final adj = records.getAdjust(dateStr, 'meal', m.id);
   if (adj != null) return adj.calories;
   return m.calories ?? 0;
+}
+
+/// 减脂期每日宏量营养目标（克数）
+class DailyMacroTargets {
+  final int protein;
+  final int carbs;
+  final int fat;
+  const DailyMacroTargets({
+    required this.protein,
+    required this.carbs,
+    required this.fat,
+  });
+}
+
+/// 根据目标热量、体重、体脂率、性别、身高科学计算减脂期适中偏少的每日营养素目标标准：
+/// 1. 蛋白质：适中偏高以保肌防分解（~2.0g/kg 瘦体重，或 ~1.6g/kg 总体重）
+/// 2. 脂肪：适中偏少维持激素平衡（~0.75g/kg 总体重，约占总热量 20%~25%）
+/// 3. 碳水：适中偏少控碳，由剩余目标热量补充（剩余热量 / 4）
+DailyMacroTargets calculateFatLossMacroTargets({
+  required int targetCalories,
+  double? weight,
+  double? bodyFat,
+  String? gender,
+  int? height,
+  int? age,
+}) {
+  final target = targetCalories > 0 ? targetCalories : 1800;
+
+  // 1. 体重预估或实测
+  final double w = (weight != null && weight > 0)
+      ? weight
+      : ((height != null && height > 0)
+          ? ((gender == 'female' ? height - 105 : height - 100) * 0.9).clamp(45.0, 120.0)
+          : (gender == 'female' ? 55.0 : 70.0));
+
+  // 2. 去脂体重（LBM）
+  double lbm;
+  if (bodyFat != null && bodyFat > 5 && bodyFat < 60) {
+    lbm = w * (1.0 - bodyFat / 100.0);
+  } else {
+    lbm = gender == 'female' ? w * 0.75 : w * 0.82;
+  }
+
+  // 3. 蛋白质：减脂期 2.0g/kg 瘦体重（保肌防分解，产生食物热效应）
+  int p = (lbm * 2.0).round();
+  final minP = gender == 'female' ? 60 : 75;
+  final maxP = (target * 0.35 / 4).round();
+  p = p.clamp(minP, max(minP, maxP));
+
+  // 4. 脂肪：减脂期适中偏少（0.75g/kg 体重），维持睾酮/雌激素等激素分泌
+  int f = (w * 0.75).round();
+  final minF = gender == 'female' ? 35 : 45;
+  final maxF = (target * 0.28 / 9).round();
+  f = f.clamp(minF, max(minF, maxF));
+
+  // 5. 碳水：减脂期由剩余目标热量提供（控碳），不足保底 50g
+  final remainCal = target - (p * 4) - (f * 9);
+  int c = (remainCal / 4).round();
+  if (c < 50) c = 50;
+
+  return DailyMacroTargets(protein: p, carbs: c, fat: f);
 }
 
 /// 当日汇总：缺口 = (基础消耗 + 运动消耗) - 已摄入
@@ -98,6 +166,14 @@ class DailySummary {
   final int taskCount; // 计划任务数（完成度只看计划）
   final int doneCount; // 已完成计划任务数
 
+  // 三大宏量元素（克数）
+  final int intakeProtein;
+  final int intakeCarbs;
+  final int intakeFat;
+  final int plannedProtein;
+  final int plannedCarbs;
+  final int plannedFat;
+
   const DailySummary({
     required this.plannedIntake,
     required this.mealIntake,
@@ -113,6 +189,12 @@ class DailySummary {
     required this.deficit,
     required this.taskCount,
     required this.doneCount,
+    this.intakeProtein = 0,
+    this.intakeCarbs = 0,
+    this.intakeFat = 0,
+    this.plannedProtein = 0,
+    this.plannedCarbs = 0,
+    this.plannedFat = 0,
   });
 
   /// 是否有记录（供趋势/月历判断）
@@ -123,18 +205,20 @@ DailySummary dailySummary(
   PlanData plan,
   AppSettings settings,
   RecordStore records,
-  String dateStr,
-) {
+  String dateStr, {
+  UserProfile? profile,
+}) {
   // F11 快照路径：该日已有快照 → 只读快照（历史固化）
   final entries = records.dayEntries[dateStr];
-  if (entries != null) return _snapshotSummary(settings, records, dateStr, entries);
+  if (entries != null) return _snapshotSummary(settings, records, dateStr, entries, profile: profile);
   // 旧口径 fallback（未来日 / 理论上的未迁移日）
-  return _legacySummary(plan, settings, records, dateStr);
+  return _legacySummary(plan, settings, records, dateStr, profile: profile);
 }
 
 /// 快照路径：只读当日条目（计划=模板时实例化后的当天事实）
 DailySummary _snapshotSummary(
-    AppSettings settings, RecordStore records, String dateStr, List<DayEntry> entries) {
+    AppSettings settings, RecordStore records, String dateStr, List<DayEntry> entries,
+    {UserProfile? profile}) {
   final rec = records.checkRecords[dateStr] ?? {};
   bool checked(DayEntry e) => rec.containsKey(entryCheckKey(e));
   final planMeals = entries.where((e) => e.isPlan && e.kind == 'meal').toList();
@@ -159,6 +243,57 @@ DailySummary _snapshotSummary(
   final taskCount = planEntries.length;
   final doneCount = planEntries.where(checked).length;
 
+  // 计算宏量元素（已打卡计划餐 + 临时加餐）
+  int inP = 0;
+  int inC = 0;
+  int inF = 0;
+  for (final m in planMeals.where(checked)) {
+    inP += m.protein ?? 0;
+    inC += m.carbs ?? 0;
+    inF += m.fat ?? 0;
+  }
+  for (final s in extraSnacks) {
+    inP += s.protein ?? 0;
+    inC += s.carbs ?? 0;
+    inF += s.fat ?? 0;
+  }
+
+  // 计划期望宏量元素：
+  // 1. 若计划餐完整配置了宏量元素（餐食宏量总热量 ≥ 计划热量的 85%），说明为用户定制的精细食谱，累加各餐；
+  // 2. 否则，依据减脂期营养学标准（结合身高、体重、体脂率），自动计算全天适中偏少的营养摄入标准，供用户打卡对标。
+  int mealP = 0;
+  int mealC = 0;
+  int mealF = 0;
+  for (final m in planMeals) {
+    mealP += m.protein ?? 0;
+    mealC += m.carbs ?? 0;
+    mealF += m.fat ?? 0;
+  }
+  final mealMacroCal = mealP * 4 + mealC * 4 + mealF * 9;
+  final targetCal = plannedIntake > 0
+      ? plannedIntake.round()
+      : (settings.dailyCalorieTarget > 0 ? settings.dailyCalorieTarget : settings.tdee);
+
+  int planP = mealP;
+  int planC = mealC;
+  int planF = mealF;
+
+  if (mealMacroCal < targetCal * 0.85) {
+    final w = weightForDate(records, dateStr) ?? profile?.weight;
+    final bf = bodyFatForDate(records, dateStr) ?? profile?.bodyFat;
+    final targets = calculateFatLossMacroTargets(
+      targetCalories: targetCal,
+      weight: w,
+      bodyFat: bf,
+      gender: profile?.gender,
+      height: profile?.height,
+      age: profile?.age,
+    );
+    planP = targets.protein;
+    planC = targets.carbs;
+    planF = targets.fat;
+  }
+
   return DailySummary(
     plannedIntake: plannedIntake,
     mealIntake: mealIntake,
@@ -174,6 +309,12 @@ DailySummary _snapshotSummary(
     deficit: deficit,
     taskCount: taskCount,
     doneCount: doneCount,
+    intakeProtein: inP,
+    intakeCarbs: inC,
+    intakeFat: inF,
+    plannedProtein: planP,
+    plannedCarbs: planC,
+    plannedFat: planF,
   );
 }
 
@@ -182,8 +323,9 @@ DailySummary _legacySummary(
   PlanData plan,
   AppSettings settings,
   RecordStore records,
-  String dateStr,
-) {
+  String dateStr, {
+  UserProfile? profile,
+}) {
   final tasks = getTasksForDate(plan, dateStr);
   final temps = records.getTempTasks(dateStr);
   final rec = records.checkRecords[dateStr] ?? {};
@@ -210,6 +352,48 @@ DailySummary _legacySummary(
   final taskCount = tasks.total;
   final doneCount = tasks.meals.where(doneMeal).length + tasks.exercises.where(doneEx).length;
 
+  int inP = 0;
+  int inC = 0;
+  int inF = 0;
+  for (final m in tasks.meals.where(doneMeal)) {
+    inP += m.protein ?? 0;
+    inC += m.carbs ?? 0;
+    inF += m.fat ?? 0;
+  }
+
+  int mealP = 0;
+  int mealC = 0;
+  int mealF = 0;
+  for (final m in tasks.meals) {
+    mealP += m.protein ?? 0;
+    mealC += m.carbs ?? 0;
+    mealF += m.fat ?? 0;
+  }
+  final mealMacroCal = mealP * 4 + mealC * 4 + mealF * 9;
+  final targetCal = plannedIntake > 0
+      ? plannedIntake.round()
+      : (settings.dailyCalorieTarget > 0 ? settings.dailyCalorieTarget : settings.tdee);
+
+  int planP = mealP;
+  int planC = mealC;
+  int planF = mealF;
+
+  if (mealMacroCal < targetCal * 0.85) {
+    final w = weightForDate(records, dateStr) ?? profile?.weight;
+    final bf = bodyFatForDate(records, dateStr) ?? profile?.bodyFat;
+    final targets = calculateFatLossMacroTargets(
+      targetCalories: targetCal,
+      weight: w,
+      bodyFat: bf,
+      gender: profile?.gender,
+      height: profile?.height,
+      age: profile?.age,
+    );
+    planP = targets.protein;
+    planC = targets.carbs;
+    planF = targets.fat;
+  }
+
   return DailySummary(
     plannedIntake: plannedIntake,
     mealIntake: mealIntake,
@@ -225,6 +409,12 @@ DailySummary _legacySummary(
     deficit: deficit,
     taskCount: taskCount,
     doneCount: doneCount,
+    intakeProtein: inP,
+    intakeCarbs: inC,
+    intakeFat: inF,
+    plannedProtein: planP,
+    plannedCarbs: planC,
+    plannedFat: planF,
   );
 }
 
@@ -237,11 +427,16 @@ String deficitLevel(num v) {
 }
 
 // ---------- 打卡天口径（连续打卡 / 累计打卡共用）----------
-/// 「打卡天」= 当天存在任一记录就算：打卡/临时任务/旧加餐/实际热量覆盖/当日快照
+/// 「打卡天」= 当天存在任一实质打卡或记录行为：打卡/加餐/加练/实际热量覆盖/快照中有记录
 bool dayActive(RecordStore records, String dateStr) {
   final rec = records.checkRecords[dateStr];
   if (rec != null && rec.isNotEmpty) return true;
-  if ((records.dayEntries[dateStr] ?? const []).isNotEmpty) return true;
+  final entries = records.dayEntries[dateStr];
+  if (entries != null && entries.isNotEmpty) {
+    if (entries.any((e) => !e.isPlan || e.detached || (rec != null && rec.containsKey(entryCheckKey(e))))) {
+      return true;
+    }
+  }
   if (records.getTempTasks(dateStr).isNotEmpty) return true;
   if ((records.extraFoods[dateStr] ?? []).isNotEmpty) return true;
   final adj = records.mealAdjust[dateStr];
@@ -265,25 +460,20 @@ int streakDays(RecordStore records) {
   return s;
 }
 
-/// 累计打卡天数：有记录以来所有「打卡天」的总数
+/// 累计打卡天数：有记录以来所有「打卡天」的总数（且必然 ≥ 连续打卡天数）
 int totalDoneDays(RecordStore records) {
   final dates = <String>{};
-  void collect(Map<String, dynamic> obj) {
-    for (final k in obj.keys) {
-      dates.add(k);
-    }
-  }
-
-  collect(records.checkRecords.map((k, v) => MapEntry(k, v)));
-  collect(records.tempTasks.map((k, v) => MapEntry(k, v)));
-  collect(records.extraFoods.map((k, v) => MapEntry(k, v)));
-  collect(records.mealAdjust.map((k, v) => MapEntry(k, v)));
+  dates.addAll(records.checkRecords.keys);
+  dates.addAll(records.dayEntries.keys);
+  dates.addAll(records.tempTasks.keys);
+  dates.addAll(records.extraFoods.keys);
+  dates.addAll(records.mealAdjust.keys);
 
   var n = 0;
   for (final d in dates) {
     if (dayActive(records, d)) n++;
   }
-  return n;
+  return max(n, streakDays(records));
 }
 
 /// 本周单日数据点
@@ -349,9 +539,24 @@ class DayDetailItem {
   final String time;
   final int? plannedCal;
   final int? actualCal;
+  final int? protein;
+  final int? carbs;
+  final int? fat;
   final String note;
   final bool checked;
-  DayDetailItem(this.id, this.name, this.type, this.time, this.plannedCal, this.actualCal, this.note, this.checked);
+  DayDetailItem(
+    this.id,
+    this.name,
+    this.type,
+    this.time,
+    this.plannedCal,
+    this.actualCal,
+    this.note,
+    this.checked, {
+    this.protein,
+    this.carbs,
+    this.fat,
+  });
 }
 
 class DayDetailExercise {
@@ -369,7 +574,10 @@ class DaySnack {
   final String name;
   final String time;
   final int calories;
-  DaySnack(this.id, this.name, this.time, this.calories);
+  final int? protein;
+  final int? carbs;
+  final int? fat;
+  DaySnack(this.id, this.name, this.time, this.calories, {this.protein, this.carbs, this.fat});
 }
 
 class DayDetail {
@@ -391,9 +599,9 @@ class DayDetail {
   });
 }
 
-DayDetail dayDetail(PlanData plan, AppSettings settings, RecordStore records, String dateStr) {
+DayDetail dayDetail(PlanData plan, AppSettings settings, RecordStore records, String dateStr, {UserProfile? profile}) {
   final rec = records.checkRecords[dateStr] ?? {};
-  final s = dailySummary(plan, settings, records, dateStr);
+  final s = dailySummary(plan, settings, records, dateStr, profile: profile);
   final start = plan.meta.startedAt;
 
   final entries = records.dayEntries[dateStr];
@@ -403,7 +611,8 @@ DayDetail dayDetail(PlanData plan, AppSettings settings, RecordStore records, St
     final planExs = entries.where((e) => e.isPlan && e.kind == 'exercise').toList();
     final snacks = entries
         .where((e) => !e.isPlan && e.kind == 'meal')
-        .map((e) => DaySnack(e.id, e.content, e.time, e.calories ?? 0))
+        .map((e) => DaySnack(e.id, e.content, e.time, e.calories ?? 0,
+            protein: e.protein, carbs: e.carbs, fat: e.fat))
         .toList();
     final tempExs = entries
         .where((e) => !e.isPlan && e.kind == 'exercise')
@@ -423,6 +632,9 @@ DayDetail dayDetail(PlanData plan, AppSettings settings, RecordStore records, St
                 e.calories,
                 e.note,
                 rec.containsKey(entryCheckKey(e)),
+                protein: e.protein,
+                carbs: e.carbs,
+                fat: e.fat,
               ))
           .toList(),
       exercises: planExs

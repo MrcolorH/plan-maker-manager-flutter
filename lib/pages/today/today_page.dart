@@ -11,6 +11,7 @@ import '../../models/settings.dart';
 import '../../providers/app_provider.dart';
 import '../../providers/onboarding_provider.dart';
 import '../../providers/plan_provider.dart';
+import '../../providers/preset_provider.dart';
 import '../../providers/record_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/usage_provider.dart';
@@ -55,7 +56,8 @@ class TodayPage extends StatelessWidget {
       );
     }
 
-    final summary = dailySummary(plan, settings, records.store, today);
+    final profile = context.watch<OnboardingProvider>().state.profile;
+    final summary = dailySummary(plan, settings, records.store, today, profile: profile);
 
     // F11 快照渲染：当日餐食/运动以「当日条目快照」为准（计划=模板，套用后当天即事实）
     // 今日首次进入兜底：跨天/首启时若当天还没有快照，则从计划实例化
@@ -159,6 +161,12 @@ class TodayPage extends StatelessWidget {
               intake: summary.intake.round(),
               plannedIntake: summary.plannedIntake.round(),
               deficit: summary.deficit,
+              intakeProtein: summary.intakeProtein,
+              intakeCarbs: summary.intakeCarbs,
+              intakeFat: summary.intakeFat,
+              plannedProtein: summary.plannedProtein,
+              plannedCarbs: summary.plannedCarbs,
+              plannedFat: summary.plannedFat,
             ),
             // 今日餐食
             const SectionTitle('今日餐食'),
@@ -306,8 +314,13 @@ class _EntryEditSheet extends StatefulWidget {
 class _EntryEditSheetState extends State<_EntryEditSheet> {
   late final TextEditingController _contentCtrl;
   late final TextEditingController _calCtrl;
+  late final TextEditingController _proteinCtrl;
+  late final TextEditingController _carbsCtrl;
+  late final TextEditingController _fatCtrl;
   late final TextEditingController _noteCtrl;
   bool _loading = false;
+  bool _enableThinking = false;
+  bool _syncToPlan = false;
   String? _aiDetail;
 
   bool get _isEx => widget.entry.kind == 'exercise';
@@ -319,6 +332,12 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
     _contentCtrl = TextEditingController(text: widget.entry.content);
     _calCtrl =
         TextEditingController(text: widget.entry.calories != null ? '${widget.entry.calories}' : '');
+    _proteinCtrl =
+        TextEditingController(text: widget.entry.protein != null ? '${widget.entry.protein}' : '');
+    _carbsCtrl =
+        TextEditingController(text: widget.entry.carbs != null ? '${widget.entry.carbs}' : '');
+    _fatCtrl =
+        TextEditingController(text: widget.entry.fat != null ? '${widget.entry.fat}' : '');
     _noteCtrl = TextEditingController(text: widget.entry.note);
   }
 
@@ -326,6 +345,9 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
   void dispose() {
     _contentCtrl.dispose();
     _calCtrl.dispose();
+    _proteinCtrl.dispose();
+    _carbsCtrl.dispose();
+    _fatCtrl.dispose();
     _noteCtrl.dispose();
     super.dispose();
   }
@@ -367,6 +389,23 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
     if (content.isEmpty) return;
     final note = _noteCtrl.text.trim();
     final desc = note.isNotEmpty ? '$content（备注：$note）' : content;
+
+    // 优先检查本地沉淀知识库（0 延迟秒出）
+    if (!_isEx && !_enableThinking) {
+      final presetService = context.read<PresetProvider>().service;
+      final cached = presetService.getCachedAiEstimate(desc);
+      if (cached != null) {
+        setState(() {
+          _calCtrl.text = '${cached['calories']}';
+          if (cached['protein'] != null) _proteinCtrl.text = '${cached['protein']}';
+          if (cached['carbs'] != null) _carbsCtrl.text = '${cached['carbs']}';
+          if (cached['fat'] != null) _fatCtrl.text = '${cached['fat']}';
+          _aiDetail = (cached['detail'] as String?) ?? '（已从本地常吃知识库秒级命中）';
+        });
+        return;
+      }
+    }
+
     // 未配置 AI → 先弹配置层，配好后再继续估算
     final ok = await ensureAiConfigured(
       context,
@@ -376,16 +415,25 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
     final settings = context.read<SettingsProvider>().settings;
     final usage = context.read<UsageProvider>();
     final ob = context.read<OnboardingProvider>();
+    final presetService = context.read<PresetProvider>().service;
     setState(() => _loading = true);
     try {
       final r = _isEx
           ? await _burnNow(settings, usage, ob, desc)
-          : await AiService.instance.estimateMeal(settings.ai, desc, onUsage: usage.addUsage);
+          : await AiService.instance.estimateMeal(settings.ai, desc,
+              enableThinking: _enableThinking, onUsage: usage.addUsage);
       if (!mounted) return;
       setState(() {
         _calCtrl.text = '${r['calories']}';
+        if (r['protein'] != null) _proteinCtrl.text = '${r['protein']}';
+        if (r['carbs'] != null) _carbsCtrl.text = '${r['carbs']}';
+        if (r['fat'] != null) _fatCtrl.text = '${r['fat']}';
         _aiDetail = r['detail'] as String?;
       });
+      // 成功后自动沉淀为本地知识缓存
+      if (!_isEx) {
+        await presetService.setCachedAiEstimate(desc, r);
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -418,9 +466,35 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
       _contentCtrl.text = _planContent;
       final pc = _planCal;
       _calCtrl.text = pc != null ? '$pc' : '';
+      final m = _meal;
+      _proteinCtrl.text = m?.protein != null ? '${m!.protein}' : '';
+      _carbsCtrl.text = m?.carbs != null ? '${m!.carbs}' : '';
+      _fatCtrl.text = m?.fat != null ? '${m!.fat}' : '';
       _noteCtrl.clear();
       _aiDetail = null;
     });
+  }
+
+  Future<void> _saveAsPreset() async {
+    final content = _contentCtrl.text.trim();
+    final cal = int.tryParse(_calCtrl.text.trim());
+    if (content.isEmpty || cal == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('请先输入食物内容和热量')));
+      return;
+    }
+    final p = int.tryParse(_proteinCtrl.text.trim());
+    final c = int.tryParse(_carbsCtrl.text.trim());
+    final f = int.tryParse(_fatCtrl.text.trim());
+    await context.read<PresetProvider>().savePreset(
+          name: content,
+          calories: cal,
+          protein: p,
+          carbs: c,
+          fat: f,
+          note: _noteCtrl.text.trim(),
+        );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('已存入常用预设方案：「$content」')));
   }
 
   Future<void> _save({bool checkAfter = false}) async {
@@ -440,6 +514,10 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
         return;
       }
     }
+    final pVal = int.tryParse(_proteinCtrl.text.trim());
+    final cVal = int.tryParse(_carbsCtrl.text.trim());
+    final fVal = int.tryParse(_fatCtrl.text.trim());
+
     final old = widget.entry;
     final date = widget.date;
     final records = context.read<RecordProvider>();
@@ -453,13 +531,31 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
       time: old.time,
       content: content,
       calories: cal,
+      protein: pVal,
+      carbs: cVal,
+      fat: fVal,
       note: _noteCtrl.text.trim(),
       source: old.source,
       planItemId: old.planItemId,
       detached: detachedNow,
       caloriesDirty: dirtyNow,
     );
+    final planProv = context.read<PlanProvider>();
     await records.updateDayEntry(date, updated);
+
+    // 若勾选同步更新长期计划
+    if (_syncToPlan && _isPlan && !_isEx) {
+      await planProv.syncMealItemFromSnapshot(
+            mealId: old.planItemId,
+            newName: content,
+            newCalories: cal,
+            protein: pVal,
+            carbs: cVal,
+            fat: fVal,
+            note: _noteCtrl.text.trim(),
+          );
+    }
+
     if (checkAfter && _isPlan) {
       final keyType = old.kind == 'meal' ? 'meal' : 'exercise';
       if (!records.isChecked(date, keyType, old.planItemId)) {
@@ -533,14 +629,38 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
                     icon: _loading
                         ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
                         : const Text('✨'),
-                    label: Text(_isEx ? 'AI 算消耗' : 'AI 测算'),
+                    label: Text(_isEx ? 'AI 算消耗' : (_enableThinking ? '深度测算' : 'AI 测算')),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: AppColors.orange,
                       side: const BorderSide(color: AppColors.orange),
                     ),
                   ),
                 ),
-                const SizedBox(width: 10),
+                if (!_isEx) ...[
+                  const SizedBox(width: 6),
+                  InkWell(
+                    onTap: () => setState(() => _enableThinking = !_enableThinking),
+                    borderRadius: BorderRadius.circular(6),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: _enableThinking ? AppColors.orange.withValues(alpha: 0.12) : AppColors.tagBg,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                          color: _enableThinking ? AppColors.orange : Colors.transparent,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.psychology, size: 14, color: _enableThinking ? AppColors.orange : AppColors.textSub),
+                          const SizedBox(width: 2),
+                          Text('深度思考', style: TextStyle(fontSize: 11, color: _enableThinking ? AppColors.orange : AppColors.textSub)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(width: 6),
                 Expanded(
                   child: TextField(
                     controller: _calCtrl,
@@ -558,6 +678,63 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
                 ),
               ],
             ),
+            if (!_isEx) ...[
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _proteinCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        hintText: '蛋白质 g',
+                        filled: true,
+                        fillColor: AppColors.bg,
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.all(Radius.circular(8)), borderSide: BorderSide.none),
+                        isDense: true,
+                        contentPadding: EdgeInsets.all(8),
+                      ),
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: TextField(
+                      controller: _carbsCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        hintText: '碳水 g',
+                        filled: true,
+                        fillColor: AppColors.bg,
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.all(Radius.circular(8)), borderSide: BorderSide.none),
+                        isDense: true,
+                        contentPadding: EdgeInsets.all(8),
+                      ),
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: TextField(
+                      controller: _fatCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        hintText: '脂肪 g',
+                        filled: true,
+                        fillColor: AppColors.bg,
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.all(Radius.circular(8)), borderSide: BorderSide.none),
+                        isDense: true,
+                        contentPadding: EdgeInsets.all(8),
+                      ),
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+            ],
             if (_aiDetail != null)
               Padding(
                 padding: const EdgeInsets.only(top: 6),
@@ -577,16 +754,44 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
                 contentPadding: EdgeInsets.all(10),
               ),
             ),
-            if (_canRestore) ...[
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton.icon(
-                  onPressed: _restoreToPlan,
-                  icon: const Icon(Icons.restore, size: 16),
-                  label: const Text('恢复为计划内容'),
-                  style: TextButton.styleFrom(foregroundColor: AppColors.textSub),
-                ),
+            if (!_isEx) ...[
+              const SizedBox(height: 4),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  if (_canRestore)
+                    TextButton.icon(
+                      onPressed: _restoreToPlan,
+                      icon: const Icon(Icons.restore, size: 15),
+                      label: const Text('恢复计划', style: TextStyle(fontSize: 12)),
+                      style: TextButton.styleFrom(foregroundColor: AppColors.textSub),
+                    )
+                  else
+                    const SizedBox.shrink(),
+                  TextButton.icon(
+                    onPressed: _saveAsPreset,
+                    icon: const Icon(Icons.star_border, size: 15),
+                    label: const Text('存为常用预设', style: TextStyle(fontSize: 12)),
+                    style: TextButton.styleFrom(foregroundColor: AppColors.orange),
+                  ),
+                ],
+              ),
+            ],
+            if (_isPlan && !_isEx) ...[
+              Row(
+                children: [
+                  Checkbox(
+                    value: _syncToPlan,
+                    activeColor: AppColors.primary,
+                    onChanged: (v) => setState(() => _syncToPlan = v ?? false),
+                  ),
+                  const Expanded(
+                    child: Text(
+                      '同时更新回长期计划模板（未来该餐以此为准）',
+                      style: TextStyle(fontSize: 12, color: AppColors.text),
+                    ),
+                  ),
+                ],
               ),
             ],
             const SizedBox(height: 10),
@@ -594,7 +799,7 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
               children: [
                 Expanded(
                   child: ElevatedButton(
-                    onPressed: () => _save(checkAfter: _isPlan ? false : false),
+                    onPressed: () => _save(checkAfter: false),
                     style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary, foregroundColor: Colors.white),
                     child: const Text('保存'),
                   ),

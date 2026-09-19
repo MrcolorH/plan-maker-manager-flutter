@@ -160,93 +160,151 @@ class MealCard extends StatelessWidget {
     );
   }
 
+  String? get _macroText {
+    final p = entry.protein;
+    final c = entry.carbs;
+    final f = entry.fat;
+    if (p == null && c == null && f == null) return null;
+    final parts = <String>[];
+    if (p != null) parts.add('P ${p}g');
+    if (c != null) parts.add('C ${c}g');
+    if (f != null) parts.add('F ${f}g');
+    return parts.join(' · ');
+  }
+
   Widget _subRow() {
     final cal = entry.calories;
+    final macro = _macroText;
+    Widget macroWidget() => macro != null
+        ? Container(
+            margin: const EdgeInsets.only(top: 3),
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF2F4F2),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              macro,
+              style: const TextStyle(fontSize: 10, color: AppColors.primary, fontWeight: FontWeight.w500),
+            ),
+          )
+        : const SizedBox.shrink();
+
     if (!entry.isPlan) {
       // 计划外加餐：即计缺口，展示热量
-      return Row(
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('${cal ?? 0} kcal',
-              style: const TextStyle(fontSize: 12, color: AppColors.orange)),
-          if (entry.note.isNotEmpty) ...[
-            const SizedBox(width: 4),
-            Expanded(
-              child: Text(entry.note,
-                  maxLines: 1, overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 11, color: AppColors.textSub)),
-            ),
-          ],
+          Row(
+            children: [
+              Text('${cal ?? 0} kcal',
+                  style: const TextStyle(fontSize: 12, color: AppColors.orange)),
+              if (entry.note.isNotEmpty) ...[
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(entry.note,
+                      maxLines: 1, overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 11, color: AppColors.textSub)),
+                ),
+              ],
+            ],
+          ),
+          if (macro != null) macroWidget(),
         ],
       );
     }
     if (cal == null) {
       // 待补录（自由餐 / 未测算）
-      return Row(
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Tag('自由餐', color: 'default'),
-          const Text('打卡后补录实际热量', style: TextStyle(fontSize: 11, color: AppColors.textSub)),
-          if (entry.note.isNotEmpty) ...[
-            const SizedBox(width: 4),
-            Expanded(
-              child: Text(entry.note,
-                  maxLines: 1, overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 11, color: AppColors.textSub)),
-            ),
-          ],
+          Row(
+            children: [
+              const Tag('自由餐', color: 'default'),
+              const Text('打卡后补录实际热量', style: TextStyle(fontSize: 11, color: AppColors.textSub)),
+              if (entry.note.isNotEmpty) ...[
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(entry.note,
+                      maxLines: 1, overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 11, color: AppColors.textSub)),
+                ),
+              ],
+            ],
+          ),
+          if (macro != null) macroWidget(),
         ],
       );
     }
     if (entry.detached) {
       // 已脱钩：只显示实际值 + 备注（无划线计划值，与计划无关）
-      return Row(
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('$cal kcal',
-              style: const TextStyle(fontSize: 12, color: AppColors.orange)),
-          if (entry.note.isNotEmpty) ...[
-            const SizedBox(width: 4),
-            Expanded(
-              child: Text(entry.note,
-                  maxLines: 1, overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 11, color: AppColors.textSub)),
-            ),
-          ],
+          Row(
+            children: [
+              Text('$cal kcal',
+                  style: const TextStyle(fontSize: 12, color: AppColors.orange)),
+              if (entry.note.isNotEmpty) ...[
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(entry.note,
+                      maxLines: 1, overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 11, color: AppColors.textSub)),
+                ),
+              ],
+            ],
+          ),
+          if (macro != null) macroWidget(),
         ],
       );
     }
     // 未脱钩：覆盖则显示实际 + 划线计划值；否则计划值 + 备注
     final dirty = entry.caloriesDirty && planCalories != null && planCalories != cal;
     if (dirty) {
-      return Row(
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('实际 $cal kcal',
-              style: const TextStyle(fontSize: 12, color: AppColors.orange)),
-          const SizedBox(width: 4),
-          Text('计划 $planCalories',
-              style: const TextStyle(
-                  fontSize: 11, color: AppColors.textSub, decoration: TextDecoration.lineThrough)),
-          if (entry.note.isNotEmpty) ...[
-            const SizedBox(width: 4),
-            Expanded(
-              child: Text(entry.note,
-                  maxLines: 1, overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 11, color: AppColors.textSub)),
-            ),
-          ],
+          Row(
+            children: [
+              Text('实际 $cal kcal',
+                  style: const TextStyle(fontSize: 12, color: AppColors.orange)),
+              const SizedBox(width: 4),
+              Text('计划 $planCalories',
+                  style: const TextStyle(
+                      fontSize: 11, color: AppColors.textSub, decoration: TextDecoration.lineThrough)),
+              if (entry.note.isNotEmpty) ...[
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(entry.note,
+                      maxLines: 1, overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 11, color: AppColors.textSub)),
+                ),
+              ],
+            ],
+          ),
+          if (macro != null) macroWidget(),
         ],
       );
     }
-    return Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('$cal kcal',
-            style: const TextStyle(fontSize: 12, color: AppColors.orange)),
-        if (entry.note.isNotEmpty) ...[
-          const SizedBox(width: 4),
-          Expanded(
-            child: Text(entry.note,
-                maxLines: 1, overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 11, color: AppColors.textSub)),
-          ),
-        ],
+        Row(
+          children: [
+            Text('$cal kcal',
+                style: const TextStyle(fontSize: 12, color: AppColors.orange)),
+            if (entry.note.isNotEmpty) ...[
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(entry.note,
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 11, color: AppColors.textSub)),
+              ),
+            ],
+          ],
+        ),
+        if (macro != null) macroWidget(),
       ],
     );
   }

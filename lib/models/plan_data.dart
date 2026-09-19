@@ -47,6 +47,9 @@ class MealItem {
   String name;
   String time; // HH:mm
   int? calories; // null = 自由餐
+  int? protein; // 蛋白质 (g)
+  int? carbs;   // 碳水 (g)
+  int? fat;     // 脂肪 (g)
   List<int> days;
   bool reminder;
   String note;
@@ -62,6 +65,9 @@ class MealItem {
     this.name = '',
     this.time = '12:00',
     this.calories,
+    this.protein,
+    this.carbs,
+    this.fat,
     List<int>? days,
     this.reminder = true,
     this.note = '',
@@ -82,6 +88,9 @@ class MealItem {
       name: _str(json['name']),
       time: _str(json['time']),
       calories: json['calories'] is num ? (json['calories'] as num).round() : null,
+      protein: json['protein'] is num ? (json['protein'] as num).round() : null,
+      carbs: json['carbs'] is num ? (json['carbs'] as num).round() : null,
+      fat: json['fat'] is num ? (json['fat'] as num).round() : null,
       days: _intList(json['days']),
       reminder: json['reminder'] is bool ? json['reminder'] as bool : true,
       note: _str(json['note']),
@@ -104,6 +113,9 @@ class MealItem {
         'name': name,
         'time': time,
         'calories': calories,
+        if (protein != null) 'protein': protein,
+        if (carbs != null) 'carbs': carbs,
+        if (fat != null) 'fat': fat,
         'days': days,
         'reminder': reminder,
         'note': note,

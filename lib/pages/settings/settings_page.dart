@@ -100,7 +100,7 @@ class SettingsPage extends StatelessWidget {
               Navigator.of(context).push(AppRoutes.fade<void>(const OnboardingPage()));
             }),
             const _GroupLabel('关于'),
-            const _Row('版本', '1.0.2'),
+            const _Row('版本', '1.0.3'),
             const _Row('作者', '听风闻人语'),
             _Row('QQ', '1419046431', onTap: () => _copyQQ(context, '1419046431')),
             const SizedBox(height: 12),
@@ -148,7 +148,7 @@ class SettingsPage extends StatelessWidget {
     }
   }
 
-  /// 体重行摘要：今天录入 → 「xx kg · 今天」；有历史 → 最近一次「xx kg · MM-dd」；否则「未记录」
+  /// 体重行摘要：今天录入 → 「xx kg · 今天」；有体脂 → 「xx kg · 体脂 yy% · 今天」；有历史 → 最近一次；否则「未记录」
   String _weightSummary(RecordStore records) {
     final w = records.weightRecords;
     if (w.records.isEmpty) return '未记录';
@@ -158,7 +158,10 @@ class SettingsPage extends StatelessWidget {
     final today = todayStr();
     final label = latest == today ? '今天' : '${int.parse(latest.substring(5, 7))}-${int.parse(latest.substring(8))}';
     final wv = e.weight == e.weight.roundToDouble() ? '${e.weight.round()}' : '${e.weight}';
-    return '$wv kg · $label';
+    final bfStr = (e.bodyFat != null && e.bodyFat! > 0)
+        ? ' · 体脂 ${fmtBodyFat(e.bodyFat!)}%'
+        : '';
+    return '$wv kg$bfStr · $label';
   }
 
   void _openWeightDialog(BuildContext context) {
@@ -435,6 +438,7 @@ class _CalorieSheetState extends State<_CalorieSheet> {
   late final TextEditingController _ageCtrl;
   late final TextEditingController _heightCtrl;
   late final TextEditingController _weightCtrl;
+  late final TextEditingController _bodyFatCtrl;
   late String _gender;
   late double _activity;
 
@@ -458,6 +462,7 @@ class _CalorieSheetState extends State<_CalorieSheet> {
     _heightCtrl = TextEditingController(text: p.height?.toString() ?? '');
     _weightCtrl =
         TextEditingController(text: p.weight != null ? fmtWeight(p.weight!) : '');
+    _bodyFatCtrl = TextEditingController(text: p.bodyFat != null ? p.bodyFat.toString() : '');
     _gender = p.gender == 'female' ? 'female' : 'male';
     _activity = p.activity > 0 ? p.activity : 1.2;
   }
@@ -469,6 +474,7 @@ class _CalorieSheetState extends State<_CalorieSheet> {
     _ageCtrl.dispose();
     _heightCtrl.dispose();
     _weightCtrl.dispose();
+    _bodyFatCtrl.dispose();
     super.dispose();
   }
 
@@ -491,8 +497,18 @@ class _CalorieSheetState extends State<_CalorieSheet> {
     _tdeeCtrl.text = '$tdee';
     _targetCtrl.text = '$target';
     _lastBmr = bmr;
+    final bf = double.tryParse(_bodyFatCtrl.text.trim());
+    final macros = calculateFatLossMacroTargets(
+      targetCalories: target,
+      weight: w,
+      bodyFat: bf,
+      gender: _gender,
+      height: h,
+      age: age,
+    );
     setState(() {
-      _msg = '已估算并填入：BMR = $bmr kcal · 基础消耗 = $tdee kcal · 推荐目标摄入 = $target kcal';
+      _msg = '已估算：BMR = $bmr · TDEE = $tdee · 目标 = $target kcal\n'
+          '减脂期每日摄入标准：蛋白质 ${macros.protein}g · 碳水 ${macros.carbs}g · 脂肪 ${macros.fat}g';
       _msgError = false;
     });
   }
@@ -518,6 +534,7 @@ class _CalorieSheetState extends State<_CalorieSheet> {
       final age = int.tryParse(_ageCtrl.text.trim());
       final h = int.tryParse(_heightCtrl.text.trim());
       final w = double.tryParse(_weightCtrl.text.trim());
+      final bf = double.tryParse(_bodyFatCtrl.text.trim());
       if (age != null && age > 0 && h != null && h > 0 && w != null && w > 0) {
         await ob.saveProfile({
           'gender': _gender,
@@ -525,6 +542,7 @@ class _CalorieSheetState extends State<_CalorieSheet> {
           'height': h,
           'weight': w,
           'activity': _activity,
+          'bodyFat': bf,
         });
       }
       if (mounted) Navigator.pop(context);
@@ -581,6 +599,8 @@ class _CalorieSheetState extends State<_CalorieSheet> {
                       Expanded(child: _numField(_weightCtrl, '体重kg', allowDecimal: true)),
                     ],
                   ),
+                  const SizedBox(height: 8),
+                  _numField(_bodyFatCtrl, '体脂率%（选填，减脂期宏量标准计算依据）', allowDecimal: true),
                   const SizedBox(height: 8),
                   Wrap(
                     spacing: 6,
@@ -705,6 +725,7 @@ class _WeightSheet extends StatefulWidget {
 
 class _WeightSheetState extends State<_WeightSheet> {
   final TextEditingController _weightCtrl = TextEditingController();
+  final TextEditingController _bodyFatCtrl = TextEditingController();
   bool _busy = false;
 
   @override
@@ -715,12 +736,22 @@ class _WeightSheetState extends State<_WeightSheet> {
     if (t != null) {
       _weightCtrl.text =
           t.weight == t.weight.roundToDouble() ? '${t.weight.round()}' : '${t.weight}';
+      if (t.bodyFat != null && t.bodyFat! > 0) {
+        _bodyFatCtrl.text = fmtBodyFat(t.bodyFat!);
+      }
+    } else {
+      // 今天未录入：如果 profile 中有体脂率，提供参考
+      final pBf = context.read<OnboardingProvider>().state.profile.bodyFat;
+      if (pBf != null && pBf > 0) {
+        _bodyFatCtrl.text = fmtBodyFat(pBf);
+      }
     }
   }
 
   @override
   void dispose() {
     _weightCtrl.dispose();
+    _bodyFatCtrl.dispose();
     super.dispose();
   }
 
@@ -745,6 +776,15 @@ class _WeightSheetState extends State<_WeightSheet> {
     return double.parse(v.toStringAsFixed(2));
   }
 
+  /// 输入合法体脂率（3.0–70.0，允许一位小数，选填），未输入返回 null，输入但非法返回 -1
+  double? get _inputBodyFat {
+    final t = _bodyFatCtrl.text.trim();
+    if (t.isEmpty) return null;
+    final v = double.tryParse(t);
+    if (v == null || v < 3 || v > 70) return -1;
+    return double.parse(v.toStringAsFixed(1));
+  }
+
   void _hint(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
@@ -755,6 +795,12 @@ class _WeightSheetState extends State<_WeightSheet> {
       _hint('请输入 30.00-300.00 的体重（允许两位小数）');
       return;
     }
+    final bf = _inputBodyFat;
+    if (bf == -1) {
+      _hint('体脂率需在 3.0% - 70.0% 之间（或留空）');
+      return;
+    }
+
     final records = context.read<RecordProvider>();
     final sp = context.read<SettingsProvider>();
     final ob = context.read<OnboardingProvider>();
@@ -766,18 +812,20 @@ class _WeightSheetState extends State<_WeightSheet> {
           : 0;
       // ① 先固化旧基准（有历史才落；幂等）
       await records.ensureBaseline(baseBurn(sp.settings));
-      // ② 写当天记录（BMR 按录入时基础信息快照）
-      await records.setWeightRecord(w, bmr);
-      // ③ 同步基础信息体重：profile 已有基础内容时更新（两处体重保持一致）
+      // ② 写当天记录（BMR 按录入时基础信息快照，记录体脂率）
+      await records.setWeightRecord(w, bmr, bodyFat: bf);
+      // ③ 同步基础信息体重与体脂率：profile 已有基础内容时更新（两处保持一致）
       if (_hasProfileBase) {
-        await ob.saveProfile({'weight': w});
+        final profileUpdates = <String, dynamic>{'weight': w};
+        if (bf != null) profileUpdates['bodyFat'] = bf;
+        await ob.saveProfile(profileUpdates);
       }
       if (_bodyComplete && bmr > 0) {
         // ④ 基础信息完整 → 同步 settings.bmr（update 内部在 bmr 变化前也会再触发一次固化，幂等无副作用）
         await sp.update({'bmr': bmr});
       } else {
         if (!mounted) return;
-        _hint('已记录 $w kg。提示：完善基础信息（性别/年龄/身高，在「更新数据」中）后，体重才会参与基础消耗计算');
+        _hint('已记录 $w kg${bf != null ? '（体脂 $bf%）' : ''}。提示：完善基础信息后，体重才会参与基础消耗计算');
       }
       if (!mounted) return;
       Navigator.pop(context);
@@ -812,9 +860,12 @@ class _WeightSheetState extends State<_WeightSheet> {
     final settings = context.watch<SettingsProvider>().settings;
     final pad = MediaQuery.of(context).viewInsets.bottom;
     final w = _inputWeight;
+    final bf = _inputBodyFat;
     final previewBmr = w != null && _bodyComplete
         ? estimateBmr(gender: _profile.gender, height: _profile.height!, weight: w, age: _profile.age!)
         : null;
+    final validBf = (bf != null && bf > 0);
+    final lbm = (w != null && validBf) ? (w * (1.0 - (bf / 100.0))) : null;
 
     final dates = records.weightRecords.records.keys.toList()..sort((a, b) => b.compareTo(a));
     String fmt(String date) {
@@ -837,22 +888,28 @@ class _WeightSheetState extends State<_WeightSheet> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('体重记录', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+                const Text('体重与体脂记录', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
                 IconButton(
                   onPressed: () => Navigator.pop(context),
                   icon: const Icon(Icons.close, size: 20, color: AppColors.textSub),
                 ),
               ],
             ),
-            const Text('记录每天体重，基础消耗按录入当天起更新；历史日期的缺口保持不变',
+            const Text('记录每天体重与体脂率，用于科学测算每日基础消耗与减脂宏量营养目标',
                 style: TextStyle(fontSize: 11, color: AppColors.textSub)),
             const SizedBox(height: 12),
             Row(
               children: [
                 Text('今天 · ${dateCn(todayStr()).split(' ').first}',
-                    style: const TextStyle(fontSize: 13)),
-                const SizedBox(width: 10),
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
                 Expanded(
+                  flex: 5,
                   child: TextField(
                     controller: _weightCtrl,
                     keyboardType: const TextInputType.numberWithOptions(decimal: true),
@@ -861,21 +918,47 @@ class _WeightSheetState extends State<_WeightSheet> {
                     ],
                     onChanged: (_) => setState(() {}),
                     decoration: const InputDecoration(
-                      hintText: '体重 kg（允许两位小数）',
+                      labelText: '体重 (kg)',
+                      hintText: '如 68.5',
                       filled: true,
                       fillColor: AppColors.bg,
                       border: OutlineInputBorder(
                           borderRadius: BorderRadius.all(Radius.circular(8)), borderSide: BorderSide.none),
                       isDense: true,
-                      contentPadding: EdgeInsets.all(10),
+                      contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 10),
                     ),
                   ),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 8),
+                Expanded(
+                  flex: 5,
+                  child: TextField(
+                    controller: _bodyFatCtrl,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(RegExp(r'^\d{0,2}(\.\d{0,1})?')),
+                    ],
+                    onChanged: (_) => setState(() {}),
+                    decoration: const InputDecoration(
+                      labelText: '体脂率 (%) 选填',
+                      hintText: '体脂秤参考',
+                      filled: true,
+                      fillColor: AppColors.bg,
+                      border: OutlineInputBorder(
+                          borderRadius: BorderRadius.all(Radius.circular(8)), borderSide: BorderSide.none),
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
                 ElevatedButton(
                   onPressed: _busy ? null : _save,
                   style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary, foregroundColor: Colors.white),
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  ),
                   child: const Text('保存'),
                 ),
               ],
@@ -883,17 +966,36 @@ class _WeightSheetState extends State<_WeightSheet> {
             if (w != null)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
-                child: Text(
-                  _bodyComplete
-                      ? '按此体重与基础信息估算：BMR ≈ $previewBmr kcal · 基础消耗 ≈ ${((previewBmr ?? 0) * 1.2).round()} kcal（BMR×1.2）'
-                      : '完善基础信息（性别/年龄/身高，在「热量设置 → 更新数据」中）后，体重才会参与基础消耗计算',
-                  style: const TextStyle(fontSize: 11, color: AppColors.textSub),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _bodyComplete
+                          ? '按此体重估算：BMR ≈ $previewBmr kcal · 基础消耗 ≈ ${((previewBmr ?? 0) * 1.2).round()} kcal（BMR×1.2）'
+                          : '完善基础信息（性别/年龄/身高，在「热量设置 → 更新数据」中）后，体重才会参与基础消耗计算',
+                      style: const TextStyle(fontSize: 11, color: AppColors.textSub),
+                    ),
+                    if (lbm != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 3),
+                        child: Text(
+                          '体脂秤参考：去脂体重 ≈ ${lbm.toStringAsFixed(1)} kg · 减脂蛋白质保肌推荐：约 ${(lbm * 2.0).round()}g/天',
+                          style: const TextStyle(fontSize: 11, color: AppColors.primary, fontWeight: FontWeight.w500),
+                        ),
+                      ),
+                  ],
                 ),
               ),
-            if (w != null && w < 30 || w != null && w > 300)
+            if (w != null && (w < 30 || w > 300))
               const Padding(
                 padding: EdgeInsets.only(top: 4),
                 child: Text('体重需在 30.0-300.0 kg 之间',
+                    style: TextStyle(fontSize: 11, color: AppColors.danger)),
+              ),
+            if (bf == -1)
+              const Padding(
+                padding: EdgeInsets.only(top: 4),
+                child: Text('体脂率需在 3.0% - 70.0% 之间',
                     style: TextStyle(fontSize: 11, color: AppColors.danger)),
               ),
             const SizedBox(height: 14),
@@ -903,27 +1005,51 @@ class _WeightSheetState extends State<_WeightSheet> {
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 12),
                 child: Center(
-                  child: Text('还没有体重记录，今天开始记一条吧', style: TextStyle(fontSize: 12, color: AppColors.textSub)),
+                  child: Text('还没有记录，今天开始记一条吧', style: TextStyle(fontSize: 12, color: AppColors.textSub)),
                 ),
               )
             else
               ...dates.map((date) {
                 final e = records.weightRecords.records[date]!;
                 final base = baseBurnForDate(settings, records, date);
+                final hasBf = e.bodyFat != null && e.bodyFat! > 0;
                 return Padding(
                   padding: const EdgeInsets.symmetric(vertical: 4),
                   child: Row(
                     children: [
                       SizedBox(
-                        width: 82,
+                        width: 76,
                         child: Text(fmt(date), style: const TextStyle(fontSize: 13)),
                       ),
                       Expanded(
-                        child: Text('${wText(e.weight)} kg',
-                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                        flex: 4,
+                        child: Row(
+                          children: [
+                            Text('${wText(e.weight)} kg',
+                                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                            if (hasBf) ...[
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                                decoration: BoxDecoration(
+                                  color: AppColors.primary.withValues(alpha: 0.12),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  '体脂 ${fmtBodyFat(e.bodyFat!)}%',
+                                  style: const TextStyle(
+                                      fontSize: 10,
+                                      color: AppColors.primary,
+                                      fontWeight: FontWeight.w500),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
                       ),
                       Expanded(
-                        child: Text('基础消耗 $base kcal',
+                        flex: 3,
+                        child: Text('基消 $base kcal',
                             style: const TextStyle(fontSize: 11, color: AppColors.textSub)),
                       ),
                       IconButton(
@@ -935,7 +1061,7 @@ class _WeightSheetState extends State<_WeightSheet> {
                 );
               }),
             const SizedBox(height: 8),
-            const Text('一天一条：同一天重复录入会覆盖。删除记录只影响后续沿用，不改变已固化的历史缺口。',
+            const Text('一天一条：同一天重复录入会覆盖。体脂率为体脂秤参考值。删除记录只影响后续沿用，不改变已固化的历史缺口。',
                 style: TextStyle(fontSize: 10, color: AppColors.textFaint, height: 1.5)),
           ],
         ),

@@ -214,6 +214,9 @@ class RecordProvider extends ChangeNotifier {
         time: m.time,
         content: m.name,
         calories: m.calories,
+        protein: m.protein,
+        carbs: m.carbs,
+        fat: m.fat,
         note: '',
         source: 'plan',
         planItemId: m.id,
@@ -251,6 +254,9 @@ class RecordProvider extends ChangeNotifier {
       a.time == b.time &&
       a.content == b.content &&
       a.calories == b.calories &&
+      a.protein == b.protein &&
+      a.carbs == b.carbs &&
+      a.fat == b.fat &&
       a.note == b.note &&
       a.source == b.source &&
       a.planItemId == b.planItemId &&
@@ -287,6 +293,9 @@ class RecordProvider extends ChangeNotifier {
           time: s.time,
           content: s.content,
           calories: e.caloriesDirty ? e.calories : s.calories,
+          protein: e.caloriesDirty ? e.protein : s.protein,
+          carbs: e.caloriesDirty ? e.carbs : s.carbs,
+          fat: e.caloriesDirty ? e.fat : s.fat,
           note: e.note,
           source: 'plan',
           planItemId: e.planItemId,
@@ -315,6 +324,9 @@ class RecordProvider extends ChangeNotifier {
     required String kind, // 'meal' | 'exercise'
     required String content,
     int? calories,
+    int? protein,
+    int? carbs,
+    int? fat,
     String slot = '',
     String? time,
     String note = '',
@@ -328,6 +340,9 @@ class RecordProvider extends ChangeNotifier {
       time: (time != null && time.isNotEmpty) ? time : nowTimeStr(),
       content: content.isNotEmpty ? content : (kind == 'meal' ? '加餐' : '临时运动'),
       calories: calories,
+      protein: protein,
+      carbs: carbs,
+      fat: fat,
       note: note,
       source: source,
       planItemId: '',
@@ -435,12 +450,19 @@ class RecordProvider extends ChangeNotifier {
     await _persistWeights();
   }
 
-  /// 写入/覆盖某天体重（同日重复录入刷新 updatedAt）；[bmr] = 录入时快照的 BMR（基础信息不全传 0）
-  Future<void> setWeightRecord(double weight, int bmr, {String? date, int? updatedAt}) async {
+  /// 写入/覆盖某天体重与体脂率（同日重复录入刷新 updatedAt）；[bmr] = 录入时快照的 BMR（基础信息不全传 0）
+  Future<void> setWeightRecord(
+    double weight,
+    int bmr, {
+    String? date,
+    int? updatedAt,
+    double? bodyFat,
+  }) async {
     final d = (date != null && date.isNotEmpty) ? date : todayStr();
     store.weightRecords.records[d] = WeightEntry(
       weight: weight,
       bmr: bmr,
+      bodyFat: bodyFat,
       updatedAt: updatedAt ?? DateTime.now().millisecondsSinceEpoch,
     );
     notifyListeners();

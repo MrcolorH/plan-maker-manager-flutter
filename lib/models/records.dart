@@ -75,6 +75,9 @@ class DayEntry {
   String time; // HH:mm（跟随计划或录入时刻）
   String content;
   int? calories;
+  int? protein; // 蛋白质 (g)
+  int? carbs;   // 碳水 (g)
+  int? fat;     // 脂肪 (g)
   String note;
   String source; // plan | manual | ai | fooddb
   String planItemId; // 关联计划项 id；'' 表示计划外
@@ -88,6 +91,9 @@ class DayEntry {
     this.time = '',
     this.content = '',
     this.calories,
+    this.protein,
+    this.carbs,
+    this.fat,
     this.note = '',
     this.source = 'manual',
     this.planItemId = '',
@@ -102,6 +108,9 @@ class DayEntry {
         time: _str(json['time']),
         content: _str(json['content']),
         calories: json['calories'] is num ? (json['calories'] as num).round() : null,
+        protein: json['protein'] is num ? (json['protein'] as num).round() : null,
+        carbs: json['carbs'] is num ? (json['carbs'] as num).round() : null,
+        fat: json['fat'] is num ? (json['fat'] as num).round() : null,
         note: _str(json['note']),
         source: _str(json['source']).isNotEmpty ? _str(json['source']) : 'manual',
         planItemId: _str(json['planItemId']),
@@ -116,6 +125,9 @@ class DayEntry {
         'time': time,
         'content': content,
         'calories': calories,
+        if (protein != null) 'protein': protein,
+        if (carbs != null) 'carbs': carbs,
+        if (fat != null) 'fat': fat,
         'note': note,
         'source': source,
         'planItemId': planItemId,

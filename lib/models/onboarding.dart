@@ -9,6 +9,12 @@ String fmtWeight(double v) {
       : (s.endsWith('0') ? s.substring(0, s.length - 1) : s);
 }
 
+/// 体脂率展示格式化：整数去掉小数（20.0 → '20'），小数保留一位（20.5 → '20.5'）
+String fmtBodyFat(double v) {
+  final s = v.toStringAsFixed(1);
+  return s.endsWith('.0') ? s.substring(0, s.length - 2) : s;
+}
+
 /// 引导收集的基础信息
 class UserProfile {
   String gender; // '' | 'male' | 'female'
@@ -16,6 +22,7 @@ class UserProfile {
   int? height;
   double? weight; // kg（F10 起支持两位小数，与体重记录同口径，同步保持一致）
   double activity; // 活动系数
+  double? bodyFat; // 体脂率 %（选填，结合减脂期计算宏量营养目标）
 
   UserProfile({
     this.gender = '',
@@ -23,6 +30,7 @@ class UserProfile {
     this.height,
     this.weight,
     this.activity = 1.2,
+    this.bodyFat,
   });
 
   factory UserProfile.fromJson(Map<String, dynamic> json) => UserProfile(
@@ -31,6 +39,7 @@ class UserProfile {
         height: json['height'] is num ? (json['height'] as num).round() : null,
         weight: json['weight'] is num ? (json['weight'] as num).toDouble() : null,
         activity: json['activity'] is num ? (json['activity'] as num).toDouble() : 1.2,
+        bodyFat: json['bodyFat'] is num ? (json['bodyFat'] as num).toDouble() : null,
       );
 
   Map<String, dynamic> toJson() => {
@@ -39,6 +48,7 @@ class UserProfile {
         'height': height,
         'weight': weight,
         'activity': activity,
+        'bodyFat': bodyFat,
       };
 
   /// 基础信息完整 = 性别/年龄/身高/体重齐

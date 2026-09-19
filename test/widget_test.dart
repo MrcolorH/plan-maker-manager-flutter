@@ -308,6 +308,59 @@ void main() {
       );
       expect(totalDoneDays(store), 3); // 同一日期不重复计
     });
+
+    test('totalDoneDays 绝不小于 streakDays，且包含 dayEntries', () {
+      final t = todayStr();
+      final store = RecordStore(
+        checkRecords: {
+          t: {'meal:m1': CheckEntry(checkedAt: 1)},
+        },
+        dayEntries: {
+          t: [DayEntry(id: 'm1', kind: 'meal', slot: 'lunch', content: '饭', calories: 400, source: 'plan', planItemId: 'm1')],
+          addDays(t, -1): [DayEntry(id: 't1', kind: 'meal', slot: 'snack', content: '零食', calories: 100, source: 'ai')],
+          addDays(t, -2): [DayEntry(id: 't2', kind: 'meal', slot: 'snack', content: '鸡胸肉', calories: 150, source: 'manual')],
+        },
+      );
+      final streak = streakDays(store);
+      final total = totalDoneDays(store);
+      expect(streak, 3);
+      expect(total >= streak, isTrue);
+      expect(total, 3);
+    });
+  });
+
+  group('calculateFatLossMacroTargets（减脂期宏量目标科学测算）', () {
+    test('根据体重、体脂率与目标热量测算适中偏少宏量', () {
+      final res = calculateFatLossMacroTargets(
+        targetCalories: 2790,
+        weight: 75.0,
+        bodyFat: 20.0,
+        gender: 'male',
+        height: 175,
+        age: 28,
+      );
+      // LBM = 60kg, P = 120g, F = 56g, C = (2790 - 480 - 504)/4 = 451g
+      expect(res.protein, 120);
+      expect(res.fat, 56);
+      expect(res.carbs, 452);
+      // 总能量守恒校验：P*4 + C*4 + F*9 接近 2790
+      final totalCal = res.protein * 4 + res.carbs * 4 + res.fat * 9;
+      expect((totalCal - 2790).abs() <= 5, isTrue);
+    });
+
+    test('无体脂率时按性别体脂常模估算', () {
+      final res = calculateFatLossMacroTargets(
+        targetCalories: 1800,
+        weight: 60.0,
+        gender: 'female',
+        height: 165,
+      );
+      expect(res.protein >= 60, isTrue);
+      expect(res.fat >= 35, isTrue);
+      expect(res.carbs >= 50, isTrue);
+      final totalCal = res.protein * 4 + res.carbs * 4 + res.fat * 9;
+      expect((totalCal - 1800).abs() <= 5, isTrue);
+    });
   });
 
   // ---------- 月历 / 月回顾 ----------
