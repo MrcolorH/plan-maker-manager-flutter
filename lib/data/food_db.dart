@@ -9,6 +9,10 @@ class FoodItem {
   final int calories;
   final String unit;
   final List<String> tags;
+  final int? protein;
+  final int? carbs;
+  final int? fat;
+  final bool isUserCustom;
 
   const FoodItem({
     required this.id,
@@ -17,6 +21,63 @@ class FoodItem {
     required this.calories,
     required this.unit,
     this.tags = const [],
+    this.protein,
+    this.carbs,
+    this.fat,
+    this.isUserCustom = false,
+  });
+
+  factory FoodItem.fromJson(Map<String, dynamic> json) {
+    return FoodItem(
+      id: json['id'] is String ? json['id'] as String : '',
+      name: json['name'] is String ? json['name'] as String : '',
+      alias: (json['alias'] as List?)?.map((e) => '$e').toList() ?? const [],
+      calories: json['calories'] is num ? (json['calories'] as num).round() : 0,
+      unit: json['unit'] is String && (json['unit'] as String).isNotEmpty ? json['unit'] as String : '1份',
+      tags: (json['tags'] as List?)?.map((e) => '$e').toList() ?? const [],
+      protein: json['protein'] is num ? (json['protein'] as num).round() : null,
+      carbs: json['carbs'] is num ? (json['carbs'] as num).round() : null,
+      fat: json['fat'] is num ? (json['fat'] as num).round() : null,
+      isUserCustom: json['isUserCustom'] == true,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'alias': alias,
+        'calories': calories,
+        'unit': unit,
+        'tags': tags,
+        if (protein != null) 'protein': protein,
+        if (carbs != null) 'carbs': carbs,
+        if (fat != null) 'fat': fat,
+        'isUserCustom': isUserCustom,
+      };
+}
+
+/// 食物库匹配与份量换算结果
+class FoodMatchResult {
+  final FoodItem food;
+  final double quantity; // 份量倍数，如 0.5, 2.0
+  final String quantityText; // 份量描述，如 "0.5个", "2个", "200g"
+  final int totalCalories;
+  final int? totalProtein;
+  final int? totalCarbs;
+  final int? totalFat;
+  final String calculationDetail; // 如 "590 kcal/1个 × 0.5个 = 295 kcal"
+  final bool isUserCustom;
+
+  const FoodMatchResult({
+    required this.food,
+    required this.quantity,
+    required this.quantityText,
+    required this.totalCalories,
+    this.totalProtein,
+    this.totalCarbs,
+    this.totalFat,
+    required this.calculationDetail,
+    required this.isUserCustom,
   });
 }
 
@@ -35,9 +96,9 @@ const List<FoodItem> kFoodDb = [
   FoodItem(id: 'kfc-11', name: '九珍果汁饮料', alias: ['kfc', '肯德基', '果汁'], calories: 160, unit: '中杯', tags: ['kfc', '饮品']),
   FoodItem(id: 'kfc-12', name: 'K咖啡拿铁', alias: ['kfc', '肯德基', '拿铁'], calories: 230, unit: '大杯', tags: ['kfc', '饮品']),
   // ---- KFC 套餐 ----
-  FoodItem(id: 'kfcset-01', name: '香辣鸡腿堡套餐（堡+中薯+中可乐）', alias: ['kfc', '肯德基', '套餐', '香辣鸡腿堡'], calories: 1100, unit: '1份', tags: ['kfc', '套餐']),
-  FoodItem(id: 'kfcset-02', name: '新奥尔良烤鸡腿堡套餐（堡+中薯+中可乐）', alias: ['kfc', '肯德基', '套餐', '烤鸡腿堡'], calories: 1010, unit: '1份', tags: ['kfc', '套餐']),
-  FoodItem(id: 'kfcset-03', name: '劲脆鸡腿堡套餐（堡+中薯+中可乐）', alias: ['kfc', '肯德基', '套餐', '劲脆'], calories: 1100, unit: '1份', tags: ['kfc', '套餐']),
+  FoodItem(id: 'kfcset-01', name: '香辣鸡腿堡套餐（堡+中薯+中可乐）', alias: ['kfc', '肯德基', '套餐', '汉堡套餐'], calories: 1100, unit: '1份', tags: ['kfc', '套餐']),
+  FoodItem(id: 'kfcset-02', name: '新奥尔良烤鸡腿堡套餐（堡+中薯+中可乐）', alias: ['kfc', '肯德基', '套餐', '烤堡套餐'], calories: 1010, unit: '1份', tags: ['kfc', '套餐']),
+  FoodItem(id: 'kfcset-03', name: '劲脆鸡腿堡套餐（堡+中薯+中可乐）', alias: ['kfc', '肯德基', '套餐', '劲脆套餐'], calories: 1100, unit: '1份', tags: ['kfc', '套餐']),
   FoodItem(id: 'kfcset-04', name: '疯狂星期四（2个香辣鸡腿堡）', alias: ['kfc', '肯德基', '疯狂星期四', 'v50'], calories: 1180, unit: '2个', tags: ['kfc', '套餐']),
   // ---- 麦当劳 ----
   FoodItem(id: 'mcd-01', name: '巨无霸', alias: ['麦当劳', 'm', '汉堡'], calories: 550, unit: '1个', tags: ['麦当劳', '快餐']),
@@ -114,12 +175,246 @@ const List<FoodItem> kFoodDb = [
 ];
 
 /// 搜索：名称/别名/标签 不区分大小写包含匹配，返回前 20 条
-List<FoodItem> searchFoods(String kw) {
+List<FoodItem> searchFoods(String kw, {List<FoodItem>? userFoods}) {
   final k = kw.trim().toLowerCase();
-  if (k.isEmpty) return [];
-  final result = kFoodDb.where((f) {
+  if (k.isEmpty) return const [];
+  final candidates = <FoodItem>[...(userFoods ?? const <FoodItem>[]), ...kFoodDb];
+  final result = candidates.where((f) {
     final hay = '${f.name} ${f.alias.join(' ')} ${f.tags.join(' ')}'.toLowerCase();
     return hay.contains(k);
   }).toList();
   return result.length > 20 ? result.sublist(0, 20) : result;
+}
+
+/// 智能解析输入文本并在食物库中匹配与折算热量
+FoodMatchResult? matchAndCalculateFood(String input, {List<FoodItem>? userFoods}) {
+  final raw = input.trim();
+  if (raw.isEmpty) return null;
+  final lower = raw.toLowerCase();
+
+  // 1. 合并用户库与内置库，用户自建库在前
+  final customList = userFoods ?? const [];
+  final candidates = <FoodItem>[...customList, ...kFoodDb];
+
+  // 按名称长度倒序排序（长词优先，如避免“新奥尔良烤鸡腿堡”先被“鸡腿堡”截断）
+  candidates.sort((a, b) => b.name.length.compareTo(a.name.length));
+
+  FoodItem? matchedFood;
+  String matchedKey = '';
+
+  // 第一轮：直接按食物名称包含匹配（长词优先，如香辣鸡腿堡优先匹配单品汉堡）
+  for (final item in candidates) {
+    final itemName = item.name.toLowerCase();
+    if (lower.contains(itemName)) {
+      matchedFood = item;
+      matchedKey = item.name;
+      break;
+    }
+  }
+
+  // 第二轮：若名称未直接命中，再按别名匹配
+  if (matchedFood == null) {
+    for (final item in candidates) {
+      for (final al in item.alias) {
+        final alLower = al.toLowerCase();
+        if (alLower.length >= 2 && lower.contains(alLower)) {
+          matchedFood = item;
+          matchedKey = al;
+          break;
+        }
+      }
+      if (matchedFood != null) break;
+    }
+  }
+
+  if (matchedFood == null) return null;
+
+  // 2. 剥离食物名，提取份量修饰词
+  final remainder = raw.replaceAll(matchedKey, ' ').trim().toLowerCase();
+  final parsed = _parseQuantity(remainder, matchedFood.unit);
+  final quantity = parsed.$1;
+  final quantityText = parsed.$2;
+
+  final totalCal = (matchedFood.calories * quantity).round();
+  final totalP = matchedFood.protein != null ? (matchedFood.protein! * quantity).round() : null;
+  final totalC = matchedFood.carbs != null ? (matchedFood.carbs! * quantity).round() : null;
+  final totalF = matchedFood.fat != null ? (matchedFood.fat! * quantity).round() : null;
+
+  final String detail;
+  if ((quantity - 1.0).abs() < 0.001) {
+    detail = '${matchedFood.calories} kcal / ${matchedFood.unit}';
+  } else {
+    detail = '${matchedFood.calories} kcal/${matchedFood.unit} × $quantityText = $totalCal kcal';
+  }
+
+  return FoodMatchResult(
+    food: matchedFood,
+    quantity: quantity,
+    quantityText: quantityText,
+    totalCalories: totalCal,
+    totalProtein: totalP,
+    totalCarbs: totalC,
+    totalFat: totalF,
+    calculationDetail: detail,
+    isUserCustom: matchedFood.isUserCustom,
+  );
+}
+
+/// 解析份量修饰词，返回 (倍数, 份量展示文本)
+(double, String) _parseQuantity(String text, String baseUnit) {
+  final cleanBaseUnit = baseUnit.replaceFirst(RegExp(r'^\d+'), '');
+  final defaultUnitText = cleanBaseUnit.isNotEmpty ? cleanBaseUnit : '份';
+
+  if (text.isEmpty) {
+    return (1.0, '1$defaultUnitText');
+  }
+
+  // 常见中文半份
+  if (text.contains('半个') ||
+      text.contains('半份') ||
+      text.contains('半碗') ||
+      text.contains('半块') ||
+      text.contains('半杯') ||
+      text.contains('半包') ||
+      text.contains('半根') ||
+      text.contains('半条') ||
+      text.contains('半瓶') ||
+      text.contains('一半') ||
+      text == '半') {
+    return (0.5, '0.5$defaultUnitText');
+  }
+
+  // 中文两/俩
+  if (text.contains('两个') ||
+      text.contains('两块') ||
+      text.contains('两碗') ||
+      text.contains('两份') ||
+      text.contains('两杯') ||
+      text.contains('两瓶') ||
+      text.contains('两根') ||
+      text.contains('两包') ||
+      text.contains('两只')) {
+    return (2.0, '2$defaultUnitText');
+  }
+
+  // 大份 / 小份
+  if (text.contains('大份') || text.contains('大碗') || text.contains('加大') || text.contains('大杯')) {
+    if (baseUnit.contains('大')) return (1.0, '1$defaultUnitText');
+    return (1.3, '大份');
+  }
+  if (text.contains('小份') || text.contains('小碗') || text.contains('小杯')) {
+    if (baseUnit.contains('小')) return (1.0, '1$defaultUnitText');
+    return (0.7, '小份');
+  }
+
+  // 克重：如 200g, 150克
+  final gMatch = RegExp(r'(\d+(?:\.\d+)?)\s*(?:g|克)').firstMatch(text);
+  if (gMatch != null) {
+    final g = double.tryParse(gMatch.group(1) ?? '') ?? 100.0;
+    final baseGMatch = RegExp(r'(\d+(?:\.\d+)?)\s*(?:g|克)').firstMatch(baseUnit);
+    final baseG = baseGMatch != null ? (double.tryParse(baseGMatch.group(1) ?? '') ?? 100.0) : 100.0;
+    final ratio = g / (baseG > 0 ? baseG : 100.0);
+    return (ratio, '${g.round()}g');
+  }
+
+  // 毫升：如 500ml, 330毫升
+  final mlMatch = RegExp(r'(\d+(?:\.\d+)?)\s*(?:ml|毫升)').firstMatch(text);
+  if (mlMatch != null) {
+    final ml = double.tryParse(mlMatch.group(1) ?? '') ?? 250.0;
+    final baseMlMatch = RegExp(r'(\d+(?:\.\d+)?)\s*(?:ml|毫升)').firstMatch(baseUnit);
+    final baseMl = baseMlMatch != null ? (double.tryParse(baseMlMatch.group(1) ?? '') ?? 250.0) : 250.0;
+    final ratio = ml / (baseMl > 0 ? baseMl : 250.0);
+    return (ratio, '${ml.round()}ml');
+  }
+
+  // 数字 + 单位 或纯数字：如 "2个", "1.5份", "3", "0.5"
+  final numMatch = RegExp(r'(\d+(?:\.\d+)?)\s*(?:个|块|份|碗|杯|串|片|包|根|瓶|盒|袋|条|只)?').firstMatch(text);
+  if (numMatch != null) {
+    final n = double.tryParse(numMatch.group(1) ?? '');
+    if (n != null && n > 0 && n <= 50) {
+      final disp = (n % 1 == 0) ? '${n.toInt()}' : '$n';
+      return (n, '$disp$defaultUnitText');
+    }
+  }
+
+  // 中文数字
+  const cnNums = {'一': 1.0, '二': 2.0, '三': 3.0, '四': 4.0, '五': 5.0, '六': 6.0};
+  for (final entry in cnNums.entries) {
+    if (text.contains(entry.key)) {
+      return (entry.value, '${entry.value.toInt()}$defaultUnitText');
+    }
+  }
+
+  return (1.0, '1$defaultUnitText');
+}
+
+/// 从用户记录或常用方案中反推归一化单位食物，沉淀到自定义食物库
+FoodItem extractUnitFood({
+  required String name,
+  required int calories,
+  int? protein,
+  int? carbs,
+  int? fat,
+  String? unit,
+}) {
+  final trimmed = name.trim();
+  var cleanName = trimmed;
+  var ratio = 1.0;
+  var resolvedUnit = (unit != null && unit.isNotEmpty) ? unit : '1份';
+
+  if (trimmed.startsWith('半个') || trimmed.endsWith('半个')) {
+    ratio = 0.5;
+    resolvedUnit = '1个';
+    cleanName = trimmed.replaceAll('半个', '').trim();
+  } else if (trimmed.startsWith('半份') || trimmed.endsWith('半份') || trimmed.startsWith('一半')) {
+    ratio = 0.5;
+    resolvedUnit = '1份';
+    cleanName = trimmed.replaceAll(RegExp(r'半份|一半'), '').trim();
+  } else {
+    // 检查是否有前置或后置数字
+    final headMatch = RegExp(r'^(\d+(?:\.\d+)?)\s*(个|块|份|碗|杯|串|片|包|根|瓶|盒|袋|条|只)?').firstMatch(trimmed);
+    if (headMatch != null) {
+      final n = double.tryParse(headMatch.group(1) ?? '');
+      final u = headMatch.group(2);
+      if (n != null && n > 0 && n <= 50) {
+        ratio = n;
+        if (u != null && u.isNotEmpty) resolvedUnit = '1$u';
+        cleanName = trimmed.substring(headMatch.end).trim();
+      }
+    } else {
+      final tailMatch = RegExp(r'(\d+(?:\.\d+)?)\s*(个|块|份|碗|杯|串|片|包|根|瓶|盒|袋|条|只)?$').firstMatch(trimmed);
+      if (tailMatch != null) {
+        final n = double.tryParse(tailMatch.group(1) ?? '');
+        final u = tailMatch.group(2);
+        if (n != null && n > 0 && n <= 50) {
+          ratio = n;
+          if (u != null && u.isNotEmpty) resolvedUnit = '1$u';
+          cleanName = trimmed.substring(0, tailMatch.start).trim();
+        }
+      }
+    }
+  }
+
+  if (cleanName.isEmpty) cleanName = trimmed;
+
+  // 基础单位热量与营养素 = 总量 / ratio
+  final baseCal = ratio > 0 ? (calories / ratio).round() : calories;
+  final baseP = (protein != null && ratio > 0) ? (protein / ratio).round() : protein;
+  final baseC = (carbs != null && ratio > 0) ? (carbs / ratio).round() : carbs;
+  final baseF = (fat != null && ratio > 0) ? (fat / ratio).round() : fat;
+
+  final id = 'user_${cleanName.hashCode.abs()}';
+
+  return FoodItem(
+    id: id,
+    name: cleanName,
+    alias: [cleanName],
+    calories: baseCal,
+    unit: resolvedUnit,
+    tags: ['自定义'],
+    protein: baseP,
+    carbs: baseC,
+    fat: baseF,
+    isUserCustom: true,
+  );
 }

@@ -1,4 +1,4 @@
-﻿/// 常用预设方案与 AI 知识缓存模型
+/// 常用预设方案与 AI 知识缓存模型
 library;
 
 class PresetFood {
@@ -8,6 +8,8 @@ class PresetFood {
   final int? protein; // 蛋白质 (g)
   final int? carbs;   // 碳水 (g)
   final int? fat;     // 脂肪 (g)
+  final String unit;  // 单位，如：个、份、碗、100g
+  final double amount; // 份量数值，默认 1.0
   final String note;
   final int useCount; // 使用频次，用于推荐排序
   final int updatedAt;
@@ -19,6 +21,8 @@ class PresetFood {
     this.protein,
     this.carbs,
     this.fat,
+    this.unit = '份',
+    this.amount = 1.0,
     this.note = '',
     this.useCount = 1,
     required this.updatedAt,
@@ -32,6 +36,8 @@ class PresetFood {
       protein: json['protein'] is num ? (json['protein'] as num).round() : null,
       carbs: json['carbs'] is num ? (json['carbs'] as num).round() : null,
       fat: json['fat'] is num ? (json['fat'] as num).round() : null,
+      unit: json['unit'] is String && (json['unit'] as String).isNotEmpty ? json['unit'] as String : '份',
+      amount: json['amount'] is num ? (json['amount'] as num).toDouble() : 1.0,
       note: json['note'] is String ? json['note'] as String : '',
       useCount: json['useCount'] is num ? (json['useCount'] as num).round() : 1,
       updatedAt: json['updatedAt'] is num ? (json['updatedAt'] as num).round() : 0,
@@ -45,6 +51,8 @@ class PresetFood {
         if (protein != null) 'protein': protein,
         if (carbs != null) 'carbs': carbs,
         if (fat != null) 'fat': fat,
+        'unit': unit,
+        'amount': amount,
         'note': note,
         'useCount': useCount,
         'updatedAt': updatedAt,
@@ -56,6 +64,8 @@ class PresetFood {
     int? protein,
     int? carbs,
     int? fat,
+    String? unit,
+    double? amount,
     String? note,
     int? useCount,
     int? updatedAt,
@@ -67,6 +77,8 @@ class PresetFood {
       protein: protein ?? this.protein,
       carbs: carbs ?? this.carbs,
       fat: fat ?? this.fat,
+      unit: unit ?? this.unit,
+      amount: amount ?? this.amount,
       note: note ?? this.note,
       useCount: useCount ?? this.useCount,
       updatedAt: updatedAt ?? this.updatedAt,

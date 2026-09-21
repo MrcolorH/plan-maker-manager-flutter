@@ -5,6 +5,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../data/food_db.dart';
 import '../../models/plan_data.dart';
 import '../../models/records.dart';
 import '../../models/settings.dart';
@@ -179,7 +180,7 @@ class TodayPage extends StatelessWidget {
               )
             else
               ...mealRows,
-            DashedAddButton('＋ 今日加餐（搜食物库 / AI 算热量，仅今天有效）',
+            DashedAddButton('＋ 今日加餐（智能估算 / 常用方案，仅今天有效）',
               onTap: () {
                 Navigator.of(context).push(
                   AppRoutes.fade<void>(const FoodAddPage()),
@@ -390,8 +391,22 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
     final note = _noteCtrl.text.trim();
     final desc = note.isNotEmpty ? '$content（备注：$note）' : content;
 
-    // 优先检查本地沉淀知识库（0 延迟秒出）
+    // 优先检查本地食物库与沉淀知识库（0 延迟秒出）
     if (!_isEx && !_enableThinking) {
+      final userFoods = context.read<PresetProvider>().userFoods;
+      final matched = matchAndCalculateFood(desc, userFoods: userFoods) ??
+          (note.isNotEmpty ? matchAndCalculateFood(content, userFoods: userFoods) : null);
+      if (matched != null) {
+        setState(() {
+          _calCtrl.text = '${matched.totalCalories}';
+          if (matched.totalProtein != null) _proteinCtrl.text = '${matched.totalProtein}';
+          if (matched.totalCarbs != null) _carbsCtrl.text = '${matched.totalCarbs}';
+          if (matched.totalFat != null) _fatCtrl.text = '${matched.totalFat}';
+          _aiDetail = '食物库命中：${matched.calculationDetail}';
+        });
+        return;
+      }
+
       final presetService = context.read<PresetProvider>().service;
       final cached = presetService.getCachedAiEstimate(desc);
       if (cached != null) {

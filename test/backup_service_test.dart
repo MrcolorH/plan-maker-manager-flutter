@@ -74,7 +74,7 @@ void main() {
   });
 
   group('encodeBackup（备份正文结构）', () {
-    test('顶层字段与 10 项数据段完整（formatVersion 2）', () {
+    test('顶层字段与数据段完整（formatVersion 2）', () {
       final obj = jsonDecode(encodeBackup(buildData())) as Map<String, dynamic>;
       expect(obj['app'], 'jianfeidazi');
       expect(obj['type'], 'backup');
@@ -89,6 +89,8 @@ void main() {
         'extraFoods',
         'dayEntries',
         'weightRecords',
+        'userPresets',
+        'userFoods',
         'settings',
         'onboardingState',
         'apiUsage',

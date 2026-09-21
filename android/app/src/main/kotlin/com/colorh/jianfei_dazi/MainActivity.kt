@@ -128,24 +128,54 @@ class MainActivity : FlutterActivity() {
         val resolver = contentResolver
         val collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI
 
-        // 同名文件直接覆盖，避免系统自动生成 "xxx (1).txt"
-        val existing = findExistingUri(collection, task.fileName)
-        if (existing != null) {
-            resolver.openOutputStream(existing, "w")?.use {
-                it.write(task.content.toByteArray(Charsets.UTF_8))
-            } ?: throw IOException("写入文件失败")
-            return "${publicDownloadsPath()}/${task.fileName}"
+        // 查找所有匹配的文件（包含带斜杠与不带斜杠的 Download 相对路径）
+        val existingUris = findMatchingUris(collection, task.fileName)
+        if (existingUris.isNotEmpty()) {
+            val primaryUri = existingUris[0]
+            var writeOk = false
+            try {
+                // "rwt" 模式截断并覆盖写入
+                resolver.openOutputStream(primaryUri, "rwt")?.use {
+                    it.write(task.content.toByteArray(Charsets.UTF_8))
+                    writeOk = true
+                }
+            } catch (_: Exception) {
+                writeOk = false
+            }
+
+            if (writeOk) {
+                // 清理由于之前版本未匹配到而积累的多余副本
+                for (i in 1 until existingUris.size) {
+                    try {
+                        resolver.delete(existingUris[i], null, null)
+                    } catch (_: Exception) {}
+                }
+                if (task.fileName == "zhiqing-backup-auto.txt") {
+                    cleanupDuplicateAutoBackups(collection)
+                }
+                return "${publicDownloadsPath()}/${task.fileName}"
+            } else {
+                for (uri in existingUris) {
+                    try {
+                        resolver.delete(uri, null, null)
+                    } catch (_: Exception) {}
+                }
+            }
+        }
+
+        if (task.fileName == "zhiqing-backup-auto.txt") {
+            cleanupDuplicateAutoBackups(collection)
         }
 
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, task.fileName)
             put(MediaStore.MediaColumns.MIME_TYPE, MIME_TEXT)
-            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/")
             put(MediaStore.MediaColumns.IS_PENDING, 1)
         }
         val uri = resolver.insert(collection, values) ?: throw IOException("创建文件失败")
         try {
-            resolver.openOutputStream(uri)?.use {
+            resolver.openOutputStream(uri, "rwt")?.use {
                 it.write(task.content.toByteArray(Charsets.UTF_8))
             } ?: throw IOException("写入文件失败")
         } finally {
@@ -157,18 +187,44 @@ class MainActivity : FlutterActivity() {
         return "${publicDownloadsPath()}/${task.fileName}"
     }
 
-    private fun findExistingUri(collection: Uri, displayName: String): Uri? {
+    private fun findMatchingUris(collection: Uri, displayName: String): List<Uri> {
+        val list = mutableListOf<Uri>()
         val projection = arrayOf(MediaStore.MediaColumns._ID)
-        val selection =
-            "${MediaStore.MediaColumns.DISPLAY_NAME}=? AND ${MediaStore.MediaColumns.RELATIVE_PATH}=?"
-        val args = arrayOf(displayName, "${Environment.DIRECTORY_DOWNLOADS}/")
-        contentResolver.query(collection, projection, selection, args, null)?.use { cursor ->
-            if (cursor.moveToFirst()) {
-                val id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID))
-                return ContentUris.withAppendedId(collection, id)
+        val selection = "${MediaStore.MediaColumns.DISPLAY_NAME}=? AND " +
+                "(${MediaStore.MediaColumns.RELATIVE_PATH}=? OR ${MediaStore.MediaColumns.RELATIVE_PATH}=?)"
+        val args = arrayOf(displayName, "Download/", "Download")
+        try {
+            contentResolver.query(collection, projection, selection, args, null)?.use { cursor ->
+                val idCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
+                while (cursor.moveToNext()) {
+                    val id = cursor.getLong(idCol)
+                    list.add(ContentUris.withAppendedId(collection, id))
+                }
             }
-        }
-        return null
+        } catch (_: Exception) {}
+        return list
+    }
+
+    private fun cleanupDuplicateAutoBackups(collection: Uri) {
+        try {
+            val projection = arrayOf(MediaStore.MediaColumns._ID)
+            val selection = "${MediaStore.MediaColumns.DISPLAY_NAME} LIKE 'zhiqing-backup-auto (%).txt'"
+            contentResolver.query(collection, projection, selection, null, null)?.use { cursor ->
+                val idCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
+                while (cursor.moveToNext()) {
+                    val id = cursor.getLong(idCol)
+                    val uri = ContentUris.withAppendedId(collection, id)
+                    try {
+                        contentResolver.delete(uri, null, null)
+                    } catch (_: Exception) {}
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun findExistingUri(collection: Uri, displayName: String): Uri? {
+        val uris = findMatchingUris(collection, displayName)
+        return if (uris.isNotEmpty()) uris[0] else null
     }
 
     private fun publicDownloadsPath(): String =

@@ -123,10 +123,101 @@ class AiProviderPreset {
 
 const List<AiProviderPreset> kAiProviders = [
   AiProviderPreset('deepseek', 'DeepSeek', 'https://api.deepseek.com', 'deepseek-v4-flash'),
+  AiProviderPreset('gemini', 'Google Gemini', 'https://generativelanguage.googleapis.com/v1beta', 'gemini-3.1-flash-lite'),
   AiProviderPreset('kimi', 'Kimi（月之暗面）', 'https://api.moonshot.cn/v1', 'kimi-k3'),
   AiProviderPreset('mimo', 'MiMo（小米）', 'https://api.xiaomimimo.com/v1', 'mimo-v2.5'),
   AiProviderPreset('minimax', 'MiniMax', 'https://api.minimaxi.com/v1', 'MiniMax-M3'),
   AiProviderPreset('custom', '自定义', '', ''),
+];
+
+/// Gemini 模型与速率限制选项
+class GeminiModelOption {
+  final String model;
+  final String name;
+  final int rpm;
+  final String tpm;
+  final int rpd;
+  final bool recommended;
+
+  const GeminiModelOption({
+    required this.model,
+    required this.name,
+    required this.rpm,
+    required this.tpm,
+    required this.rpd,
+    this.recommended = false,
+  });
+
+  String get rateLimitSummary => '$rpm RPM · $tpm TPM · $rpd 次/天${recommended ? '（推荐）' : ''}';
+  String get dropdownLabel => '$name ($rpm RPM / $rpd RPD${recommended ? ' · 推荐' : ''})';
+}
+
+const List<GeminiModelOption> kGeminiModels = [
+  GeminiModelOption(
+    model: 'gemini-3.1-flash-lite',
+    name: 'Gemini 3.1 Flash Lite',
+    rpm: 15,
+    tpm: '250K',
+    rpd: 500,
+    recommended: true,
+  ),
+  GeminiModelOption(
+    model: 'gemini-3.5-flash-lite',
+    name: 'Gemini 3.5 Flash Lite',
+    rpm: 15,
+    tpm: '250K',
+    rpd: 500,
+    recommended: true,
+  ),
+  GeminiModelOption(
+    model: 'gemini-3.8-flash',
+    name: 'Gemini 3.8 Flash',
+    rpm: 5,
+    tpm: '250K',
+    rpd: 20,
+  ),
+  GeminiModelOption(
+    model: 'gemini-3.7-flash',
+    name: 'Gemini 3.7 Flash',
+    rpm: 5,
+    tpm: '250K',
+    rpd: 20,
+  ),
+  GeminiModelOption(
+    model: 'gemini-3.6-flash',
+    name: 'Gemini 3.6 Flash',
+    rpm: 5,
+    tpm: '250K',
+    rpd: 20,
+  ),
+  GeminiModelOption(
+    model: 'gemini-3.5-flash',
+    name: 'Gemini 3.5 Flash',
+    rpm: 5,
+    tpm: '250K',
+    rpd: 20,
+  ),
+  GeminiModelOption(
+    model: 'gemini-3-flash',
+    name: 'Gemini 3 Flash',
+    rpm: 5,
+    tpm: '250K',
+    rpd: 20,
+  ),
+  GeminiModelOption(
+    model: 'gemini-2.5-flash-lite',
+    name: 'Gemini 2.5 Flash Lite',
+    rpm: 10,
+    tpm: '250K',
+    rpd: 20,
+  ),
+  GeminiModelOption(
+    model: 'gemini-2.5-flash',
+    name: 'Gemini 2.5 Flash',
+    rpm: 5,
+    tpm: '250K',
+    rpd: 20,
+  ),
 ];
 
 /// 已退役的 DeepSeek 旧模型名 → 当前可用模型名

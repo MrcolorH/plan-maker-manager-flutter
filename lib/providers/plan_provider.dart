@@ -111,6 +111,49 @@ class PlanProvider extends ChangeNotifier {
     if (src.targetWeight != null) target.targetWeight = src.targetWeight;
     if (src.dailyCalorieTarget != null) target.dailyCalorieTarget = src.dailyCalorieTarget;
     if (src.tdee != null) target.tdee = src.tdee;
+    if (src.targetProtein != null) target.targetProtein = src.targetProtein;
+    if (src.targetCarbs != null) target.targetCarbs = src.targetCarbs;
+    if (src.targetFat != null) target.targetFat = src.targetFat;
+  }
+
+  /// 更新计划的 meta 目标（如设置页重算目标/身高体重目标同步）
+  Future<void> updateMeta({
+    int? dailyCalorieTarget,
+    int? tdee,
+    double? baseWeight,
+    int? targetProtein,
+    int? targetCarbs,
+    int? targetFat,
+  }) async {
+    var dirty = false;
+    if (dailyCalorieTarget != null && dailyCalorieTarget > 0) {
+      plan.meta.dailyCalorieTarget = dailyCalorieTarget.toDouble();
+      dirty = true;
+    }
+    if (tdee != null && tdee > 0) {
+      plan.meta.tdee = tdee.toDouble();
+      dirty = true;
+    }
+    if (baseWeight != null && baseWeight > 0) {
+      plan.meta.baseWeight = baseWeight;
+      dirty = true;
+    }
+    if (targetProtein != null && targetProtein > 0) {
+      plan.meta.targetProtein = targetProtein;
+      dirty = true;
+    }
+    if (targetCarbs != null && targetCarbs > 0) {
+      plan.meta.targetCarbs = targetCarbs;
+      dirty = true;
+    }
+    if (targetFat != null && targetFat > 0) {
+      plan.meta.targetFat = targetFat;
+      dirty = true;
+    }
+    if (dirty) {
+      notifyListeners();
+      await _persist();
+    }
   }
 
   /// 更新单个计划项字段（如提醒开关）

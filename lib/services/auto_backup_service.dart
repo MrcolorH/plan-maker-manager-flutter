@@ -22,8 +22,9 @@ import '../providers/record_provider.dart';
 import '../providers/settings_provider.dart';
 import '../providers/usage_provider.dart';
 import 'backup_service.dart';
+import 'storage_service.dart';
 
-/// 从各 Provider 当前状态聚合 9 项全量快照（备份页与自动备份共用同一口径）
+/// 从各 Provider 当前状态聚合全量快照（备份页与自动备份共用同一口径）
 BackupData captureBackupData({
   required PlanProvider plan,
   required RecordProvider record,
@@ -32,6 +33,7 @@ BackupData captureBackupData({
   required UsageProvider usage,
 }) {
   final rec = record.store;
+  final storage = StorageService.instance;
   return BackupData(
     planData: plan.plan,
     checkRecords:
@@ -42,6 +44,8 @@ BackupData captureBackupData({
     extraFoods: rec.extraFoods,
     dayEntries: rec.dayEntries.map((d, l) => MapEntry(d, l.map((e) => e.toJson()).toList())),
     weightRecords: rec.weightRecords.toJson(),
+    userPresets: storage.readMap(StorageService.kUserPresets),
+    userFoods: storage.readMap(StorageService.kUserFoods),
     settings: settings.settings,
     onboardingState: onboarding.state,
     apiUsage: usage.usage,

@@ -29,6 +29,8 @@ class BackupData {
   final Map<String, dynamic> extraFoods;
   final Map<String, dynamic> dayEntries;
   final Map<String, dynamic> weightRecords;
+  final Map<String, dynamic> userPresets;
+  final Map<String, dynamic> userFoods;
   final AppSettings settings;
   final OnboardingState onboardingState;
   final ApiUsage apiUsage;
@@ -42,6 +44,8 @@ class BackupData {
     required this.extraFoods,
     this.dayEntries = const {},
     this.weightRecords = const {},
+    this.userPresets = const {},
+    this.userFoods = const {},
     required this.settings,
     required this.onboardingState,
     required this.apiUsage,
@@ -56,6 +60,8 @@ class BackupData {
         'extraFoods': extraFoods,
         'dayEntries': dayEntries,
         'weightRecords': weightRecords,
+        'userPresets': userPresets,
+        'userFoods': userFoods,
         'settings': settings.toJson(),
         'onboardingState': onboardingState.toJson(),
         'apiUsage': apiUsage.toJson(),
@@ -135,7 +141,9 @@ bool hasBackupContent(BackupData d) =>
     d.tempTasks.isNotEmpty ||
     d.extraFoods.isNotEmpty ||
     d.dayEntries.isNotEmpty ||
-    d.weightRecords.isNotEmpty;
+    d.weightRecords.isNotEmpty ||
+    d.userPresets.isNotEmpty ||
+    d.userFoods.isNotEmpty;
 
 /// 备份文件正文（JSON，缩进 2 空格）
 /// 公开以便单元测试直接校验格式，与旧版 backup.js 兼容
@@ -146,7 +154,7 @@ String encodeBackup(BackupData data, {DateTime? now}) =>
       'type': 'backup',
       'formatVersion': 2,
       'exportedAt': (now ?? DateTime.now()).toIso8601String(),
-      'appVersion': '1.0.3',
+      'appVersion': '1.0.4',
       'data': data.toJson(),
     });
 
@@ -344,6 +352,8 @@ class BackupService {
       extraFoods: _objOf(d['extraFoods']),
       dayEntries: dayEntries,
       weightRecords: _objOf(d['weightRecords']),
+      userPresets: _objOf(d['userPresets']),
+      userFoods: _objOf(d['userFoods']),
       settings: AppSettings.fromJson(_objOf(d['settings'])),
       onboardingState: OnboardingState.fromJson(_objOf(d['onboardingState'])),
       apiUsage: ApiUsage.fromJson(_objOf(d['apiUsage'])),

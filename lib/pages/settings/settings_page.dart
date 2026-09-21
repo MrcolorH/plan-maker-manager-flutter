@@ -454,6 +454,10 @@ class _CalorieSheetState extends State<_CalorieSheet> {
     super.initState();
     final s = widget.settings;
     final p = widget.profile;
+    final records = context.read<RecordProvider>().store;
+    final effWeight = weightForDate(records, todayStr()) ?? p.weight;
+    final effBf = bodyFatForDate(records, todayStr()) ?? p.bodyFat;
+
     // 历史数据里 TDEE/目标摄入为 0（未设置过）时留空，交估算或手填
     _tdeeCtrl = TextEditingController(text: s.tdee > 0 ? '${s.tdee}' : '');
     _targetCtrl =
@@ -461,8 +465,9 @@ class _CalorieSheetState extends State<_CalorieSheet> {
     _ageCtrl = TextEditingController(text: p.age?.toString() ?? '');
     _heightCtrl = TextEditingController(text: p.height?.toString() ?? '');
     _weightCtrl =
-        TextEditingController(text: p.weight != null ? fmtWeight(p.weight!) : '');
-    _bodyFatCtrl = TextEditingController(text: p.bodyFat != null ? p.bodyFat.toString() : '');
+        TextEditingController(text: effWeight != null ? fmtWeight(effWeight) : '');
+    _bodyFatCtrl = TextEditingController(
+        text: (effBf != null && effBf > 0) ? fmtBodyFat(effBf) : '');
     _gender = p.gender == 'female' ? 'female' : 'male';
     _activity = p.activity > 0 ? p.activity : 1.2;
   }
@@ -527,6 +532,7 @@ class _CalorieSheetState extends State<_CalorieSheet> {
     try {
       final sp = context.read<SettingsProvider>();
       final ob = context.read<OnboardingProvider>();
+      final planP = context.read<PlanProvider>();
       final patch = <String, dynamic>{'tdee': tdee, 'dailyCalorieTarget': target};
       if (_lastBmr != null && _lastBmr! > 0) patch['bmr'] = _lastBmr;
       await sp.update(patch);
@@ -545,6 +551,26 @@ class _CalorieSheetState extends State<_CalorieSheet> {
           'bodyFat': bf,
         });
       }
+
+      // 计算减脂期适中偏少的每日营养素目标标准，同步更新到计划 meta 中
+      final macros = calculateFatLossMacroTargets(
+        targetCalories: target,
+        weight: w,
+        bodyFat: bf,
+        gender: _gender,
+        height: h,
+        age: age,
+      );
+
+      await planP.updateMeta(
+        dailyCalorieTarget: target,
+        tdee: tdee,
+        baseWeight: w,
+        targetProtein: macros.protein,
+        targetCarbs: macros.carbs,
+        targetFat: macros.fat,
+      );
+
       if (mounted) Navigator.pop(context);
     } catch (e) {
       if (!mounted) return;
@@ -731,19 +757,23 @@ class _WeightSheetState extends State<_WeightSheet> {
   @override
   void initState() {
     super.initState();
-    // 今天已录入 → 预填
-    final t = context.read<RecordProvider>().store.weightRecords.records[todayStr()];
+    final records = context.read<RecordProvider>().store;
+    final t = records.weightRecords.records[todayStr()];
+    final prevBf = bodyFatForDate(records, todayStr());
+    final pBf = context.read<OnboardingProvider>().state.profile.bodyFat;
+    final defaultBf = prevBf ?? pBf;
+
     if (t != null) {
       _weightCtrl.text =
           t.weight == t.weight.roundToDouble() ? '${t.weight.round()}' : '${t.weight}';
       if (t.bodyFat != null && t.bodyFat! > 0) {
         _bodyFatCtrl.text = fmtBodyFat(t.bodyFat!);
+      } else if (defaultBf != null && defaultBf > 0) {
+        _bodyFatCtrl.text = fmtBodyFat(defaultBf);
       }
     } else {
-      // 今天未录入：如果 profile 中有体脂率，提供参考
-      final pBf = context.read<OnboardingProvider>().state.profile.bodyFat;
-      if (pBf != null && pBf > 0) {
-        _bodyFatCtrl.text = fmtBodyFat(pBf);
+      if (defaultBf != null && defaultBf > 0) {
+        _bodyFatCtrl.text = fmtBodyFat(defaultBf);
       }
     }
   }
@@ -756,14 +786,6 @@ class _WeightSheetState extends State<_WeightSheet> {
   }
 
   UserProfile get _profile => context.read<OnboardingProvider>().state.profile;
-
-  /// profile 是否已有基础内容（性别/年龄/身高/体重任一已填）——
-  /// 仅当已有档案时才把新录入体重同步进基础信息（两处一致），避免给空档案造半截数据
-  bool get _hasProfileBase =>
-      _profile.gender.isNotEmpty ||
-      _profile.age != null ||
-      _profile.height != null ||
-      _profile.weight != null;
 
   /// 基础信息完整 = 性别/年龄/身高齐（体重用新录入值，不依赖 profile.weight）
   bool get _bodyComplete =>
@@ -814,12 +836,10 @@ class _WeightSheetState extends State<_WeightSheet> {
       await records.ensureBaseline(baseBurn(sp.settings));
       // ② 写当天记录（BMR 按录入时基础信息快照，记录体脂率）
       await records.setWeightRecord(w, bmr, bodyFat: bf);
-      // ③ 同步基础信息体重与体脂率：profile 已有基础内容时更新（两处保持一致）
-      if (_hasProfileBase) {
-        final profileUpdates = <String, dynamic>{'weight': w};
-        if (bf != null) profileUpdates['bodyFat'] = bf;
-        await ob.saveProfile(profileUpdates);
-      }
+      // ③ 同步基础信息体重与体脂率：两处保持一致，供热量估算等功能直接取用
+      final profileUpdates = <String, dynamic>{'weight': w};
+      if (bf != null && bf > 0) profileUpdates['bodyFat'] = bf;
+      await ob.saveProfile(profileUpdates);
       if (_bodyComplete && bmr > 0) {
         // ④ 基础信息完整 → 同步 settings.bmr（update 内部在 bmr 变化前也会再触发一次固化，幂等无副作用）
         await sp.update({'bmr': bmr});

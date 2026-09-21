@@ -217,6 +217,9 @@ class PlanMeta {
   double? targetWeight;
   double? dailyCalorieTarget;
   double? tdee;
+  int? targetProtein; // 每日蛋白质目标 (g)
+  int? targetCarbs;   // 每日碳水目标 (g)
+  int? targetFat;     // 每日脂肪目标 (g)
 
   PlanMeta({
     this.planName = '',
@@ -227,6 +230,9 @@ class PlanMeta {
     this.targetWeight,
     this.dailyCalorieTarget,
     this.tdee,
+    this.targetProtein,
+    this.targetCarbs,
+    this.targetFat,
   });
 
   factory PlanMeta.fromJson(Map<String, dynamic> json) => PlanMeta(
@@ -238,6 +244,9 @@ class PlanMeta {
         targetWeight: _num(json['targetWeight']),
         dailyCalorieTarget: _num(json['dailyCalorieTarget']),
         tdee: _num(json['tdee']),
+        targetProtein: json['targetProtein'] is num ? (json['targetProtein'] as num).round() : null,
+        targetCarbs: json['targetCarbs'] is num ? (json['targetCarbs'] as num).round() : null,
+        targetFat: json['targetFat'] is num ? (json['targetFat'] as num).round() : null,
       );
 
   Map<String, dynamic> toJson() => {
@@ -249,6 +258,9 @@ class PlanMeta {
         'targetWeight': targetWeight,
         'dailyCalorieTarget': dailyCalorieTarget,
         'tdee': tdee,
+        if (targetProtein != null) 'targetProtein': targetProtein,
+        if (targetCarbs != null) 'targetCarbs': targetCarbs,
+        if (targetFat != null) 'targetFat': targetFat,
       };
 
   static String _str(dynamic v) => v is String ? v : '';

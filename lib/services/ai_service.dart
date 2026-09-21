@@ -119,6 +119,137 @@ Map<String, dynamic>? extractJsonObj(String? text) {
   }
 }
 
+/// 判断是否为 Google Gemini 协议
+bool isGeminiProvider(AiConfig config) {
+  final p = config.provider.trim().toLowerCase();
+  if (p == 'gemini' || p == 'google') return true;
+  final ep = config.endpoint.toLowerCase();
+  return ep.contains('generativelanguage.googleapis.com') || ep.contains(':generatecontent');
+}
+
+/// 规范化 Gemini 端点并组装 generateContent 完整 URL
+String buildGeminiUrl(String rawEndpoint, String model) {
+  var e = rawEndpoint.trim();
+  e = e.replaceAll(RegExp(r'/models/[^/:]+:generateContent.*$', caseSensitive: false), '');
+  e = e.replaceAll(RegExp(r':generateContent.*$', caseSensitive: false), '');
+  e = e.replaceAll(RegExp(r'/chat/completions/?$', caseSensitive: false), '');
+  e = e.replaceAll(RegExp(r'/+$'), '');
+  if (e.isEmpty) {
+    e = 'https://generativelanguage.googleapis.com/v1beta';
+  } else if (!e.contains('/v1') && !e.contains('/v1beta')) {
+    e = '$e/v1beta';
+  }
+  final m = model.trim().isEmpty ? 'gemini-3.1-flash-lite' : model.trim();
+  return '$e/models/$m:generateContent';
+}
+
+/// 提取 Gemini 请求体（适配 systemInstruction 与 contents）
+Map<String, dynamic> buildGeminiRequestBody(List<Map<String, String>> messages) {
+  final systemParts = <Map<String, String>>[];
+  final contents = <Map<String, dynamic>>[];
+
+  for (final m in messages) {
+    final role = m['role'] ?? 'user';
+    final text = m['content'] ?? '';
+    if (text.isEmpty) continue;
+
+    if (role == 'system') {
+      systemParts.add({'text': text});
+    } else {
+      final gRole = (role == 'assistant' || role == 'model') ? 'model' : 'user';
+      contents.add({
+        'role': gRole,
+        'parts': [{'text': text}],
+      });
+    }
+  }
+
+  if (contents.isEmpty && systemParts.isNotEmpty) {
+    contents.add({
+      'role': 'user',
+      'parts': [{'text': systemParts.map((p) => p['text']).join('\n\n')}],
+    });
+    systemParts.clear();
+  }
+
+  final body = <String, dynamic>{
+    'contents': contents,
+    'generationConfig': {
+      'temperature': 0.2,
+    },
+  };
+
+  if (systemParts.isNotEmpty) {
+    body['systemInstruction'] = {
+      'parts': systemParts,
+    };
+  }
+
+  return body;
+}
+
+/// 解析 Gemini 响应并累计 usage
+String parseGeminiResponse(
+  Map<String, dynamic> data, {
+  void Function(Map<String, dynamic> usage)? onUsage,
+}) {
+  if (data['usageMetadata'] is Map) {
+    final u = data['usageMetadata'] as Map;
+    onUsage?.call({
+      'prompt_tokens': u['promptTokenCount'] ?? 0,
+      'completion_tokens': u['candidatesTokenCount'] ?? 0,
+      'total_tokens': u['totalTokenCount'] ?? 0,
+    });
+  }
+
+  final candidates = data['candidates'];
+  if (candidates is! List || candidates.isEmpty) {
+    final feedback = data['promptFeedback'];
+    if (feedback is Map && feedback['blockReason'] != null) {
+      throw Exception('Gemini 拒绝响应：${feedback['blockReason']}');
+    }
+    throw Exception('AI 未返回内容，请重试');
+  }
+
+  final cand = candidates[0];
+  if (cand is Map) {
+    final contentMap = cand['content'];
+    if (contentMap is Map && contentMap['parts'] is List) {
+      final parts = contentMap['parts'] as List;
+      final text = parts
+          .whereType<Map>()
+          .map((p) => p['text'])
+          .whereType<String>()
+          .join('');
+      if (text.isNotEmpty) return text;
+    }
+    final finishReason = cand['finishReason'];
+    if (finishReason != null && finishReason != 'STOP') {
+      throw Exception('Gemini 响应未完成：$finishReason');
+    }
+  }
+  throw Exception('AI 未返回内容，请重试');
+}
+
+String _extractGeminiError(dynamic data, int? statusCode) {
+  if (data is Map && data['error'] is Map) {
+    final err = data['error'] as Map;
+    final msg = err['message']?.toString() ?? '';
+    final status = err['status']?.toString() ?? '';
+    if (msg.contains('API key not valid')) {
+      return 'Google API Key 无效或格式不正确，请核对后再试';
+    }
+    if (msg.contains('location') || msg.contains('not supported')) {
+      return '当前网络地区暂不支持 Google API，请切换网络环境';
+    }
+    if (status == 'RESOURCE_EXHAUSTED' || statusCode == 429) {
+      return '已超出 Gemini 速率限制（429）：请稍后再试或在设置中换用额度更高的模型（如 Gemini 3.1 Flash Lite）';
+    }
+    if (msg.isNotEmpty) return 'Gemini 错误（$status）：$msg';
+  }
+  return httpErrorMsg(statusCode ?? 0);
+}
+
 class AiService {
   AiService._();
   static final AiService instance = AiService._();
@@ -136,16 +267,22 @@ class AiService {
     return _dio!;
   }
 
-  /// 通用 chat/completions 调用 → 返回助手回复文本
-  /// 默认接收超时 60s：DeepSeek 高峰期非流式生成经常 >20s，20s 过紧会误报「网络超时」
-  /// 通用 chat/completions 调用 → 返回助手回复文本
-  /// enableThinking: 是否开启思考模式（DeepSeek 等）；默认 false（秒级响应）；
-  /// 当用户开启深度思考或重算时设为 true。
+  /// 通用 chat 调用：根据 provider 自动分流 OpenAI 兼容 或 Google Gemini 原生 REST
   Future<String> chat(AiConfig config, List<Map<String, String>> messages,
       {int timeoutMs = 60000, bool enableThinking = false, void Function(Map<String, dynamic> usage)? onUsage}) async {
     if (config.apiKey.isEmpty || config.endpoint.isEmpty) {
       throw Exception('未配置 AI：请到「设置 → AI 服务」填写 API Key');
     }
+
+    if (isGeminiProvider(config)) {
+      return _chatGemini(
+        config,
+        messages,
+        timeoutMs: timeoutMs,
+        onUsage: onUsage,
+      );
+    }
+
     final base = normalizeEndpoint(config.endpoint);
     final model = config.model.isEmpty ? 'deepseek-v4-flash' : config.model;
     final sw = Stopwatch()..start();
@@ -201,6 +338,61 @@ class AiService {
       debugPrint('[AiService] ??? 未知异常 耗时 ${sw.elapsedMilliseconds}ms: $e');
       if (e is Exception && e.toString().contains('网络超时')) rethrow;
       if (e is Exception && e.toString().contains('请求已取消')) rethrow;
+      rethrow;
+    }
+  }
+
+  /// Google Gemini 原生 REST 协议调用（generateContent）
+  Future<String> _chatGemini(
+    AiConfig config,
+    List<Map<String, String>> messages, {
+    int timeoutMs = 60000,
+    void Function(Map<String, dynamic> usage)? onUsage,
+  }) async {
+    final model = config.model.trim().isEmpty ? 'gemini-3.1-flash-lite' : config.model.trim();
+    final url = buildGeminiUrl(config.endpoint, model);
+    final reqBody = buildGeminiRequestBody(messages);
+    final sw = Stopwatch()..start();
+    debugPrint('[AiService:Gemini] >>> POST $url model=$model '
+        'msg=${messages.map((m) => '${m['role']}:${(m['content'] ?? '').length}字').join(' | ')}');
+
+    try {
+      final res = await _client().post(
+        url,
+        data: reqBody,
+        options: Options(
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': config.apiKey.trim(),
+          },
+          receiveTimeout: Duration(milliseconds: timeoutMs),
+        ),
+      );
+      debugPrint('[AiService:Gemini] <<< HTTP ${res.statusCode} 耗时 ${sw.elapsedMilliseconds}ms');
+      if (res.statusCode != 200) {
+        throw Exception(_extractGeminiError(res.data, res.statusCode));
+      }
+      final data = (res.data is Map) ? Map<String, dynamic>.from(res.data as Map) : <String, dynamic>{};
+      return parseGeminiResponse(data, onUsage: onUsage);
+    } on DioException catch (e) {
+      final code = e.response?.statusCode;
+      debugPrint('[AiService:Gemini] !!! DioException type=${e.type} '
+          'status=$code 耗时 ${sw.elapsedMilliseconds}ms err=${e.error} msg=${e.message}');
+      if (e.response?.data != null) {
+        debugPrint('[AiService:Gemini] !!! body=${e.response?.data}');
+        throw Exception(_extractGeminiError(e.response?.data, code));
+      }
+      if (code != null && code >= 400) throw Exception(httpErrorMsg(code));
+      if (e.type == DioExceptionType.connectionTimeout) {
+        throw Exception('连接 Google AI 服务超时：请检查网络后重试');
+      }
+      if (e.type == DioExceptionType.receiveTimeout) {
+        throw Exception('Gemini 响应超时：服务端生成较慢，请稍后重试或手动填写');
+      }
+      if (e.type == DioExceptionType.cancel) throw Exception('请求已取消，请重试');
+      throw Exception(netErrorMsg(e.error ?? e.message));
+    } catch (e) {
+      debugPrint('[AiService:Gemini] ??? 未知异常 耗时 ${sw.elapsedMilliseconds}ms: $e');
       rethrow;
     }
   }

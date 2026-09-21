@@ -243,12 +243,24 @@ class _AiConfigSheetState extends State<_AiConfigSheet> {
                 );
               }).toList(),
             ),
-            const _FieldLabel('接口地址（OpenAI 兼容）'),
-            _field(_endpointCtrl, 'https://api.deepseek.com'),
-            const _FieldLabel('API Key（仅存本机）'),
-            _field(_keyCtrl, 'sk-...', obscure: true),
-            const _FieldLabel('模型名'),
-            _field(_modelCtrl, 'deepseek-v4-flash'),
+            _FieldLabel(provider == 'gemini' ? '接口地址（Gemini REST 接口）' : '接口地址（OpenAI 兼容）'),
+            _field(
+              _endpointCtrl,
+              provider == 'gemini'
+                  ? 'https://generativelanguage.googleapis.com/v1beta'
+                  : 'https://api.deepseek.com',
+            ),
+            _FieldLabel(provider == 'gemini' ? 'API Key（Google AI Studio）' : 'API Key（仅存本机）'),
+            _field(
+              _keyCtrl,
+              provider == 'gemini' ? 'AIzaSy...' : 'sk-...',
+              obscure: true,
+            ),
+            const _FieldLabel('模型选择'),
+            if (provider == 'gemini') ...[
+              _buildGeminiModelSelector(),
+            ] else
+              _field(_modelCtrl, 'deepseek-v4-flash'),
             if (_status != null) ...[
               const SizedBox(height: 6),
               Text(_status!,
@@ -283,6 +295,93 @@ class _AiConfigSheetState extends State<_AiConfigSheet> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildGeminiModelSelector() {
+    final currentModel = _modelCtrl.text.trim();
+    final matchedIndex = kGeminiModels.indexWhere((m) => m.model == currentModel);
+    final isCustom = matchedIndex < 0;
+    final dropdownValue = isCustom ? '__custom__' : currentModel;
+    final selectedOption = !isCustom ? kGeminiModels[matchedIndex] : null;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        AppCard(
+          margin: EdgeInsets.zero,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              isExpanded: true,
+              value: dropdownValue,
+              icon: const Icon(Icons.arrow_drop_down, color: AppColors.textSub),
+              items: [
+                ...kGeminiModels.map((m) {
+                  return DropdownMenuItem<String>(
+                    value: m.model,
+                    child: Text(
+                      m.dropdownLabel,
+                      style: const TextStyle(fontSize: 13),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  );
+                }),
+                const DropdownMenuItem<String>(
+                  value: '__custom__',
+                  child: Text('自定义输入模型名…', style: TextStyle(fontSize: 13, color: AppColors.primary)),
+                ),
+              ],
+              onChanged: (val) {
+                if (val == null) return;
+                setState(() {
+                  if (val != '__custom__') {
+                    _modelCtrl.text = val;
+                  } else if (!isCustom) {
+                    _modelCtrl.text = '';
+                  }
+                });
+              },
+            ),
+          ),
+        ),
+        if (isCustom) ...[
+          const SizedBox(height: 6),
+          _field(_modelCtrl, '输入模型名，如 gemini-3.8-flash'),
+        ],
+        if (selectedOption != null) ...[
+          const SizedBox(height: 6),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: selectedOption.recommended
+                  ? AppColors.primary.withValues(alpha: 0.08)
+                  : AppColors.chartGray.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.speed,
+                  size: 14,
+                  color: selectedOption.recommended ? AppColors.primary : AppColors.textSub,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    '速率限制：${selectedOption.rateLimitSummary}',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: selectedOption.recommended ? AppColors.primary : AppColors.textSub,
+                      fontWeight: selectedOption.recommended ? FontWeight.w500 : FontWeight.normal,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
     );
   }
 

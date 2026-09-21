@@ -21,6 +21,7 @@ class StorageService {
   static const String kDayEntries = 'dayEntries';
   static const String kWeightRecords = 'weightRecords';
   static const String kUserPresets = 'userPresets';
+  static const String kUserFoods = 'userFoods';
   static const String kAiEstimateCache = 'aiEstimateCache';
 
   late SharedPreferences _prefs;

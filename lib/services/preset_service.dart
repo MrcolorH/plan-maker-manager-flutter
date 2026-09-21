@@ -1,6 +1,7 @@
 /// 本地常吃食物预设方案与 AI 估算知识沉淀缓存服务
 library;
 
+import '../data/food_db.dart';
 import '../models/preset_food.dart';
 import 'storage_service.dart';
 
@@ -36,7 +37,7 @@ class PresetService {
     return list;
   }
 
-  /// 保存或更新预设方案（按名称去重或匹配相同 id）
+  /// 保存或更新预设方案（按名称去重或匹配相同 id），同时归一化沉淀到用户自定义食物库
   Future<PresetFood> savePreset({
     String? id,
     required String name,
@@ -44,7 +45,10 @@ class PresetService {
     int? protein,
     int? carbs,
     int? fat,
+    String unit = '份',
+    double amount = 1.0,
     String note = '',
+    bool syncToFoodDb = true,
   }) async {
     final raw = _storage.readMap(StorageService.kUserPresets);
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -77,6 +81,8 @@ class PresetService {
       protein: protein,
       carbs: carbs,
       fat: fat,
+      unit: unit,
+      amount: amount,
       note: note.trim(),
       useCount: existingCount,
       updatedAt: now,
@@ -84,6 +90,22 @@ class PresetService {
 
     raw[targetId] = preset.toJson();
     await _storage.writeMap(StorageService.kUserPresets, raw);
+
+    // 核心沉淀：用户采纳常用方案，自动归一化萃取为单位食物存入食物库
+    if (syncToFoodDb) {
+      try {
+        final unitFood = extractUnitFood(
+          name: trimmedName,
+          calories: calories,
+          protein: protein,
+          carbs: carbs,
+          fat: fat,
+          unit: unit,
+        );
+        await saveUserFood(unitFood);
+      } catch (_) {}
+    }
+
     return preset;
   }
 
@@ -105,6 +127,35 @@ class PresetService {
     final raw = _storage.readMap(StorageService.kUserPresets);
     if (raw.remove(id) != null) {
       await _storage.writeMap(StorageService.kUserPresets, raw);
+    }
+  }
+
+  // ---------- 用户自定义食物库管理 ----------
+
+  /// 获取用户自定义食物库
+  List<FoodItem> getUserFoods() {
+    final raw = _storage.readMap(StorageService.kUserFoods);
+    final list = <FoodItem>[];
+    for (final e in raw.values) {
+      if (e is Map) {
+        list.add(FoodItem.fromJson(Map<String, dynamic>.from(e)));
+      }
+    }
+    return list;
+  }
+
+  /// 写入/更新用户自定义食物
+  Future<void> saveUserFood(FoodItem food) async {
+    final raw = _storage.readMap(StorageService.kUserFoods);
+    raw[food.id] = food.toJson();
+    await _storage.writeMap(StorageService.kUserFoods, raw);
+  }
+
+  /// 删除用户自定义食物
+  Future<void> deleteUserFood(String id) async {
+    final raw = _storage.readMap(StorageService.kUserFoods);
+    if (raw.remove(id) != null) {
+      await _storage.writeMap(StorageService.kUserFoods, raw);
     }
   }
 

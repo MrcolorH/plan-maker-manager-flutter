@@ -210,14 +210,14 @@ DailySummary dailySummary(
 }) {
   // F11 快照路径：该日已有快照 → 只读快照（历史固化）
   final entries = records.dayEntries[dateStr];
-  if (entries != null) return _snapshotSummary(settings, records, dateStr, entries, profile: profile);
+  if (entries != null) return _snapshotSummary(plan, settings, records, dateStr, entries, profile: profile);
   // 旧口径 fallback（未来日 / 理论上的未迁移日）
   return _legacySummary(plan, settings, records, dateStr, profile: profile);
 }
 
 /// 快照路径：只读当日条目（计划=模板时实例化后的当天事实）
 DailySummary _snapshotSummary(
-    AppSettings settings, RecordStore records, String dateStr, List<DayEntry> entries,
+    PlanData plan, AppSettings settings, RecordStore records, String dateStr, List<DayEntry> entries,
     {UserProfile? profile}) {
   final rec = records.checkRecords[dateStr] ?? {};
   bool checked(DayEntry e) => rec.containsKey(entryCheckKey(e));
@@ -259,40 +259,28 @@ DailySummary _snapshotSummary(
   }
 
   // 计划期望宏量元素：
-  // 1. 若计划餐完整配置了宏量元素（餐食宏量总热量 ≥ 计划热量的 85%），说明为用户定制的精细食谱，累加各餐；
-  // 2. 否则，依据减脂期营养学标准（结合身高、体重、体脂率），自动计算全天适中偏少的营养摄入标准，供用户打卡对标。
-  int mealP = 0;
-  int mealC = 0;
-  int mealF = 0;
-  for (final m in planMeals) {
-    mealP += m.protein ?? 0;
-    mealC += m.carbs ?? 0;
-    mealF += m.fat ?? 0;
-  }
-  final mealMacroCal = mealP * 4 + mealC * 4 + mealF * 9;
-  final targetCal = plannedIntake > 0
-      ? plannedIntake.round()
-      : (settings.dailyCalorieTarget > 0 ? settings.dailyCalorieTarget : settings.tdee);
+  // 严格以「根据身高体重、体脂率科学估算出的每日营养素标准」为基准目标
+  // 优先取 plan.meta 中保存的目标值；若未显式保存则动态通过 calculateFatLossMacroTargets 计算
+  final targetCal = (plan.meta.dailyCalorieTarget != null && plan.meta.dailyCalorieTarget! > 0)
+      ? plan.meta.dailyCalorieTarget!.round()
+      : (settings.dailyCalorieTarget > 0
+          ? settings.dailyCalorieTarget
+          : (plannedIntake > 0 ? plannedIntake.round() : settings.tdee));
 
-  int planP = mealP;
-  int planC = mealC;
-  int planF = mealF;
+  final w = weightForDate(records, dateStr) ?? profile?.weight ?? plan.meta.baseWeight;
+  final bf = bodyFatForDate(records, dateStr) ?? profile?.bodyFat;
+  final targets = calculateFatLossMacroTargets(
+    targetCalories: targetCal,
+    weight: w,
+    bodyFat: bf,
+    gender: profile?.gender,
+    height: profile?.height,
+    age: profile?.age,
+  );
 
-  if (mealMacroCal < targetCal * 0.85) {
-    final w = weightForDate(records, dateStr) ?? profile?.weight;
-    final bf = bodyFatForDate(records, dateStr) ?? profile?.bodyFat;
-    final targets = calculateFatLossMacroTargets(
-      targetCalories: targetCal,
-      weight: w,
-      bodyFat: bf,
-      gender: profile?.gender,
-      height: profile?.height,
-      age: profile?.age,
-    );
-    planP = targets.protein;
-    planC = targets.carbs;
-    planF = targets.fat;
-  }
+  final planP = plan.meta.targetProtein ?? targets.protein;
+  final planC = plan.meta.targetCarbs ?? targets.carbs;
+  final planF = plan.meta.targetFat ?? targets.fat;
 
   return DailySummary(
     plannedIntake: plannedIntake,
@@ -361,38 +349,26 @@ DailySummary _legacySummary(
     inF += m.fat ?? 0;
   }
 
-  int mealP = 0;
-  int mealC = 0;
-  int mealF = 0;
-  for (final m in tasks.meals) {
-    mealP += m.protein ?? 0;
-    mealC += m.carbs ?? 0;
-    mealF += m.fat ?? 0;
-  }
-  final mealMacroCal = mealP * 4 + mealC * 4 + mealF * 9;
-  final targetCal = plannedIntake > 0
-      ? plannedIntake.round()
-      : (settings.dailyCalorieTarget > 0 ? settings.dailyCalorieTarget : settings.tdee);
+  final targetCal = (plan.meta.dailyCalorieTarget != null && plan.meta.dailyCalorieTarget! > 0)
+      ? plan.meta.dailyCalorieTarget!.round()
+      : (settings.dailyCalorieTarget > 0
+          ? settings.dailyCalorieTarget
+          : (plannedIntake > 0 ? plannedIntake.round() : settings.tdee));
 
-  int planP = mealP;
-  int planC = mealC;
-  int planF = mealF;
+  final w = weightForDate(records, dateStr) ?? profile?.weight ?? plan.meta.baseWeight;
+  final bf = bodyFatForDate(records, dateStr) ?? profile?.bodyFat;
+  final targets = calculateFatLossMacroTargets(
+    targetCalories: targetCal,
+    weight: w,
+    bodyFat: bf,
+    gender: profile?.gender,
+    height: profile?.height,
+    age: profile?.age,
+  );
 
-  if (mealMacroCal < targetCal * 0.85) {
-    final w = weightForDate(records, dateStr) ?? profile?.weight;
-    final bf = bodyFatForDate(records, dateStr) ?? profile?.bodyFat;
-    final targets = calculateFatLossMacroTargets(
-      targetCalories: targetCal,
-      weight: w,
-      bodyFat: bf,
-      gender: profile?.gender,
-      height: profile?.height,
-      age: profile?.age,
-    );
-    planP = targets.protein;
-    planC = targets.carbs;
-    planF = targets.fat;
-  }
+  final planP = plan.meta.targetProtein ?? targets.protein;
+  final planC = plan.meta.targetCarbs ?? targets.carbs;
+  final planF = plan.meta.targetFat ?? targets.fat;
 
   return DailySummary(
     plannedIntake: plannedIntake,

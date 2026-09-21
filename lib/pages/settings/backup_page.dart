@@ -10,11 +10,13 @@ import 'package:provider/provider.dart';
 
 import '../../providers/onboarding_provider.dart';
 import '../../providers/plan_provider.dart';
+import '../../providers/preset_provider.dart';
 import '../../providers/record_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/usage_provider.dart';
 import '../../services/auto_backup_service.dart';
 import '../../services/backup_service.dart';
+import '../../services/storage_service.dart';
 import '../../theme/app_theme.dart';
 
 class BackupPage extends StatefulWidget {
@@ -143,6 +145,18 @@ class _BackupPageState extends State<BackupPage> {
     try {
       await planP.importPlan(data.planData.toJson());
       await recordP.mergeRecords(_recordsOf(data));
+      if (data.userPresets.isNotEmpty) {
+        final cur = StorageService.instance.readMap(StorageService.kUserPresets);
+        cur.addAll(data.userPresets);
+        await StorageService.instance.writeMap(StorageService.kUserPresets, cur);
+      }
+      if (data.userFoods.isNotEmpty) {
+        final curF = StorageService.instance.readMap(StorageService.kUserFoods);
+        curF.addAll(data.userFoods);
+        await StorageService.instance.writeMap(StorageService.kUserFoods, curF);
+      }
+      if (mounted) context.read<PresetProvider>().refresh();
+
       if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('已增量合并：相同 id 覆盖更新，历史记录保留')));
@@ -195,6 +209,14 @@ class _BackupPageState extends State<BackupPage> {
       await settingsP.replaceSettings(data.settings);
       await obP.replaceOnboarding(data.onboardingState);
       usageP.replaceUsage(data.apiUsage);
+      if (data.userPresets.isNotEmpty) {
+        await StorageService.instance.writeMap(StorageService.kUserPresets, data.userPresets);
+      }
+      if (data.userFoods.isNotEmpty) {
+        await StorageService.instance.writeMap(StorageService.kUserFoods, data.userFoods);
+      }
+      if (mounted) context.read<PresetProvider>().refresh();
+
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(safetyTip ?? '已覆盖导入，数据已替换')));
