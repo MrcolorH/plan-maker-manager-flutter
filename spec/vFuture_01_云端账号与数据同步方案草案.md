@@ -285,3 +285,9 @@ checkRecords / mealAdjust / tempTasks 天然按 `date` 分片 → 按「天」�
 5. **S1 冲突语义**：整包 last-write-wins + 弹窗二选一（与现有覆盖导入心智一致）是否接受？
 
 > 拍板后：本文档升 v1.0 定稿 → tasks.md 增补云端 Phase → checklist.md 增补同步用例 → 再动代码。
+
+---
+
+**文档元信息**
+- 所属版本：远期规划草案
+- 创建时间：2026年09月03日

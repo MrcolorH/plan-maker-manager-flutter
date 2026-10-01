@@ -16,7 +16,7 @@ flutter test                # 注意：需先清 HTTP(S)_PROXY 代理环境变�
 | 路径 | 说明 |
 |---|---|
 | 仓库根目录 | Flutter 工程本体（入口 `lib/main.dart`；包名 `com.colorh.jianfei_dazi`） |
-| [spec/](spec/) | 设计与规格文档：`spec.md`（总规格）、`design.md`（技术设计，v2.0 起为 Flutter 版）、`tasks.md`（任务拆解）、`weight-design.md`（v1.0.1 体重记录设计）、`backup-design.md`（备份方案）、`guide-design.md`（引导/指引设计）、`import-format.md`（计划 JSON 格式）、`cloud-sync-design.md`（云端同步草案） |
+| [spec/](spec/) | 设计与规格文档库：参见 [spec/00_文档目录与导航索引.md](spec/00_文档目录与导航索引.md)。包含《产品需求规格说明书》、《系统架构与技术设计》、《开发任务拆解与里程碑》、《测试用例与验收清单》、《无计划默认三餐与一键转计划设计》等按版本编排的全套中文规格方案 |
 
 ## 相关仓库
 
