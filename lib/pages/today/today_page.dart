@@ -23,6 +23,7 @@ import '../../utils/date_utils.dart';
 import '../../utils/plan_utils.dart';
 import '../../widgets/ai_config_sheet.dart';
 import '../../widgets/calorie_summary.dart';
+import '../../widgets/convert_to_plan_sheet.dart';
 import '../../widgets/exercise_card.dart';
 import '../../widgets/meal_card.dart';
 import '../food/food_add_page.dart';
@@ -38,32 +39,13 @@ class TodayPage extends StatelessWidget {
     final settings = context.watch<SettingsProvider>().settings;
     final today = todayStr();
 
-    // 无计划 → 整页空状态
-    if (!plan.hasPlan) {
-      return _scaffold(
-        context,
-        child: const Column(
-          children: [
-            AppPageTitle(),
-            Expanded(
-              child: EmptyState(
-                icon: '📭',
-                text: '还没有计划',
-                subText: '去「计划」页导入或创建你的减脂计划吧',
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
     final profile = context.watch<OnboardingProvider>().state.profile;
     final summary = dailySummary(plan, settings, records.store, today, profile: profile);
 
     // F11 快照渲染：当日餐食/运动以「当日条目快照」为准（计划=模板，套用后当天即事实）
-    // 今日首次进入兜底：跨天/首启时若当天还没有快照，则从计划实例化
+    // 今日首次进入兜底：跨天/首启时若当天还没有快照或缺少正餐骨架，则进行快照同步
     final entries = records.store.dayEntries[today];
-    if (plan.hasPlan && entries == null) {
+    if (entries == null || !entries.any((e) => e.kind == 'meal')) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         context
             .read<RecordProvider>()
@@ -84,18 +66,21 @@ class TodayPage extends StatelessWidget {
             : _planMealCal(plan, e.planItemId),
         checked: records.isEntryChecked(today, e),
         focused: _focusMatch(context, 'meal:${e.isPlan ? e.planItemId : e.id}'),
-        onTap: e.isPlan
+        onTap: (e.isPlan && e.content.isNotEmpty)
             ? () => _openDetail(context, 'meal', e.planItemId)
             : () => _openEditDialog(context, e),
-        onCheck: e.isPlan
-            ? () => context.read<RecordProvider>().toggleCheck(today, 'meal', e.planItemId)
+        onCheck: e.content.isNotEmpty
+            ? () => context.read<RecordProvider>().toggleEntryCheck(today, e)
             : null,
         onAdjust: () => _openEditDialog(context, e),
-        onDelete: e.isPlan
+        onDelete: (e.isPlan || e.slot != 'snack')
             ? null
             : () => _confirmDelete(context, () {
                 context.read<RecordProvider>().removeDayEntry(today, e.id);
               }, '删除这条加餐记录？'),
+        onConvertToPlan: (e.content.isNotEmpty && e.slot != 'snack')
+            ? () => _openConvertToPlan(context, e)
+            : null,
       ));
     }
 
@@ -150,7 +135,7 @@ class TodayPage extends StatelessWidget {
                     style: const TextStyle(fontSize: 19, fontWeight: FontWeight.bold, color: AppColors.text),
                   ),
                   Text(
-                    '$doneCount/$taskCount 已完成',
+                    taskCount > 0 ? '$doneCount/$taskCount 已完成' : (doneCount > 0 ? '已打卡 $doneCount 项' : '自由记录'),
                     style: const TextStyle(fontSize: 13, color: AppColors.primary),
                   ),
                 ],
@@ -276,6 +261,23 @@ class TodayPage extends StatelessWidget {
         entry: entry,
         plan: plan,
         checked: records.isEntryChecked(today, entry),
+      ),
+    );
+  }
+
+  /// 「设为日常计划」弹窗
+  void _openConvertToPlan(BuildContext context, DayEntry entry) {
+    final today = todayStr();
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => ConvertToPlanSheet(
+        date: today,
+        entry: entry,
       ),
     );
   }
@@ -512,12 +514,12 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('已存入常用预设方案：「$content」')));
   }
 
-  Future<void> _save({bool checkAfter = false}) async {
+  Future<DayEntry?> _save({bool checkAfter = false, bool pop = true}) async {
     final content = _contentCtrl.text.trim();
     if (content.isEmpty) {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('请填写${_isEx ? '运动内容' : '食物内容'}，如「黄焖鸡米饭一份」')));
-      return;
+      return null;
     }
     final calText = _calCtrl.text.trim();
     int? cal;
@@ -526,7 +528,7 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
       if (cal == null || cal < 0 || cal > 5000) {
         ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('请输入 0-5000 的${_isEx ? '消耗' : '热量'}，留空=待补录')));
-        return;
+        return null;
       }
     }
     final pVal = int.tryParse(_proteinCtrl.text.trim());
@@ -571,13 +573,31 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
           );
     }
 
-    if (checkAfter && _isPlan) {
-      final keyType = old.kind == 'meal' ? 'meal' : 'exercise';
-      if (!records.isChecked(date, keyType, old.planItemId)) {
-        await records.toggleCheck(date, keyType, old.planItemId);
+    if (checkAfter) {
+      if (!records.isEntryChecked(date, updated)) {
+        await records.toggleEntryCheck(date, updated);
       }
     }
-    if (mounted) Navigator.pop(context);
+    if (pop && mounted) Navigator.pop(context);
+    return updated;
+  }
+
+  Future<void> _convertToPlan() async {
+    final updated = await _save(checkAfter: false, pop: false);
+    if (updated == null || !mounted) return;
+    Navigator.pop(context);
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => ConvertToPlanSheet(
+        date: widget.date,
+        entry: updated,
+      ),
+    );
   }
 
   @override
@@ -781,6 +801,13 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
                       label: const Text('恢复计划', style: TextStyle(fontSize: 12)),
                       style: TextButton.styleFrom(foregroundColor: AppColors.textSub),
                     )
+                  else if (widget.entry.slot != 'snack')
+                    TextButton.icon(
+                      onPressed: _convertToPlan,
+                      icon: const Icon(Icons.event_repeat_rounded, size: 15),
+                      label: const Text('设为日常计划', style: TextStyle(fontSize: 12)),
+                      style: TextButton.styleFrom(foregroundColor: AppColors.primary),
+                    )
                   else
                     const SizedBox.shrink(),
                   TextButton.icon(
@@ -819,16 +846,14 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
                     child: const Text('保存'),
                   ),
                 ),
-                if (_isPlan) ...[
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: () => _save(checkAfter: true),
-                      style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary, foregroundColor: Colors.white),
-                      child: const Text('保存并打卡'),
-                    ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () => _save(checkAfter: true),
+                    style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary, foregroundColor: Colors.white),
+                    child: const Text('保存并打卡'),
                   ),
-                ],
+                ),
               ],
             ),
           ],

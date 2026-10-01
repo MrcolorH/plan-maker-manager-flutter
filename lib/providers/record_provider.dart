@@ -274,7 +274,12 @@ class RecordProvider extends ChangeNotifier {
     if (date.compareTo(todayStr()) > 0) return; // 未来日期不生成快照
     final planItems = _instantiatePlan(date, plan);
     final old = store.dayEntries[date];
-    if (old == null && planItems.isEmpty) return; // 无快照无计划，无操作
+    if (old == null && planItems.isEmpty) {
+      // 无快照无计划（新用户/未制定计划）：生成默认早中晚三餐骨架
+      await ensureDefaultMealEntries(date);
+      return;
+    }
+
     final kept = <DayEntry>[];
     for (final e in (old ?? const <DayEntry>[])) {
       if (!e.isPlan) {
@@ -311,6 +316,30 @@ class RecordProvider extends ChangeNotifier {
         kept.add(p);
       }
     }
+
+    // 若当前完全无计划（如清空或尚未制定），且没有任何正餐条目，补全早中晚骨架
+    if (!plan.hasPlan && !kept.any((e) => e.kind == 'meal' && e.slot != 'snack')) {
+      const defaultSlots = [
+        (slot: 'breakfast', time: '08:00'),
+        (slot: 'lunch', time: '12:00'),
+        (slot: 'dinner', time: '18:30'),
+      ];
+      for (final s in defaultSlots) {
+        kept.add(DayEntry(
+          id: genId('m'),
+          kind: 'meal',
+          slot: s.slot,
+          time: s.time,
+          content: '',
+          calories: null,
+          source: 'manual',
+          planItemId: '',
+          detached: true,
+          caloriesDirty: true,
+        ));
+      }
+    }
+
     sortDayEntries(kept);
     if (_entriesEqual(old, kept)) return;
     store.dayEntries[date] = kept;
@@ -390,6 +419,68 @@ class RecordProvider extends ChangeNotifier {
 
   bool isEntryChecked(String date, DayEntry e) =>
       store.checkRecords[date]?.containsKey(checkKeyOf(e)) ?? false;
+
+  /// 对任意快照条目进行打卡/取消打卡（支持计划条目与计划外正餐/加餐）
+  Future<bool> toggleEntryCheck(String date, DayEntry e) async {
+    final key = checkKeyOf(e);
+    final colonIdx = key.indexOf(':');
+    final type = colonIdx > 0 ? key.substring(0, colonIdx) : 'temp';
+    final id = colonIdx > 0 ? key.substring(colonIdx + 1) : e.id;
+    return toggleCheck(date, type, id);
+  }
+
+  /// 迁移打卡状态（例如条目从计划外 temp: 升级为日常计划 meal: 时，平滑保留打卡标记）
+  Future<void> migrateEntryCheck({
+    required String date,
+    required String oldCheckKey,
+    required String newCheckKey,
+  }) async {
+    if (oldCheckKey == newCheckKey) return;
+    final dayCheck = store.checkRecords[date];
+    if (dayCheck != null && dayCheck.containsKey(oldCheckKey)) {
+      final val = dayCheck.remove(oldCheckKey);
+      if (val != null) {
+        dayCheck[newCheckKey] = val;
+        notifyListeners();
+        await _persistCheck();
+      }
+    }
+  }
+
+  /// 确保某天有默认的早中晚三餐骨架（无计划/冷启动或某餐缺位时补齐空白待录入项）
+  Future<void> ensureDefaultMealEntries(String date) async {
+    if (date.compareTo(todayStr()) > 0) return; // 未来日期不自动补
+    final list = store.dayEntries.putIfAbsent(date, () => []);
+    const slots = [
+      (slot: 'breakfast', time: '08:00'),
+      (slot: 'lunch', time: '12:00'),
+      (slot: 'dinner', time: '18:30'),
+    ];
+    var changed = false;
+    for (final s in slots) {
+      final exists = list.any((e) => e.kind == 'meal' && e.slot == s.slot);
+      if (!exists) {
+        list.add(DayEntry(
+          id: genId('m'),
+          kind: 'meal',
+          slot: s.slot,
+          time: s.time,
+          content: '',
+          calories: null,
+          source: 'manual',
+          planItemId: '',
+          detached: true,
+          caloriesDirty: true,
+        ));
+        changed = true;
+      }
+    }
+    if (changed) {
+      sortDayEntries(list);
+      notifyListeners();
+      await _persistEntries();
+    }
+  }
 
   /// 升级首启迁移：把本机旧格式存量一次性转换为快照（幂等，kDayEntries 已存在则跳过）
   Future<void> migrateIfNeeded(PlanData plan) async {

@@ -51,9 +51,10 @@ class MealCard extends StatelessWidget {
   final bool checked;
   final bool focused;
   final VoidCallback? onTap; // 卡片空白 → 详情
-  final VoidCallback? onCheck; // 打卡（计划条目）
+  final VoidCallback? onCheck; // 打卡（正餐与计划条目）
   final VoidCallback? onAdjust; // ✎
-  final VoidCallback? onDelete; // ✕（计划外条目）
+  final VoidCallback? onDelete; // ✕（计划外加餐条目）
+  final VoidCallback? onConvertToPlan; // 设为日常计划
 
   const MealCard({
     super.key,
@@ -65,14 +66,16 @@ class MealCard extends StatelessWidget {
     this.onCheck,
     this.onAdjust,
     this.onDelete,
+    this.onConvertToPlan,
   });
 
   @override
   Widget build(BuildContext context) {
-    final isTemp = !entry.isPlan;
+    final isSnack = entry.slot == 'snack';
+    final isBlank = entry.content.isEmpty;
     final Color bg = checked
         ? AppColors.primaryBg
-        : (isTemp ? const Color(0xFFFCF6EE) : Colors.white);
+        : (isSnack ? const Color(0xFFFCF6EE) : Colors.white);
     return Container(
       margin: const EdgeInsets.only(left: 16, right: 16, bottom: 8),
       decoration: BoxDecoration(
@@ -80,10 +83,10 @@ class MealCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         border: focused
             ? Border.all(color: AppColors.orange, width: 1.5)
-            : (isTemp ? Border.all(color: const Color(0xFFF2DDBC)) : null),
+            : (isSnack ? Border.all(color: const Color(0xFFF2DDBC)) : null),
       ),
       child: InkWell(
-        onTap: onTap,
+        onTap: isBlank ? onAdjust : onTap,
         borderRadius: BorderRadius.circular(16),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
@@ -112,7 +115,7 @@ class MealCard extends StatelessWidget {
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        if (isTemp)
+                        if (isSnack)
                           const Tag('今日加', color: 'orange')
                         else
                           Tag(kTypeCn[entry.slot] ?? entry.slot, color: 'green'),
@@ -123,11 +126,15 @@ class MealCard extends StatelessWidget {
                         const SizedBox(width: 4),
                         Expanded(
                           child: Text(
-                            entry.content,
+                            isBlank ? '点击记录${kTypeCn[entry.slot] ?? '餐食'}' : entry.content,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                                fontSize: 15, fontWeight: FontWeight.w600, color: AppColors.text, height: 1.3),
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: isBlank ? FontWeight.normal : FontWeight.w600,
+                              color: isBlank ? AppColors.textSub : AppColors.text,
+                              height: 1.3,
+                            ),
                           ),
                         ),
                       ],
@@ -142,12 +149,24 @@ class MealCard extends StatelessWidget {
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (isTemp) ...[
+                  if (isBlank) ...[
+                    _iconBtn(Icons.edit_note, AppColors.primary, onAdjust, 22),
+                  ] else if (isSnack) ...[
                     _iconBtn(Icons.close, AppColors.textSub, onDelete, 18),
                   ] else ...[
-                    _iconBtn(Icons.edit_outlined,
-                        entry.caloriesDirty || entry.detached ? AppColors.primary : AppColors.textSub,
-                        onAdjust, 17),
+                    if (onConvertToPlan != null) ...[
+                      Tooltip(
+                        message: '设为日常计划',
+                        child: _iconBtn(Icons.event_repeat_rounded, AppColors.orange, onConvertToPlan, 19),
+                      ),
+                      const SizedBox(width: 4),
+                    ],
+                    _iconBtn(
+                      Icons.edit_outlined,
+                      entry.caloriesDirty || entry.detached ? AppColors.primary : AppColors.textSub,
+                      onAdjust,
+                      17,
+                    ),
                     const SizedBox(width: 8),
                     CheckCircle(checked: checked, onTap: onCheck),
                   ],
@@ -190,15 +209,24 @@ class MealCard extends StatelessWidget {
           )
         : const SizedBox.shrink();
 
+    if (entry.content.isEmpty) {
+      return const Text(
+        '点击即可记录，支持 AI 智能估算',
+        style: TextStyle(fontSize: 12, color: AppColors.textFaint),
+      );
+    }
+
     if (!entry.isPlan) {
-      // 计划外加餐：即计缺口，展示热量
+      // 计划外正餐或加餐
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Text('${cal ?? 0} kcal',
-                  style: const TextStyle(fontSize: 12, color: AppColors.orange)),
+              if (cal != null)
+                Text('$cal kcal', style: const TextStyle(fontSize: 12, color: AppColors.orange))
+              else
+                const Text('待补录热量', style: TextStyle(fontSize: 12, color: AppColors.textSub)),
               if (entry.note.isNotEmpty) ...[
                 const SizedBox(width: 4),
                 Expanded(

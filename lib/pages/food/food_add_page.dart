@@ -325,8 +325,8 @@ class _FoodAddPageState extends State<FoodAddPage> {
       return;
     }
 
-    // 1. 若非强制 AI，优先本地食物库秒级匹配与份量折算（0 网络延迟）
-    if (!forceAi) {
+    // 1. 若非强制 AI 且未开启深度思考，优先本地食物库秒级匹配与份量折算（0 网络延迟）
+    if (!forceAi && !_enableThinking) {
       final userFoods = context.read<PresetProvider>().userFoods;
       final match = matchAndCalculateFood(desc, userFoods: userFoods);
       if (match != null) {
@@ -337,7 +337,9 @@ class _FoodAddPageState extends State<FoodAddPage> {
           if (match.totalProtein != null) _proteinCtrl.text = '${match.totalProtein}';
           if (match.totalCarbs != null) _carbsCtrl.text = '${match.totalCarbs}';
           if (match.totalFat != null) _fatCtrl.text = '${match.totalFat}';
-          _resSource = match.isUserCustom ? '自定义食物库' : '内置食物库';
+          _resSource = match.isUserCustom
+              ? '自定义食物库'
+              : (match.calculationDetail.contains(' + ') ? '食物库组合' : '内置食物库');
           _resDetail = match.calculationDetail;
           _isMatchedFromDb = true;
         });
@@ -380,8 +382,11 @@ class _FoodAddPageState extends State<FoodAddPage> {
         if (r['carbs'] != null) _carbsCtrl.text = '${r['carbs']}';
         if (r['fat'] != null) _fatCtrl.text = '${r['fat']}';
         final conf = (r['confidence'] as num?) ?? 0;
+        final detailText = (r['detail'] as String?)?.trim();
         _resSource = 'AI 大模型测算';
-        _resDetail = '置信度 ${(conf * 100).round()}%';
+        _resDetail = (detailText != null && detailText.isNotEmpty)
+            ? 'AI 拆解：$detailText'
+            : '置信度 ${(conf * 100).round()}%';
         _isMatchedFromDb = false;
       });
       // 成功自动沉淀为 AI 缓存
@@ -653,10 +658,10 @@ class _FoodAddPageState extends State<FoodAddPage> {
                           ],
                         ),
                         if (_resDetail != null && _resDetail!.isNotEmpty) ...[
-                          const SizedBox(height: 4),
+                          const SizedBox(height: 5),
                           Text(
                             _resDetail!,
-                            style: const TextStyle(fontSize: 11, color: AppColors.textSub),
+                            style: const TextStyle(fontSize: 12, color: AppColors.textSub, height: 1.4),
                           ),
                         ],
                         // 若来自食物库秒配，提示用户是否仍需以 AI 测算

@@ -49,9 +49,37 @@ void main() {
       expect(r6, isNotNull);
       expect(r6!.totalCalories, 115);
 
-      // 7. 未收录食物返回 null
-      final r7 = matchAndCalculateFood('太空超级秘制分子料理');
-      expect(r7, isNull);
+      // 7. 常见分数份量（如 1/4）
+      final r7 = matchAndCalculateFood('1/4个香辣鸡腿堡');
+      expect(r7, isNotNull);
+      expect(r7!.quantity, 0.25);
+      expect(r7.totalCalories, (590 * 0.25).round());
+
+      // 8. 多个均在食物库的食物，逗号隔开，正确合并求和（不截断不丢失）
+      final r8 = matchAndCalculateFood('200g白米饭，水煮蛋1个');
+      expect(r8, isNotNull);
+      expect(r8!.totalCalories, 230 + 70); // 300
+      expect(r8.food.name, '白米饭 + 水煮蛋');
+      expect(r8.calculationDetail, contains('白米饭'));
+      expect(r8.calculationDetail, contains('水煮蛋'));
+
+      // 9. 空格隔开的多个食物库条目，正确合并求和
+      final r9 = matchAndCalculateFood('200g白米饭 2个水煮蛋');
+      expect(r9, isNotNull);
+      expect(r9!.totalCalories, 230 + 140); // 370
+
+      // 10. 用户输入一大堆食物（其中包含未收录食物/炒菜，如「炒茄子」），
+      // 绝不可只匹配出米饭而忽略其他食物，必须返回 null 交给 AI 全量估算！
+      final r10 = matchAndCalculateFood('一碗米饭，一个鸡蛋，半个鸡腿，炒茄子');
+      expect(r10, isNull, reason: '包含未收录菜品的多食物输入不应被截断，应返回 null 走 AI 兜底');
+
+      // 11. 1/4盘炒茄子，半碗米饭：包含炒菜分食，食物库无法覆盖，必须返回 null 走 AI
+      final r11 = matchAndCalculateFood('1/4盘炒茄子，半碗白米饭');
+      expect(r11, isNull, reason: '包含家常炒菜与分食比例时应走 AI 科学估算');
+
+      // 12. 未收录食物返回 null
+      final r12 = matchAndCalculateFood('太空超级秘制分子料理');
+      expect(r12, isNull);
     });
   });
 

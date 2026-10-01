@@ -968,7 +968,10 @@ class _RecordSheetState extends State<_RecordSheet> {
         _calCtrl.text = '${r['calories']}';
         final unit = (r['unit'] as String?) ?? '';
         final conf = ((r['confidence'] as num?) ?? 0);
-        detail = 'AI 估算 · 置信度 ${(conf * 100).round()}%${unit.isNotEmpty ? ' · $unit' : ''}';
+        final dt = (r['detail'] as String?)?.trim();
+        detail = (dt != null && dt.isNotEmpty)
+            ? 'AI 拆解：$dt'
+            : 'AI 估算 · 置信度 ${(conf * 100).round()}%${unit.isNotEmpty ? ' · $unit' : ''}';
       } else {
         // F10：运动消耗结合个人资料 —— 补录日生效体重（记录链）优先，profile 兜底；信息完整才传性别/年龄/身高
         final ob = context.read<OnboardingProvider>();

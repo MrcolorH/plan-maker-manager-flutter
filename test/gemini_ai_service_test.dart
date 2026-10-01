@@ -134,5 +134,52 @@ void main() {
       expect(geminiPreset.endpoint, 'https://generativelanguage.googleapis.com/v1beta');
       expect(geminiPreset.model, 'gemini-3.1-flash-lite');
     });
+
+    test('AI 估算 Prompt 明确区分家常菜用油常识、分食比例与总计绝对一致性要求', () {
+      // 检查加餐估算 Prompt
+      expect(kCalorieSys, contains('多食物完整合并'));
+      expect(kCalorieSys, contains('8-12g'));
+      expect(kCalorieSys, contains('1/4盘'));
+      expect(kCalorieSys, contains('等比例折算'));
+      expect(kCalorieSys, contains('detail'));
+      expect(kCalorieSys, contains('总计数值绝对一致'));
+
+      // 检查餐食估算 Prompt
+      expect(kMealEstSys, contains('8-12g'));
+      expect(kMealEstSys, contains('1/4 盘'));
+      expect(kMealEstSys, contains('等比例缩减'));
+      expect(kMealEstSys, contains('总计数值绝对一致'));
+    });
+
+    test('reconcileCalorieAndDetail 校准与对齐 AI 热量数值与拆解文本', () {
+      // 1. 完全一致时原样返回
+      final r1 = reconcileCalorieAndDetail(161, '米饭100g≈116，炒茄子1/4盘≈45，合计161');
+      expect(r1.$1, 161);
+      expect(r1.$2, '米饭100g≈116，炒茄子1/4盘≈45，合计161');
+
+      // 2. detail 末尾合计与顶层 calories 存在细化差异时，自动对齐（以拆解细化的 515 为准，校准顶层 calories）
+      final r2 = reconcileCalorieAndDetail(480, '黄焖鸡熟鸡肉120g≈190，米饭150g≈175，烹饪油酱汁≈150，合计515');
+      expect(r2.$1, 515);
+      expect(r2.$2, contains('合计515'));
+
+      // 3. detail 带有带单位的合计，如 "合计 515 kcal"
+      final r3 = reconcileCalorieAndDetail(500, '鸡肉≈200，米饭≈175，油≈140，合计 515 kcal');
+      expect(r3.$1, 515);
+
+      // 4. detail 没有结尾合计词，但包含分项，自动补齐规范合计
+      final r4 = reconcileCalorieAndDetail(230, '米饭150g≈175，青菜100g≈55');
+      expect(r4.$1, 230);
+      expect(r4.$2, '米饭150g≈175，青菜100g≈55，合计约 230 kcal');
+
+      // 5. detail 为空，给出规范兜底
+      final r5 = reconcileCalorieAndDetail(300, '');
+      expect(r5.$1, 300);
+      expect(r5.$2, '总热量约 300 kcal');
+
+      // 6. 极端悬殊差异时，将 detail 结尾修正为输入框采纳的数值，确保前后绝对一致
+      final r6 = reconcileCalorieAndDetail(300, '整只烤鸡大餐，合计 1500 kcal');
+      expect(r6.$1, 300);
+      expect(r6.$2, contains('合计 300 kcal'));
+    });
   });
 }

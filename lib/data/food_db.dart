@@ -186,23 +186,88 @@ List<FoodItem> searchFoods(String kw, {List<FoodItem>? userFoods}) {
   return result.length > 20 ? result.sublist(0, 20) : result;
 }
 
+final _stopAndUnitPattern = RegExp(
+  r'('
+  r'\d+(?:\.\d+)?\s*/\s*\d+|\d+(?:\.\d+)?|'
+  r'[个块份碗杯串片包根瓶盒袋条只盘两勺克gml毫升kg千克斤]|'
+  r'小碗|大碗|中碗|小份|大份|中份|小杯|大杯|中杯|'
+  r'[一二两俩三四五六七八九十半整满多份几]|分之|'
+  r'大约|大概|约|左右|来|点|有些|有一点|吃了|吃|喝了|喝|尝了|尝|要了|点了|一份|一个|一小|一大|的|了|在|'
+  r'[\s,，、+~—·.。/()（）\[\]【】\-_:：]'
+  r')',
+  caseSensitive: false,
+);
+
 /// 智能解析输入文本并在食物库中匹配与折算热量
+///
+/// 规则：
+/// 1. 若输入包含多种食物（如通过逗号、顿号、加号、换行或空格分隔）：
+///    - 若拆分出的每一项均能在食物库中精确命中，则合并求和返回完整组合结果，不遗漏任何食物；
+///    - 若有任何一项未在食物库收录，绝不截断输出部分食物，直接返回 null 交由 AI 大模型全量估算！
+/// 2. 若输入为单项描述，严格校验文本纯粹性，避免把包含多个食物或复杂烹饪的长句误当单品截断。
 FoodMatchResult? matchAndCalculateFood(String input, {List<FoodItem>? userFoods}) {
   final raw = input.trim();
   if (raw.isEmpty) return null;
-  final lower = raw.toLowerCase();
 
   // 1. 合并用户库与内置库，用户自建库在前
   final customList = userFoods ?? const [];
   final candidates = <FoodItem>[...customList, ...kFoodDb];
-
-  // 按名称长度倒序排序（长词优先，如避免“新奥尔良烤鸡腿堡”先被“鸡腿堡”截断）
+  // 长词优先，避免如“新奥尔良烤鸡腿堡”先被“鸡腿堡”截断
   candidates.sort((a, b) => b.name.length.compareTo(a.name.length));
+
+  // 2. 检查多食物强分隔符：逗号、顿号、加号、分号、换行、或独立的连接词（和/还有/加上/以及）
+  final delimiterPattern = RegExp(r'[\n\r，,、+；;]|(?:\s+(?:还有|加上|以及|和)\s+)|(?:\s*还有\s*)|(?:\s*加上\s*)');
+  if (delimiterPattern.hasMatch(raw)) {
+    final parts = raw.split(delimiterPattern).map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+    if (parts.length >= 2) {
+      final results = <FoodMatchResult>[];
+      for (final p in parts) {
+        final m = _matchSingleFood(p, candidates);
+        if (m == null) {
+          // 只要有任何一项未能单品精准命中（如包含未收录食物、复杂家常菜等），
+          // 绝不能截断输出部分食物！必须返回 null 交给 AI 大模型全量综合估算！
+          return null;
+        }
+        results.add(m);
+      }
+      return _combineMatchResults(results);
+    }
+  }
+
+  // 3. 检查是否有空格分隔的多项（如 "200g白米饭 2个水煮蛋"）
+  if (raw.contains(' ')) {
+    final spaceParts = raw.split(RegExp(r'\s+')).map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+    if (spaceParts.length >= 2) {
+      final results = <FoodMatchResult>[];
+      bool allMatched = true;
+      for (final p in spaceParts) {
+        final m = _matchSingleFood(p, candidates);
+        if (m == null) {
+          allMatched = false;
+          break;
+        }
+        results.add(m);
+      }
+      if (allMatched && results.length >= 2) {
+        return _combineMatchResults(results);
+      }
+    }
+  }
+
+  // 4. 单项匹配（严格校验，避免把包含多食物的长句误当单品）
+  return _matchSingleFood(raw, candidates);
+}
+
+/// 匹配单项食物
+FoodMatchResult? _matchSingleFood(String input, List<FoodItem> candidates) {
+  final raw = input.trim();
+  if (raw.isEmpty) return null;
+  final lower = raw.toLowerCase();
 
   FoodItem? matchedFood;
   String matchedKey = '';
 
-  // 第一轮：直接按食物名称包含匹配（长词优先，如香辣鸡腿堡优先匹配单品汉堡）
+  // 第一轮：直接按食物名称包含匹配（长词优先）
   for (final item in candidates) {
     final itemName = item.name.toLowerCase();
     if (lower.contains(itemName)) {
@@ -212,7 +277,7 @@ FoodMatchResult? matchAndCalculateFood(String input, {List<FoodItem>? userFoods}
     }
   }
 
-  // 第二轮：若名称未直接命中，再按别名匹配
+  // 第二轮：按别名包含匹配
   if (matchedFood == null) {
     for (final item in candidates) {
       for (final al in item.alias) {
@@ -229,9 +294,19 @@ FoodMatchResult? matchAndCalculateFood(String input, {List<FoodItem>? userFoods}
 
   if (matchedFood == null) return null;
 
-  // 2. 剥离食物名，提取份量修饰词
-  final remainder = raw.replaceAll(matchedKey, ' ').trim().toLowerCase();
-  final parsed = _parseQuantity(remainder, matchedFood.unit);
+  // 提取剩余修饰文本（仅替换首次命中的关键词，避免重复替换）
+  final keyIndex = raw.toLowerCase().indexOf(matchedKey.toLowerCase());
+  if (keyIndex < 0) return null;
+  final remainder = ('${raw.substring(0, keyIndex)} ${raw.substring(keyIndex + matchedKey.length)}').trim();
+
+  // 关键校验：检查 remainder 中是否还残留未被解释的实质性字词
+  // 若残留文字包含其他食物或复杂描述，说明该片段不是单纯的单食物描述，不可盲目截断
+  final leftover = remainder.replaceAll(_stopAndUnitPattern, '').trim();
+  if (leftover.isNotEmpty) {
+    return null;
+  }
+
+  final parsed = _parseQuantity(remainder.toLowerCase(), matchedFood.unit);
   final quantity = parsed.$1;
   final quantityText = parsed.$2;
 
@@ -260,6 +335,72 @@ FoodMatchResult? matchAndCalculateFood(String input, {List<FoodItem>? userFoods}
   );
 }
 
+/// 合并多个食物的匹配结果
+FoodMatchResult _combineMatchResults(List<FoodMatchResult> results) {
+  if (results.length == 1) return results.first;
+
+  int totalCal = 0;
+  int totalP = 0;
+  bool hasP = false;
+  int totalC = 0;
+  bool hasC = false;
+  int totalF = 0;
+  bool hasF = false;
+  bool isUserCustom = false;
+
+  final names = <String>[];
+  final units = <String>[];
+  final details = <String>[];
+
+  for (final r in results) {
+    totalCal += r.totalCalories;
+    if (r.totalProtein != null) {
+      totalP += r.totalProtein!;
+      hasP = true;
+    }
+    if (r.totalCarbs != null) {
+      totalC += r.totalCarbs!;
+      hasC = true;
+    }
+    if (r.totalFat != null) {
+      totalF += r.totalFat!;
+      hasF = true;
+    }
+    if (r.isUserCustom) isUserCustom = true;
+
+    names.add(r.food.name);
+    units.add('${r.food.name}×${r.quantityText}');
+    details.add('${r.food.name}(${r.quantityText}, ${r.totalCalories}kcal)');
+  }
+
+  final combinedName = names.join(' + ');
+  final combinedUnit = units.join('，');
+  final detail = '${details.join(' + ')} = $totalCal kcal';
+
+  final combinedFood = FoodItem(
+    id: 'combo_${DateTime.now().millisecondsSinceEpoch}',
+    name: combinedName,
+    calories: totalCal,
+    unit: combinedUnit,
+    protein: hasP ? totalP : null,
+    carbs: hasC ? totalC : null,
+    fat: hasF ? totalF : null,
+    isUserCustom: isUserCustom,
+  );
+
+  return FoodMatchResult(
+    food: combinedFood,
+    quantity: 1.0,
+    quantityText: combinedUnit,
+    totalCalories: totalCal,
+    totalProtein: hasP ? totalP : null,
+    totalCarbs: hasC ? totalC : null,
+    totalFat: hasF ? totalF : null,
+    calculationDetail: detail,
+    isUserCustom: isUserCustom,
+  );
+}
+
 /// 解析份量修饰词，返回 (倍数, 份量展示文本)
 (double, String) _parseQuantity(String text, String baseUnit) {
   final cleanBaseUnit = baseUnit.replaceFirst(RegExp(r'^\d+'), '');
@@ -268,6 +409,23 @@ FoodMatchResult? matchAndCalculateFood(String input, {List<FoodItem>? userFoods}
   if (text.isEmpty) {
     return (1.0, '1$defaultUnitText');
   }
+
+  // 常见分数：如 1/4, 1/3, 1/2, 3/4 等
+  final fracMatch = RegExp(r'(\d+)\s*/\s*(\d+)').firstMatch(text);
+  if (fracMatch != null) {
+    final num1 = double.tryParse(fracMatch.group(1) ?? '');
+    final num2 = double.tryParse(fracMatch.group(2) ?? '');
+    if (num1 != null && num2 != null && num2 > 0) {
+      final ratio = num1 / num2;
+      final rawFrac = fracMatch.group(0)!.replaceAll(' ', '');
+      return (ratio, '$rawFrac$defaultUnitText');
+    }
+  }
+  if (text.contains('四分之一')) return (0.25, '1/4$defaultUnitText');
+  if (text.contains('三分之一')) return (0.33, '1/3$defaultUnitText');
+  if (text.contains('二分之一')) return (0.5, '0.5$defaultUnitText');
+  if (text.contains('四分之三')) return (0.75, '3/4$defaultUnitText');
+  if (text.contains('三分之二')) return (0.67, '2/3$defaultUnitText');
 
   // 常见中文半份
   if (text.contains('半个') ||
@@ -279,6 +437,7 @@ FoodMatchResult? matchAndCalculateFood(String input, {List<FoodItem>? userFoods}
       text.contains('半根') ||
       text.contains('半条') ||
       text.contains('半瓶') ||
+      text.contains('半盘') ||
       text.contains('一半') ||
       text == '半') {
     return (0.5, '0.5$defaultUnitText');
@@ -293,6 +452,7 @@ FoodMatchResult? matchAndCalculateFood(String input, {List<FoodItem>? userFoods}
       text.contains('两瓶') ||
       text.contains('两根') ||
       text.contains('两包') ||
+      text.contains('两盘') ||
       text.contains('两只')) {
     return (2.0, '2$defaultUnitText');
   }

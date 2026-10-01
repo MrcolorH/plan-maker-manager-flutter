@@ -304,4 +304,105 @@ class PlanProvider extends ChangeNotifier {
     await _reminder.fullReschedule(plan, _settings.settings);
     await _syncToday();
   }
+
+  /// 检测同一餐次类型下，选中的执行周期是否与已有日常计划存在星期冲突
+  List<MealPlanConflict> checkMealConflicts({
+    required String type, // 'breakfast' | 'lunch' | 'dinner'
+    required List<int> days, // 用户选中的周几 (1..7)
+  }) {
+    final conflicts = <MealPlanConflict>[];
+    final targetMeals = plan.meals.where((m) => m.type == type).toList();
+    for (final m in targetMeals) {
+      final oldDays = m.days.isEmpty ? [1, 2, 3, 4, 5, 6, 7] : m.days;
+      final overlap = oldDays.where((d) => days.contains(d)).toList()..sort();
+      if (overlap.isNotEmpty) {
+        conflicts.add(MealPlanConflict(existingMeal: m, conflictDays: overlap));
+      }
+    }
+    return conflicts;
+  }
+
+  /// 将当日某餐条目一键转为长期日常计划
+  /// 如果存在冲突项，会对冲突项执行裁剪（移除冲突周几）；若冲突项执行天数完全被覆盖，则彻底删除旧项
+  Future<MealItem> convertSnapshotToPlan({
+    required String type, // 'breakfast' | 'lunch' | 'dinner'
+    required String name,
+    required String time,
+    required int? calories,
+    int? protein,
+    int? carbs,
+    int? fat,
+    required List<int> days,
+    bool reminder = true,
+    String note = '',
+  }) async {
+    final selectedDays = [...days]..sort();
+
+    // 1. 查找冲突项并执行覆盖裁剪
+    final conflicts = checkMealConflicts(type: type, days: selectedDays);
+    for (final c in conflicts) {
+      final old = c.existingMeal;
+      final oldDays = old.days.isEmpty ? [1, 2, 3, 4, 5, 6, 7] : old.days;
+      final remainDays = oldDays.where((d) => !selectedDays.contains(d)).toList()..sort();
+      if (remainDays.isEmpty) {
+        plan.meals.removeWhere((m) => m.id == old.id);
+      } else {
+        final idx = plan.meals.indexWhere((m) => m.id == old.id);
+        if (idx >= 0) {
+          plan.meals[idx] = MealItem(
+            id: old.id,
+            type: old.type,
+            name: old.name,
+            time: old.time,
+            calories: old.calories,
+            protein: old.protein,
+            carbs: old.carbs,
+            fat: old.fat,
+            days: remainDays.length == 7 ? [] : remainDays,
+            reminder: old.reminder,
+            note: old.note,
+            details: old.details,
+            steps: old.steps,
+            dates: old.dates,
+            startDate: old.startDate,
+            endDate: old.endDate,
+          );
+        }
+      }
+    }
+
+    // 2. 创建新计划项
+    final newMeal = MealItem(
+      id: genId('m'),
+      type: type,
+      name: name,
+      time: time,
+      calories: calories,
+      protein: protein,
+      carbs: carbs,
+      fat: fat,
+      days: selectedDays.length == 7 ? [] : selectedDays,
+      reminder: reminder,
+      note: note,
+    );
+    plan.meals.add(newMeal);
+
+    // 3. 首次添加计划初始化 startedAt
+    if (plan.meta.startedAt.isEmpty) {
+      plan.meta.startedAt = todayStr();
+    }
+
+    notifyListeners();
+    await _persist();
+    await _reminder.fullReschedule(plan, _settings.settings);
+    await _syncToday();
+    return newMeal;
+  }
+}
+
+/// 餐食计划冲突描述
+class MealPlanConflict {
+  final MealItem existingMeal;
+  final List<int> conflictDays; // 冲突的星期数字 1=周一...7=周日
+  const MealPlanConflict({required this.existingMeal, required this.conflictDays});
 }

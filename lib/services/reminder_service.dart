@@ -17,6 +17,8 @@ import '../utils/plan_utils.dart';
 
 class ReminderService {
   ReminderService._();
+  @visibleForTesting
+  ReminderService.forTesting();
   static final ReminderService instance = ReminderService._();
 
   final FlutterLocalNotificationsPlugin _plugin = FlutterLocalNotificationsPlugin();

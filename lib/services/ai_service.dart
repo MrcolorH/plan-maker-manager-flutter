@@ -12,28 +12,48 @@ import '../models/onboarding.dart';
 import '../models/settings.dart';
 import '../utils/date_utils.dart';
 
-const String kCalorieSys = '''你是中国营养学会专业营养师。用户描述一份食物或饮品，请估算总热量及三大营养素。
-严格遵循营养守恒：总热量 ≈ 蛋白质*4 + 碳水*4 + 脂肪*9。
-外卖/炒菜默认含8-15g烹饪油；肉类默认按熟重计算。
-严格只返回一个 JSON 对象，不要输出任何其他文字或代码块：
-{"name":"规范食物名","calories":总热量整数kcal,"protein":蛋白质克数整数g,"carbs":碳水克数整数g,"fat":脂肪克数整数g,"unit":"份量描述","confidence":0到1}
-描述含多种食物时合并估算。无法判断时 confidence 给低值。''';
+const String kCalorieSys = '''你是中国营养学会专业营养师。用户描述一份食物或饮品（可能是单品，也可能是多食物组合，或带家常烹饪/分食描述的一整段话），请科学精确估算总热量及三大营养素。
+
+【核心估算规则】
+1. 多食物完整合并：若输入包含多种食物（如「米饭+鸡蛋+鸡腿+炒茄子」或「一碗米饭，半盘炒菜」），必须全面识别所有食材并累加合并总热量与三大营养素，绝不能只计算某一项而遗漏其他！
+2. 真实家常烹饪用油常识（严禁机械盲目加油）：
+   - 普通家常炒菜（整盘生重约250-350g）：中国家庭常态整盘放油约8-12g（约一平汤匙；清淡小炒仅5-8g底油滑锅；吸油蔬菜如家常炒茄子、干煸豆角整盘放油约12-15g）。装盘出锅后，盘底与菜汤会残留20%-35%余油不被摄入；
+   - 餐厅外卖/重油滑炒：整份油量约12-18g；只有明确油炸时才考虑18g以上；
+   - 水煮/清蒸/凉拌/白灼：用油按0-3g计算。
+3. 多人共食与分摊比例折算（关键铁律）：
+   - 当用户描述与家人共吃、按比例食用（如「1/4盘炒菜」「半盘」「吃了几口」「尝了一点」）时，所有成分（主料、配料、实际摄入油量、总脂肪及各营养素）必须严格等比例折算！
+   - 典型示例：整盘家常炒茄子整盘摄入油约10-12g，若用户吃 1/4 盘，则实际摄入油量仅约 2.5-3g（脂肪约2.5-3g，折合22-27kcal），茄子本身约15kcal，1/4盘总热量仅约40-45kcal！
+   - 严禁违背常识：绝对不可直接给「1/4盘炒菜」算8-15g油（否则倒推整盘高达32-60g纯油，相当于油炸或浸油，严重脱离家常事实）！
+4. 严格遵循能量守恒：总热量 ≈ 蛋白质*4 + 碳水*4 + 脂肪*9。肉类按熟重计算。
+5. 【总计数值绝对一致（严禁前后矛盾）】：
+   calories 字段数值必须与 detail 拆解文本结尾的「合计 XXX」数值 100% 完全相同！detail 内部各项数值相加之和也必须严格等于该合计，绝对不允许 detail 里的合计与 calories 字段出现任何偏差！
+
+严格只返回一个 JSON 对象，不要输出任何其他文字或 markdown 代码块：
+{"name":"规范食物名或多食物组合名","calories":总热量整数kcal,"protein":蛋白质克数整数g,"carbs":碳水克数整数g,"fat":脂肪克数整数g,"unit":"份量描述（如：1/4盘、1碗+1个等）","detail":"过程详解与分项拆解，如：米饭100g≈116，炒茄子1/4盘(含油约2.5g)≈45，合计161","confidence":0到1}
+描述模糊时 confidence 给低值。''';
 
 const String kMealEstSys = '''你是减脂临床营养与食物成分分析专家。用户会描述这一餐实际吃了什么（可能是完整菜名、食材用量，或是"原计划+今天少了/多了什么"的大白话描述，带备注）。
 请按中国常见食物热量与烹饪常识精确估算。
 规则：
-1. 炒菜/外卖考虑烹饪底油（每份约8-15g油即70-135kcal）；凉拌水煮清蒸考虑少油；
-2. 严格核验能量守恒：总热量必须约等于 (蛋白质*4 + 碳水*4 + 脂肪*9)；
-3. 严格只返回一个 JSON 对象，不要输出任何其他文字或代码块：
-{"calories":实际总热量整数kcal,"protein":蛋白质整数g,"carbs":碳水整数g,"fat":脂肪整数g,"detail":"一句话分项拆解，如：黄焖鸡熟鸡肉120g≈190，米饭150g≈175，烹饪油酱汁≈150，合计515"}
-描述模糊时按常规单人堂食/外卖份量估算。''';
+1. 真实烹饪用油与分食折算：
+   - 普通家常炒菜一整盘（250-350g）整盘用油约8-12g（清淡小炒5-8g，吸油菜如炒茄子整盘约12-15g），盘底残留余油不吃；外卖重油菜整份约12-18g；凉拌水煮清蒸少油或无油（0-3g）；
+   - 若多人共食或按比例分吃（如吃 1/4 盘、半盘、吃了几口），食材用量与摄入油量必须严格等比例缩减！例如 1/4 盘家常炒茄子摄入油量仅约 2.5-3g，严禁将单人整份底油直接套给 1/4 盘（否则倒推整盘高达32g油，脱离常识）；
+2. 多食物与复合描述必须全面合并计算，不漏掉任何一项食材；
+3. 严格核验能量守恒：总热量必须约等于 (蛋白质*4 + 碳水*4 + 脂肪*9)；
+4. 【总计数值绝对一致（严禁前后矛盾）】：
+   calories 字段数值必须与 detail 拆解文本结尾的「合计 XXX」数值 100% 完全相同！detail 内部各项数值相加之和也必须严格等于该合计，绝对不允许 detail 里的合计与 calories 字段出现任何偏差！
+5. 严格只返回一个 JSON 对象，不要输出任何其他文字或代码块：
+{"calories":实际总热量整数kcal,"protein":蛋白质整数g,"carbs":碳水整数g,"fat":脂肪整数g,"detail":"一句话分项拆解，如：米饭100g≈116，炒茄子1/4盘(含油约2.5g)≈45，合计161"}
+描述模糊时按常规份量估算。''';
 
 /// FR6.9：计划条目编辑器专用——输入是结构化食材清单（含用量）+ 做法步骤，非口语描述
 const String kItemCalSys = '''你是减脂计划餐食的热量与宏量营养素估算助手。用户给出一份计划餐食的结构化描述：餐名、食材清单（含用量）、做法步骤、备注。
 请按中国常见食物热量成分，对食材清单逐项按给出的用量估算；做法步骤中提到的烹饪用油/糖/酱料等隐藏热量必须计入；未标注用量的食材按常见份量估算。
+【烹饪用油常识】普通家常炒菜整盘用油约8-12g（清淡小炒5-8g，吸油菜12-15g）；若为分食（如吃几分之几盘）油量必须按比例等比缩减。
 严格遵循营养守恒：总热量 ≈ 蛋白质*4 + 碳水*4 + 脂肪*9。
+【总计数值绝对一致】：calories 字段数值必须与 detail 拆解文本结尾的「合计 XXX」数值 100% 完全相同！
 严格只返回一个 JSON 对象，不要输出任何其他文字：
-{"calories":整餐总热量整数kcal,"protein":蛋白质整数g,"carbs":碳水整数g,"fat":脂肪整数g,"detail":"一句话拆解，如：鸡胸肉150g≈200(P45g)，橄榄油10g≈90，米饭150g≈175，合计465"}
+{"calories":整餐总热量整数kcal,"protein":蛋白质整数g,"carbs":碳水整数g,"fat":脂肪整数g,"detail":"一句话拆解，如：鸡胸肉150g≈200(P45g)，橄榄油5g≈45，米饭150g≈175，合计420"}
 备注中提到的替代/增减（如"不放糖"）以备注为准。''';
 
 const String kBurnEstSys = '''你是运动消耗估算助手。用户会描述一次实际做的运动（项目 + 时长/距离/强度，可能带备注）。
@@ -250,6 +270,47 @@ String _extractGeminiError(dynamic data, int? statusCode) {
   return httpErrorMsg(statusCode ?? 0);
 }
 
+/// 校准与对齐 AI 返回的总热量与拆解详情，确保 100% 绝对一致，消除前后打架
+(int, String) reconcileCalorieAndDetail(int rawCal, String? rawDetail) {
+  var detail = (rawDetail ?? '').trim();
+  if (detail.isEmpty) {
+    return (rawCal, '总热量约 $rawCal kcal');
+  }
+
+  // 匹配 detail 末尾或其中的合计表达，如：
+  // "合计161", "合计 161", "合计约161", "合计：161", "总计 161", "共计161", "共约 161", "＝161", "= 161"
+  final sumRegex = RegExp(
+    r'(?:合计|总计|共计|共约|合计约|总计约|小计|＝|=)\s*[:：]?\s*≈?\s*(\d+)\s*(?:kcal|大卡)?',
+    caseSensitive: false,
+  );
+
+  final matches = sumRegex.allMatches(detail).toList();
+  if (matches.isNotEmpty) {
+    final lastMatch = matches.last;
+    final parsedCal = int.tryParse(lastMatch.group(1) ?? '');
+    if (parsedCal != null && parsedCal > 0) {
+      if (parsedCal != rawCal) {
+        // 当 detail 的合计值与顶层 calories 字段不一致时：
+        // 若差异在合理范围（<=150 kcal 或 25% 比例内），说明 detail 的分项累加推导更细致，以 detail 的加总值为准
+        final diff = (parsedCal - rawCal).abs();
+        if (diff <= 150 || (rawCal > 0 && diff / rawCal <= 0.25)) {
+          rawCal = parsedCal;
+        } else {
+          // 若差异过大，强制将 detail 末尾的合计修正为 rawCal，确保两者绝对一致
+          detail = '${detail.substring(0, lastMatch.start)}合计 $rawCal kcal${detail.substring(lastMatch.end)}';
+        }
+      }
+    }
+  } else {
+    // 若 detail 没写合计后缀，且含有多项拆解，自动在末尾追加规范合计
+    if (detail.contains('+') || detail.contains('，') || detail.contains(',') || detail.contains('≈')) {
+      detail = '$detail，合计约 $rawCal kcal';
+    }
+  }
+
+  return (rawCal, detail);
+}
+
 class AiService {
   AiService._();
   static final AiService instance = AiService._();
@@ -415,13 +476,15 @@ class AiService {
     if (obj == null) throw Exception('AI 返回格式异常，请手动录入热量');
     final cal = num.tryParse('${obj['calories']}');
     if (cal == null || cal < 0 || cal > 20000) throw Exception('AI 返回的热量数值异常，请手动录入');
+    final reconciled = reconcileCalorieAndDetail(cal.round(), obj['detail'] as String?);
     return {
       'name': (obj['name'] is String && (obj['name'] as String).isNotEmpty) ? obj['name'] : '食物',
-      'calories': cal.round(),
+      'calories': reconciled.$1,
       'protein': num.tryParse('${obj['protein']}')?.round(),
       'carbs': num.tryParse('${obj['carbs']}')?.round(),
       'fat': num.tryParse('${obj['fat']}')?.round(),
       'unit': obj['unit'] is String ? obj['unit'] : '',
+      'detail': reconciled.$2,
       'confidence': obj['confidence'] is num ? obj['confidence'] : 0.5,
     };
   }
@@ -466,12 +529,13 @@ class AiService {
     if (obj == null) throw Exception('AI 返回格式异常，请手动填写热量');
     final cal = num.tryParse('${obj['calories']}');
     if (cal == null || cal < 0 || cal > 5000) throw Exception('AI 估算的热量超出合理范围，请手动填写');
+    final reconciled = reconcileCalorieAndDetail(cal.round(), obj['detail'] as String?);
     return {
-      'calories': cal.round(),
+      'calories': reconciled.$1,
       'protein': num.tryParse('${obj['protein']}')?.round(),
       'carbs': num.tryParse('${obj['carbs']}')?.round(),
       'fat': num.tryParse('${obj['fat']}')?.round(),
-      'detail': obj['detail'] is String ? obj['detail'] : '',
+      'detail': reconciled.$2,
     };
   }
 
@@ -492,12 +556,13 @@ class AiService {
     if (obj == null) throw Exception('AI 返回格式异常，请手动填写热量');
     final cal = num.tryParse('${obj['calories']}');
     if (cal == null || cal < 0 || cal > 5000) throw Exception('AI 估算的热量超出合理范围，请手动填写');
+    final reconciled = reconcileCalorieAndDetail(cal.round(), obj['detail'] as String?);
     return {
-      'calories': cal.round(),
+      'calories': reconciled.$1,
       'protein': num.tryParse('${obj['protein']}')?.round(),
       'carbs': num.tryParse('${obj['carbs']}')?.round(),
       'fat': num.tryParse('${obj['fat']}')?.round(),
-      'detail': obj['detail'] is String ? obj['detail'] : '',
+      'detail': reconciled.$2,
     };
   }
 
