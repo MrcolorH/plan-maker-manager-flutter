@@ -2,6 +2,8 @@
 /// 结构与旧版 food-db.js 完全一致
 library;
 
+import '../models/records.dart';
+
 class FoodItem {
   final String id;
   final String name;
@@ -67,8 +69,9 @@ class FoodMatchResult {
   final int? totalFat;
   final String calculationDetail; // 如 "590 kcal/1个 × 0.5个 = 295 kcal"
   final bool isUserCustom;
+  final List<FoodBreakdownItem> breakdownItems;
 
-  const FoodMatchResult({
+  FoodMatchResult({
     required this.food,
     required this.quantity,
     required this.quantityText,
@@ -78,7 +81,15 @@ class FoodMatchResult {
     this.totalFat,
     required this.calculationDetail,
     required this.isUserCustom,
-  });
+    List<FoodBreakdownItem>? breakdownItems,
+  }) : breakdownItems = breakdownItems ??
+            [
+              FoodBreakdownItem(
+                name: food.name,
+                portion: quantityText,
+                calories: totalCalories,
+              ),
+            ];
 }
 
 const List<FoodItem> kFoodDb = [
@@ -398,6 +409,13 @@ FoodMatchResult _combineMatchResults(List<FoodMatchResult> results) {
     totalFat: hasF ? totalF : null,
     calculationDetail: detail,
     isUserCustom: isUserCustom,
+    breakdownItems: results
+        .map((r) => FoodBreakdownItem(
+              name: r.food.name,
+              portion: r.quantityText,
+              calories: r.totalCalories,
+            ))
+        .toList(),
   );
 }
 

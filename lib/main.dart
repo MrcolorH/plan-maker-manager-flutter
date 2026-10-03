@@ -12,6 +12,7 @@ import 'providers/plan_provider.dart';
 import 'providers/preset_provider.dart';
 import 'providers/record_provider.dart';
 import 'providers/settings_provider.dart';
+import 'providers/theme_provider.dart';
 import 'providers/usage_provider.dart';
 import 'services/auto_backup_service.dart';
 import 'services/reminder_service.dart';
@@ -41,6 +42,7 @@ class _JianfeiDaziAppState extends State<JianfeiDaziApp> {
   late final PlanProvider planProvider;
   late final OnboardingProvider onboardingProvider;
   late final PresetProvider presetProvider;
+  late final ThemeProvider themeProvider;
   late final AutoBackupService autoBackup;
 
   @override
@@ -52,6 +54,7 @@ class _JianfeiDaziAppState extends State<JianfeiDaziApp> {
     usageProvider = UsageProvider(storage);
     recordProvider = RecordProvider(storage);
     presetProvider = PresetProvider();
+    themeProvider = ThemeProvider(storage);
     settingsProvider = SettingsProvider(
       storage,
       reminder,
@@ -84,12 +87,17 @@ class _JianfeiDaziAppState extends State<JianfeiDaziApp> {
         ChangeNotifierProvider.value(value: planProvider),
         ChangeNotifierProvider.value(value: onboardingProvider),
         ChangeNotifierProvider.value(value: presetProvider),
+        ChangeNotifierProvider.value(value: themeProvider),
       ],
-      child: MaterialApp(
-        title: '知轻',
-        debugShowCheckedModeBanner: false,
-        theme: AppTheme.light,
-        home: const MainShell(),
+      child: Consumer<ThemeProvider>(
+        builder: (context, themeP, _) {
+          return MaterialApp(
+            title: '知轻',
+            debugShowCheckedModeBanner: false,
+            theme: AppTheme.createTheme(themeP.currentTheme),
+            home: const MainShell(),
+          );
+        },
       ),
     );
   }

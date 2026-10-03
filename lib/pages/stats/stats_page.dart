@@ -48,7 +48,7 @@ class _StatsPageState extends State<StatsPage> {
 
     if (!plan.hasPlan) {
       return Scaffold(
-        backgroundColor: AppColors.bg,
+        backgroundColor: Colors.transparent,
         body: SafeArea(
           child: Column(
             children: const [
@@ -69,10 +69,10 @@ class _StatsPageState extends State<StatsPage> {
     final monthD = monthData(plan, records.store, _month.year, _month.month);
 
     return Scaffold(
-      backgroundColor: AppColors.bg,
+      backgroundColor: Colors.transparent,
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.only(bottom: 24),
+          padding: const EdgeInsets.only(bottom: 96),
           children: [
             const AppPageTitle(),
             _streakCard(streak, totalDays),

@@ -1,12 +1,18 @@
 /// 应用主题：复刻旧版 uni-app 配色规范（柔和绿 + 米白背景 + 橙色数字点缀）
 library;
 
+import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../models/theme_config.dart';
+import '../providers/theme_provider.dart';
 
 class AppColors {
-  // 主色（柔和灰绿）
+  // 主色（柔和灰绿，默认预设兜底）
   static const Color primary = Color(0xFF5BA47C); // 主绿
   static const Color primaryDisabled = Color(0xFFC9DFD3);
   static const Color primaryBg = Color(0xFFE9F3ED); // 浅绿底（chips/完成态卡片）
@@ -30,24 +36,26 @@ class AppColors {
 }
 
 class AppTheme {
-  static ThemeData get light {
+  static ThemeData get light => createTheme(kPresetThemes.first);
+
+  static ThemeData createTheme(ThemeConfig config) {
     final base = ThemeData(
       useMaterial3: false,
       colorScheme: ColorScheme.fromSeed(
-        seedColor: AppColors.primary,
-        primary: AppColors.primary,
+        seedColor: config.primaryColor,
+        primary: config.primaryColor,
         surface: AppColors.card,
       ),
-      scaffoldBackgroundColor: AppColors.bg,
-      fontFamily: null, // 使用系统字体（iOS: PingFang SC）
+      scaffoldBackgroundColor: Colors.transparent, // 设为透明以透出二次元背景壁纸
+      fontFamily: null,
     );
     return base.copyWith(
-      appBarTheme: const AppBarTheme(
-        backgroundColor: AppColors.bg,
+      appBarTheme: AppBarTheme(
+        backgroundColor: Colors.transparent, // AppBar 透明
         foregroundColor: AppColors.text,
         elevation: 0,
         centerTitle: true,
-        titleTextStyle: TextStyle(color: AppColors.text, fontSize: 17, fontWeight: FontWeight.w600),
+        titleTextStyle: const TextStyle(color: AppColors.text, fontSize: 17, fontWeight: FontWeight.w600),
       ),
       cardTheme: const CardThemeData(
         color: AppColors.card,
@@ -57,8 +65,6 @@ class AppTheme {
       ),
       dividerTheme: const DividerThemeData(color: Color(0xFFEFEFEA), thickness: 0.5),
       snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
-      // ---- 降低动画强度：去掉水波纹扩散，只留一次性淡灰高亮作为点击反馈 ----
-      // 列表里的 InkWell 在滚动时会持续计算 splash 动画，是低端机掉帧的常见来源
       splashFactory: NoSplash.splashFactory,
       splashColor: Colors.transparent,
       highlightColor: const Color(0x143C3C3E),
@@ -126,11 +132,17 @@ class AppPageTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = context.themeConfig;
+    final isDark = theme.pageBgColor.computeLuminance() < 0.5;
+    final textColor = isDark ? Colors.white.withValues(alpha: 0.95) : AppColors.text;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(0, 14, 0, 6),
       child: Center(
-        child: Text(title,
-            style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w600, color: AppColors.text)),
+        child: Text(
+          title,
+          style: TextStyle(fontSize: 19, fontWeight: FontWeight.w600, color: textColor),
+        ),
       ),
     );
   }
@@ -250,7 +262,7 @@ class DashedAddButton extends StatelessWidget {
   }
 }
 
-/// 通用卡片容器（对应 .card）
+/// 通用卡片容器（对应 .card，支持二次元主题半透明与毛玻璃质感）
 class AppCard extends StatelessWidget {
   final Widget child;
   final EdgeInsetsGeometry? padding;
@@ -260,18 +272,134 @@ class AppCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    ThemeConfig? theme;
+    try {
+      theme = context.watch<ThemeProvider>().currentTheme;
+    } catch (_) {}
+
+    final bool isGlass = theme?.useGlassmorphism ?? true;
+    final double cardOpacity = isGlass ? (theme?.cardOpacity ?? 0.92) : 1.0;
+    final cardColor = Colors.white.withValues(alpha: cardOpacity.clamp(0.5, 1.0));
+    final border = (isGlass && cardOpacity < 0.98)
+        ? Border.all(color: Colors.white.withValues(alpha: 0.8), width: 1.2)
+        : null;
+    final customCardBg = theme?.customCardBgPath;
+    Widget cardBody = child;
+    if (customCardBg != null && customCardBg.isNotEmpty && File(customCardBg).existsSync()) {
+      cardBody = Stack(
+        children: [
+          Positioned.fill(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(16),
+              child: Opacity(
+                opacity: 0.15,
+                child: Image.file(File(customCardBg), fit: BoxFit.cover),
+              ),
+            ),
+          ),
+          child,
+        ],
+      );
+    }
+
     final content = Container(
       padding: padding ?? const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppColors.card,
+        color: cardColor,
         borderRadius: BorderRadius.circular(16),
+        border: border,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.035),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
       ),
-      child: child,
+      child: cardBody,
     );
-    final withMargin = Container(margin: margin ?? const EdgeInsets.only(left: 16, right: 16, bottom: 10), child: content);
+    final withMargin = Container(
+      margin: margin ?? const EdgeInsets.only(left: 16, right: 16, bottom: 10),
+      child: content,
+    );
     if (onTap == null) return withMargin;
     return GestureDetector(onTap: onTap, child: withMargin);
   }
+}
+
+/// 全局二次元背景容器组件（挂载于各页面或 MainShell 底层）
+class ThemedBackgroundContainer extends StatelessWidget {
+  final Widget child;
+  final ui.Image? overrideBgImage;
+
+  const ThemedBackgroundContainer({super.key, required this.child, this.overrideBgImage});
+
+  @override
+  Widget build(BuildContext context) {
+    ThemeConfig? theme;
+    try {
+      theme = context.watch<ThemeProvider>().currentTheme;
+    } catch (_) {}
+
+    final customPath = theme?.customBgPath;
+    final assetPath = theme?.assetBgPath;
+    final bgOpacity = theme?.bgOpacity ?? 0.0;
+    final pageBgColor = theme?.pageBgColor ?? AppColors.bg;
+
+    Widget? bgImage;
+    if (overrideBgImage != null) {
+      bgImage = RawImage(
+        image: overrideBgImage,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+      );
+    } else if (customPath != null && customPath.isNotEmpty && File(customPath).existsSync()) {
+      bgImage = Image.file(
+        File(customPath),
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+      );
+    } else if (assetPath != null && assetPath.isNotEmpty) {
+      bgImage = Image.asset(
+        assetPath,
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+      );
+    }
+
+    return Container(
+      color: pageBgColor,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (bgImage != null && bgOpacity > 0.005)
+            Opacity(
+              opacity: bgOpacity,
+              child: bgImage,
+            ),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+/// 便捷扩展：通过 context 快速访问当前动态主题色
+extension ThemeContextExtension on BuildContext {
+  ThemeConfig get themeConfig {
+    try {
+      return watch<ThemeProvider>().currentTheme;
+    } catch (_) {
+      return kPresetThemes.first;
+    }
+  }
+
+  Color get primaryColor => themeConfig.primaryColor;
+  Color get primaryBgColor => themeConfig.primaryBgColor;
+  Color get orangeColor => themeConfig.orangeColor;
 }
 
 /// 区块标题（对应 .section-title）

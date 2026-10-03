@@ -9,6 +9,7 @@ import 'package:flutter/foundation.dart' show debugPrint;
 
 import '../data/templates.dart';
 import '../models/onboarding.dart';
+import '../models/records.dart';
 import '../models/settings.dart';
 import '../utils/date_utils.dart';
 
@@ -42,8 +43,13 @@ const String kMealEstSys = '''你是减脂临床营养与食物成分分析专�
 3. 严格核验能量守恒：总热量必须约等于 (蛋白质*4 + 碳水*4 + 脂肪*9)；
 4. 【总计数值绝对一致（严禁前后矛盾）】：
    calories 字段数值必须与 detail 拆解文本结尾的「合计 XXX」数值 100% 完全相同！detail 内部各项数值相加之和也必须严格等于该合计，绝对不允许 detail 里的合计与 calories 字段出现任何偏差！
-5. 严格只返回一个 JSON 对象，不要输出任何其他文字或代码块：
-{"calories":实际总热量整数kcal,"protein":蛋白质整数g,"carbs":碳水整数g,"fat":脂肪整数g,"detail":"一句话分项拆解，如：米饭100g≈116，炒茄子1/4盘(含油约2.5g)≈45，合计161"}
+5. 【拆分成分明细列表】：
+   识别出该餐实际包含的所有主要食物/食材（如米饭、去皮鸡肉、青椒、烹调用油等），输出在 items 数组中，每项包含：
+   - name: 食物/食材名称（如"米饭"、"鸡胸肉"）
+   - portion: 估算重量或份量描述（如"150g"、"半盘"、"1个"）
+   - calories: 该项预估热量整数（kcal）
+6. 严格只返回一个 JSON 对象，不要输出任何其他文字或代码块：
+{"calories":实际总热量整数kcal,"protein":蛋白质整数g,"carbs":碳水整数g,"fat":脂肪整数g,"items":[{"name":"食物名","portion":"估算重量或份量","calories":该项热量整数}],"detail":"一句话分项拆解，如：米饭100g≈116，炒茄子1/4盘(含油约2.5g)≈45，合计161"}
 描述模糊时按常规份量估算。''';
 
 /// FR6.9：计划条目编辑器专用——输入是结构化食材清单（含用量）+ 做法步骤，非口语描述
@@ -513,7 +519,112 @@ class AiService {
     await queryCalorie(config, '一个水煮蛋', onUsage: onUsage);
   }
 
-  /// 一餐实际热量与三大营养素估算（支持"计划+少了什么"的口语描述及深度思考），resolve { calories, protein, carbs, fat, detail }
+  /// 从文本描述中容错解析食物拆解明细表格（兜底与历史兼容）
+  static List<FoodBreakdownItem> parseBreakdownFromText(String? text) {
+    if (text == null || text.trim().isEmpty) return const [];
+    final clean = text.trim();
+    final content = clean.replaceAll(RegExp(r'^(?:AI\s*拆解|食物库(?:组合|命中)?|分项拆解)[：:]\s*'), '');
+
+    // 括号感知的顶层切分（避免切碎括号内的逗号，如 "牛肉面(1碗, 550kcal)"）
+    final segments = <String>[];
+    var depth = 0;
+    var current = StringBuffer();
+    for (var i = 0; i < content.length; i++) {
+      final char = content[i];
+      if (char == '(' || char == '（') {
+        depth++;
+        current.write(char);
+      } else if (char == ')' || char == '）') {
+        if (depth > 0) depth--;
+        current.write(char);
+      } else if (depth == 0 && (char == '，' || char == ',' || char == ';' || char == '；' || char == '+' || char == '\n' || char == '\r')) {
+        final s = current.toString().trim();
+        if (s.isNotEmpty) segments.add(s);
+        current = StringBuffer();
+      } else {
+        current.write(char);
+      }
+    }
+    final rem = current.toString().trim();
+    if (rem.isNotEmpty) segments.add(rem);
+
+    final results = <FoodBreakdownItem>[];
+
+    for (final rawSeg in segments) {
+      final seg = rawSeg.trim();
+      if (seg.isEmpty) continue;
+      if (RegExp(r'^(?:合计|总计|共计)\s*(?:约|≈)?\s*\d+').hasMatch(seg)) continue;
+
+      // 1. 本地食物库格式：如 "牛肉面(1碗, 550kcal)" 或 "葡式蛋挞(1个, 290kcal)"
+      final mDb = RegExp(r'^([^\(（]+)[\(（]([^\,，]+)[\,，]\s*(\d+)\s*(?:kcal)?[\)）]?$', caseSensitive: false).firstMatch(seg);
+      if (mDb != null) {
+        final name = mDb.group(1)?.trim() ?? '';
+        final portion = mDb.group(2)?.trim() ?? '';
+        final cal = int.tryParse(mDb.group(3) ?? '') ?? 0;
+        if (name.isNotEmpty) {
+          results.add(FoodBreakdownItem(name: name, portion: portion, calories: cal));
+          continue;
+        }
+      }
+
+      // 2. 带 ≈、=、: 的拆解格式，如 "米饭100g≈116" 或 "炒茄子1/4盘(含油约2.5g)≈45" 或 "鸡胸肉150g≈200(P45g)"
+      // 从后往前找最后一个分隔符（避免食物括号内备注中的冒号等干扰）
+      final allSeps = RegExp(r'[≈=：:]').allMatches(seg).toList();
+      if (allSeps.isNotEmpty) {
+        final lastSep = allSeps.last;
+        final left = seg.substring(0, lastSep.start).trim();
+        final right = seg.substring(lastSep.end).trim();
+        final calMatch = RegExp(r'^\s*(\d+)').firstMatch(right);
+        if (calMatch != null) {
+          final cal = int.tryParse(calMatch.group(1) ?? '') ?? 0;
+          final pMatch = RegExp(r'([\d\.\/]+[^\d\s\(\)（）]+(?:\([^\)]+\)|（[^）]+）)?)\s*$').firstMatch(left);
+          if (pMatch != null) {
+            final portion = pMatch.group(1)?.trim() ?? '';
+            final name = left.substring(0, pMatch.start).trim();
+            results.add(FoodBreakdownItem(
+              name: name.isNotEmpty ? name : left,
+              portion: portion,
+              calories: cal,
+            ));
+            continue;
+          } else {
+            results.add(FoodBreakdownItem(name: left, portion: '', calories: cal));
+            continue;
+          }
+        }
+      }
+
+      // 3. 通用兜底：提取末尾数字为热量
+      final endCal = RegExp(r'(\d+)\s*(?:kcal)?\s*$', caseSensitive: false).firstMatch(seg);
+      if (endCal != null) {
+        final cal = int.tryParse(endCal.group(1) ?? '') ?? 0;
+        final left = seg.substring(0, endCal.start).trim();
+        results.add(FoodBreakdownItem(name: left, portion: '', calories: cal));
+      }
+    }
+    return results;
+  }
+
+  /// 提取/转换 AI 返回的 items 结构，若缺失则降级从 detail 文本解析
+  static List<FoodBreakdownItem> parseBreakdownItems(dynamic rawItems, String? fallbackDetail) {
+    if (rawItems is List && rawItems.isNotEmpty) {
+      final list = <FoodBreakdownItem>[];
+      for (final it in rawItems) {
+        if (it is Map) {
+          final name = '${it['name'] ?? ''}'.trim();
+          final portion = '${it['portion'] ?? it['weight'] ?? ''}'.trim();
+          final cal = num.tryParse('${it['calories']}')?.round() ?? 0;
+          if (name.isNotEmpty) {
+            list.add(FoodBreakdownItem(name: name, portion: portion, calories: cal));
+          }
+        }
+      }
+      if (list.isNotEmpty) return list;
+    }
+    return parseBreakdownFromText(fallbackDetail);
+  }
+
+  /// 一餐实际热量与三大营养素估算（支持"计划+少了什么"的口语描述及深度思考），resolve { calories, protein, carbs, fat, detail, items }
   Future<Map<String, dynamic>> estimateMeal(AiConfig config, String desc,
       {bool enableThinking = false, void Function(Map<String, dynamic>)? onUsage}) async {
     final content = await chat(
@@ -530,12 +641,14 @@ class AiService {
     final cal = num.tryParse('${obj['calories']}');
     if (cal == null || cal < 0 || cal > 5000) throw Exception('AI 估算的热量超出合理范围，请手动填写');
     final reconciled = reconcileCalorieAndDetail(cal.round(), obj['detail'] as String?);
+    final items = parseBreakdownItems(obj['items'], reconciled.$2);
     return {
       'calories': reconciled.$1,
       'protein': num.tryParse('${obj['protein']}')?.round(),
       'carbs': num.tryParse('${obj['carbs']}')?.round(),
       'fat': num.tryParse('${obj['fat']}')?.round(),
       'detail': reconciled.$2,
+      'items': items,
     };
   }
 

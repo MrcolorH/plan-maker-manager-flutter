@@ -60,7 +60,7 @@ class _PlanPageState extends State<PlanPage> {
   Widget build(BuildContext context) {
     final plan = context.watch<PlanProvider>().plan;
     return Scaffold(
-      backgroundColor: AppColors.bg,
+      backgroundColor: Colors.transparent,
       body: SafeArea(
         child: Column(
           children: [
@@ -165,7 +165,7 @@ class _PlanPageState extends State<PlanPage> {
   Widget _body(BuildContext context, PlanData plan) {
     if (!plan.hasPlan) {
       return ListView(
-        padding: const EdgeInsets.only(top: 24),
+        padding: const EdgeInsets.fromLTRB(0, 24, 0, 96),
         children: [
           const EmptyState(icon: '📋', text: '还没有计划', subText: '导入或创建计划后，这里会展示全部条目'),
           Padding(
@@ -199,7 +199,7 @@ class _PlanPageState extends State<PlanPage> {
         ),
         Expanded(
           child: ListView(
-            padding: const EdgeInsets.only(bottom: 16),
+            padding: const EdgeInsets.only(bottom: 96),
             children: [
               if (_section == 'meal' && list.isEmpty)
                 const Padding(

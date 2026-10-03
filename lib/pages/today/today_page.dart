@@ -2,6 +2,9 @@
 /// 打卡、实际摄入调整（AI 估算）、临时加餐/运动录入
 library;
 
+import 'dart:io';
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -25,12 +28,15 @@ import '../../widgets/ai_config_sheet.dart';
 import '../../widgets/calorie_summary.dart';
 import '../../widgets/convert_to_plan_sheet.dart';
 import '../../widgets/exercise_card.dart';
+import '../../widgets/food_breakdown_table.dart';
 import '../../widgets/meal_card.dart';
 import '../food/food_add_page.dart';
 import '../item/item_detail_page.dart';
+import 'day_meal_detail_page.dart';
 
 class TodayPage extends StatelessWidget {
-  const TodayPage({super.key});
+  final ui.Image? overrideMascotImage;
+  const TodayPage({super.key, this.overrideMascotImage});
 
   @override
   Widget build(BuildContext context) {
@@ -66,9 +72,15 @@ class TodayPage extends StatelessWidget {
             : _planMealCal(plan, e.planItemId),
         checked: records.isEntryChecked(today, e),
         focused: _focusMatch(context, 'meal:${e.isPlan ? e.planItemId : e.id}'),
-        onTap: (e.isPlan && e.content.isNotEmpty)
-            ? () => _openDetail(context, 'meal', e.planItemId)
-            : () => _openEditDialog(context, e),
+        onTap: () {
+          if (e.content.isEmpty) {
+            _openEditDialog(context, e);
+          } else if (e.detached || !e.isPlan) {
+            _openDayMealDetail(context, e);
+          } else {
+            _openDetail(context, 'meal', e.planItemId);
+          }
+        },
         onCheck: e.content.isNotEmpty
             ? () => context.read<RecordProvider>().toggleEntryCheck(today, e)
             : null,
@@ -120,24 +132,32 @@ class TodayPage extends StatelessWidget {
         onRefresh: () async => context.read<AppProvider>().refreshToday(),
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.only(bottom: 24),
+          padding: const EdgeInsets.only(bottom: 96),
           children: [
             // 顶部居中标题
             const AppPageTitle(),
-            // 顶栏：日期 + 完成度
+            // 顶栏：日期 + 完成度 + 看板娘点缀
             Padding(
               padding: const EdgeInsets.fromLTRB(18, 4, 18, 4),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(
-                    dateCn(today),
-                    style: const TextStyle(fontSize: 19, fontWeight: FontWeight.bold, color: AppColors.text),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          dateCn(today),
+                          style: const TextStyle(fontSize: 19, fontWeight: FontWeight.bold, color: AppColors.text),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          taskCount > 0 ? '$doneCount/$taskCount 已完成' : (doneCount > 0 ? '已打卡 $doneCount 项' : '自由记录'),
+                          style: TextStyle(fontSize: 13, color: context.primaryColor, fontWeight: FontWeight.w500),
+                        ),
+                      ],
+                    ),
                   ),
-                  Text(
-                    taskCount > 0 ? '$doneCount/$taskCount 已完成' : (doneCount > 0 ? '已打卡 $doneCount 项' : '自由记录'),
-                    style: const TextStyle(fontSize: 13, color: AppColors.primary),
-                  ),
+                  _AnimeMascotWidget(overrideImage: overrideMascotImage),
                 ],
               ),
             ),
@@ -195,7 +215,7 @@ class TodayPage extends StatelessWidget {
 
   Widget _scaffold(BuildContext context, {required Widget child}) {
     return Scaffold(
-      backgroundColor: AppColors.bg,
+      backgroundColor: Colors.transparent,
       body: SafeArea(child: child),
     );
   }
@@ -222,6 +242,16 @@ class TodayPage extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  void _openDayMealDetail(BuildContext context, DayEntry entry) {
+    Navigator.of(context).push(AppRoutes.fade<void>(
+      DayMealDetailPage(
+        date: todayStr(),
+        entry: entry,
+        onOpenEdit: () => _openEditDialog(context, entry),
+      ),
+    ));
   }
 
   void _openDetail(BuildContext context, String type, String id) {
@@ -325,6 +355,7 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
   bool _enableThinking = false;
   bool _syncToPlan = false;
   String? _aiDetail;
+  List<FoodBreakdownItem>? _breakdownItems;
 
   bool get _isEx => widget.entry.kind == 'exercise';
   bool get _isPlan => widget.entry.isPlan;
@@ -342,6 +373,13 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
     _fatCtrl =
         TextEditingController(text: widget.entry.fat != null ? '${widget.entry.fat}' : '');
     _noteCtrl = TextEditingController(text: widget.entry.note);
+
+    if (widget.entry.items != null && widget.entry.items!.isNotEmpty) {
+      _breakdownItems = List<FoodBreakdownItem>.from(widget.entry.items!);
+    } else if (widget.entry.detail != null && widget.entry.detail!.isNotEmpty) {
+      _breakdownItems = AiService.parseBreakdownFromText(widget.entry.detail);
+    }
+    _aiDetail = widget.entry.detail;
   }
 
   @override
@@ -405,6 +443,7 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
           if (matched.totalCarbs != null) _carbsCtrl.text = '${matched.totalCarbs}';
           if (matched.totalFat != null) _fatCtrl.text = '${matched.totalFat}';
           _aiDetail = '食物库命中：${matched.calculationDetail}';
+          _breakdownItems = matched.breakdownItems;
         });
         return;
       }
@@ -418,6 +457,7 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
           if (cached['carbs'] != null) _carbsCtrl.text = '${cached['carbs']}';
           if (cached['fat'] != null) _fatCtrl.text = '${cached['fat']}';
           _aiDetail = (cached['detail'] as String?) ?? '（已从本地常吃知识库秒级命中）';
+          _breakdownItems = AiService.parseBreakdownItems(cached['items'], cached['detail'] as String?);
         });
         return;
       }
@@ -446,6 +486,12 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
         if (r['carbs'] != null) _carbsCtrl.text = '${r['carbs']}';
         if (r['fat'] != null) _fatCtrl.text = '${r['fat']}';
         _aiDetail = r['detail'] as String?;
+        if (!_isEx) {
+          final items = r['items'] as List<FoodBreakdownItem>?;
+          _breakdownItems = (items != null && items.isNotEmpty)
+              ? items
+              : AiService.parseBreakdownFromText(r['detail'] as String?);
+        }
       });
       // 成功后自动沉淀为本地知识缓存
       if (!_isEx) {
@@ -489,6 +535,7 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
       _fatCtrl.text = m?.fat != null ? '${m!.fat}' : '';
       _noteCtrl.clear();
       _aiDetail = null;
+      _breakdownItems = null;
     });
   }
 
@@ -556,6 +603,8 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
       planItemId: old.planItemId,
       detached: detachedNow,
       caloriesDirty: dirtyNow,
+      detail: _aiDetail,
+      items: _breakdownItems,
     );
     final planProv = context.read<PlanProvider>();
     await records.updateDayEntry(date, updated);
@@ -770,12 +819,40 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
                 ],
               ),
             ],
-            if (_aiDetail != null)
+            if (_breakdownItems != null && _breakdownItems!.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  const Icon(Icons.table_chart_outlined, size: 14, color: AppColors.primary),
+                  const SizedBox(width: 4),
+                  const Text(
+                    '成分与热量拆解',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.text),
+                  ),
+                  const Spacer(),
+                  if (_aiDetail != null && _aiDetail!.isNotEmpty)
+                    Flexible(
+                      child: Text(
+                        _aiDetail!,
+                        style: const TextStyle(fontSize: 10, color: AppColors.textSub),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              FoodBreakdownTable(
+                items: _breakdownItems!,
+                compact: true,
+                totalCalories: int.tryParse(_calCtrl.text.trim()),
+              ),
+            ] else if (_aiDetail != null && _aiDetail!.isNotEmpty) ...[
               Padding(
                 padding: const EdgeInsets.only(top: 6),
                 child: Text('AI 拆解：$_aiDetail',
                     style: const TextStyle(fontSize: 12, color: AppColors.textSub)),
               ),
+            ],
             const SizedBox(height: 8),
             TextField(
               controller: _noteCtrl,
@@ -1035,3 +1112,91 @@ class _ExerciseSheetState extends State<_ExerciseSheet> {
 }
 
 /// （虚线按钮已统一为 theme 里的 DashedAddButton）
+
+/// 萌系二次元看板娘点缀组件
+class _AnimeMascotWidget extends StatefulWidget {
+  final ui.Image? overrideImage;
+  const _AnimeMascotWidget({this.overrideImage});
+
+  @override
+  State<_AnimeMascotWidget> createState() => _AnimeMascotWidgetState();
+}
+
+class _AnimeMascotWidgetState extends State<_AnimeMascotWidget> {
+  static const _quotes = [
+    '今天也要元气满满哦！(๑•̀ㅂ•́)و✧',
+    '少喝一杯奶茶，离理想身材又近一步~ 🥤',
+    '吃饱了才有力气减脂，营养均衡最重要！🍱',
+    '坚持打卡，你流下的每滴汗水都不会被辜负✨',
+    '哇！今天的打卡做得很棒，继续保持哦！🎉',
+    '慢慢来，罗马不是一天建成的，身材也是~ 🌱',
+  ];
+  int _quoteIndex = 0;
+
+  void _tapMascot() {
+    setState(() {
+      _quoteIndex = (_quoteIndex + 1) % _quotes.length;
+    });
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Text('✨ ', style: TextStyle(fontSize: 16)),
+            Expanded(child: Text(_quotes[_quoteIndex])),
+          ],
+        ),
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final themeConfig = context.themeConfig;
+    final customMascot = themeConfig.customMascotPath;
+
+    Widget avatarWidget;
+    if (widget.overrideImage != null) {
+      avatarWidget = RawImage(image: widget.overrideImage, fit: BoxFit.cover);
+    } else if (customMascot != null &&
+        customMascot.isNotEmpty &&
+        File(customMascot).existsSync()) {
+      avatarWidget = Image.file(File(customMascot), fit: BoxFit.cover);
+    } else {
+      avatarWidget = Image.asset(
+        'assets/themes/mascot_chibi.jpg',
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) =>
+            const Icon(Icons.favorite, color: Colors.pinkAccent),
+      );
+    }
+
+    return GestureDetector(
+      onTap: _tapMascot,
+      child: Tooltip(
+        message: '知轻打气娘（点击打气）',
+        child: Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(color: context.primaryColor.withValues(alpha: 0.6), width: 2),
+            boxShadow: [
+              BoxShadow(
+                color: context.primaryColor.withValues(alpha: 0.2),
+                blurRadius: 8,
+                spreadRadius: 1,
+              ),
+            ],
+          ),
+          child: ClipOval(
+            child: avatarWidget,
+          ),
+        ),
+      ),
+    );
+  }
+}

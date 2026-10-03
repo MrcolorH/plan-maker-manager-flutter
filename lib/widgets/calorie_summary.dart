@@ -141,7 +141,7 @@ class CalorieSummary extends StatelessWidget {
     final showPlan = planned > 0;
     return Expanded(
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
         decoration: BoxDecoration(
           color: accent.withValues(alpha: 0.08),
           borderRadius: BorderRadius.circular(8),
@@ -152,10 +152,13 @@ class CalorieSummary extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(name, style: TextStyle(fontSize: 11, color: accent, fontWeight: FontWeight.w600)),
-                Text(
-                  showPlan ? '$current/${planned}g' : '${current}g',
-                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.text),
+                Text(name, style: TextStyle(fontSize: 10.5, color: accent, fontWeight: FontWeight.w600)),
+                Flexible(
+                  child: Text(
+                    showPlan ? '$current/${planned}g' : '${current}g',
+                    style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold, color: AppColors.text),
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
               ],
             ),

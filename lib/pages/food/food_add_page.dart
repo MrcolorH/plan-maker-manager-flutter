@@ -10,6 +10,7 @@ import 'package:provider/provider.dart';
 
 import '../../data/food_db.dart';
 import '../../models/preset_food.dart';
+import '../../models/records.dart';
 import '../../providers/preset_provider.dart';
 import '../../providers/record_provider.dart';
 import '../../providers/settings_provider.dart';
@@ -40,6 +41,7 @@ class _FoodAddPageState extends State<FoodAddPage> {
   String? _resDetail;
   String? _resSource; // '内置食物库' | '自定义食物库' | 'AI 大模型测算'
   bool _isMatchedFromDb = false;
+  List<FoodBreakdownItem>? _resItems;
 
   // 手动录入
   final TextEditingController _manualNameCtrl = TextEditingController();
@@ -70,6 +72,8 @@ class _FoodAddPageState extends State<FoodAddPage> {
     int? protein,
     int? carbs,
     int? fat,
+    String? detail,
+    List<FoodBreakdownItem>? items,
   }) async {
     await context.read<RecordProvider>().addDayEntry(
           todayStr(),
@@ -81,6 +85,8 @@ class _FoodAddPageState extends State<FoodAddPage> {
           carbs: carbs,
           fat: fat,
           source: source,
+          detail: detail,
+          items: items,
         );
     if (!mounted) return;
     ScaffoldMessenger.of(context)
@@ -341,6 +347,7 @@ class _FoodAddPageState extends State<FoodAddPage> {
               ? '自定义食物库'
               : (match.calculationDetail.contains(' + ') ? '食物库组合' : '内置食物库');
           _resDetail = match.calculationDetail;
+          _resItems = match.breakdownItems;
           _isMatchedFromDb = true;
         });
         return;
@@ -360,6 +367,7 @@ class _FoodAddPageState extends State<FoodAddPage> {
       _resName = null;
       _resDetail = null;
       _resSource = null;
+      _resItems = null;
       _isMatchedFromDb = false;
     });
 
@@ -387,6 +395,7 @@ class _FoodAddPageState extends State<FoodAddPage> {
         _resDetail = (detailText != null && detailText.isNotEmpty)
             ? 'AI 拆解：$detailText'
             : '置信度 ${(conf * 100).round()}%';
+        _resItems = AiService.parseBreakdownFromText(detailText);
         _isMatchedFromDb = false;
       });
       // 成功自动沉淀为 AI 缓存
@@ -413,7 +422,16 @@ class _FoodAddPageState extends State<FoodAddPage> {
     final f = int.tryParse(_fatCtrl.text.trim());
     final displayName = _resUnit != null ? '$name ($_resUnit)' : name;
 
-    await _addSnack(displayName, cal, _isMatchedFromDb ? 'fooddb' : 'ai', protein: p, carbs: c, fat: f);
+    await _addSnack(
+      displayName,
+      cal,
+      _isMatchedFromDb ? 'fooddb' : 'ai',
+      protein: p,
+      carbs: c,
+      fat: f,
+      detail: _resDetail,
+      items: _resItems,
+    );
 
     _descCtrl.clear();
     _calCtrl.clear();
@@ -426,6 +444,7 @@ class _FoodAddPageState extends State<FoodAddPage> {
         _resUnit = null;
         _resDetail = null;
         _resSource = null;
+        _resItems = null;
         _isMatchedFromDb = false;
       });
     }

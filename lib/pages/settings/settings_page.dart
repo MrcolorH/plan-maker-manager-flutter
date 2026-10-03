@@ -14,6 +14,7 @@ import '../../providers/plan_provider.dart';
 import '../../providers/record_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/usage_provider.dart';
+import '../../providers/theme_provider.dart';
 import '../../services/auto_backup_service.dart';
 import '../../services/backup_service.dart';
 import '../../services/reminder_service.dart';
@@ -24,6 +25,7 @@ import '../guide/guide_page.dart';
 import '../onboarding/onboarding_page.dart';
 import 'ai_config_page.dart';
 import 'backup_page.dart';
+import 'theme_settings_page.dart';
 
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key});
@@ -33,12 +35,22 @@ class SettingsPage extends StatelessWidget {
     final settings = context.watch<SettingsProvider>().settings;
     final profile = context.watch<OnboardingProvider>().state.profile;
     final records = context.watch<RecordProvider>().store;
+    final themeProvider = context.watch<ThemeProvider>();
     return Scaffold(
-      backgroundColor: AppColors.bg,
+      backgroundColor: Colors.transparent,
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.only(bottom: 24),
+          padding: const EdgeInsets.only(bottom: 96),
           children: [
+            const AppPageTitle(),
+            const _GroupLabel('个性化与外观'),
+            _Row(
+              '主题与壁纸',
+              themeProvider.currentConfig.name,
+              onTap: () => Navigator.of(context).push(
+                AppRoutes.fade<void>(const ThemeSettingsPage()),
+              ),
+            ),
             const _GroupLabel('热量'),
             // 两行仅展示：点击不再弹窗，统一走下方「更新数据」按钮
             _Row('基础消耗(TDEE)', '${settings.tdee} kcal'),
@@ -100,7 +112,7 @@ class SettingsPage extends StatelessWidget {
               Navigator.of(context).push(AppRoutes.fade<void>(const OnboardingPage()));
             }),
             const _GroupLabel('关于'),
-            const _Row('版本', '1.0.3'),
+            const _Row('版本', '1.0.1'),
             const _Row('作者', '听风闻人语'),
             _Row('QQ', '1419046431', onTap: () => _copyQQ(context, '1419046431')),
             const SizedBox(height: 12),
@@ -331,9 +343,37 @@ class _GroupLabel extends StatelessWidget {
   const _GroupLabel(this.text);
   @override
   Widget build(BuildContext context) {
+    final theme = context.themeConfig;
+    final isDark = theme.pageBgColor.computeLuminance() < 0.5;
+    final titleColor = isDark
+        ? Colors.white.withValues(alpha: 0.92)
+        : const Color(0xFF2C3238);
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 16, 18, 6),
-      child: Text(text, style: const TextStyle(fontSize: 12, color: AppColors.textSub, fontWeight: FontWeight.w600)),
+      padding: const EdgeInsets.fromLTRB(18, 16, 18, 8),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 3.5,
+            height: 13,
+            decoration: BoxDecoration(
+              color: theme.primaryColor,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(width: 7),
+          Text(
+            text,
+            style: TextStyle(
+              fontSize: 13,
+              color: titleColor,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.2,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -347,13 +387,23 @@ class _Row extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final themeConfig = context.themeConfig;
     return Container(
       margin: const EdgeInsets.only(left: 16, right: 16, bottom: 8),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Colors.white.withValues(alpha: themeConfig.cardOpacity),
         borderRadius: BorderRadius.circular(10),
-        border: danger ? Border.all(color: AppColors.danger) : null,
+        border: danger
+            ? Border.all(color: AppColors.danger)
+            : Border.all(color: Colors.white.withValues(alpha: 0.8), width: 0.8),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 6,
+            offset: const Offset(0, 1),
+          ),
+        ],
       ),
       child: InkWell(
         onTap: onTap,
@@ -383,10 +433,22 @@ class _SwitchRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final themeConfig = context.themeConfig;
     return Container(
       margin: const EdgeInsets.only(left: 16, right: 16, bottom: 8),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10)),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: themeConfig.cardOpacity),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.8), width: 0.8),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 6,
+            offset: const Offset(0, 1),
+          ),
+        ],
+      ),
       child: Row(
         children: [
           Expanded(
@@ -404,7 +466,7 @@ class _SwitchRow extends StatelessWidget {
           Switch(
             value: value,
             onChanged: onChanged,
-            activeThumbColor: AppColors.primary,
+            activeThumbColor: context.primaryColor,
           ),
         ],
       ),

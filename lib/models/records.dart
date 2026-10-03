@@ -64,6 +64,33 @@ class TempTask {
   bool get isExercise => type == 'exercise';
 }
 
+/// 食物拆解明细（吃了啥、估算份量/重量、估算热量）
+class FoodBreakdownItem {
+  final String name; // 食物/食材名称，如 "米饭"、"鸡胸肉"
+  final String portion; // 估算重量/份量，如 "150g"、"半盘"、"1个"
+  final int calories; // 估算热量，如 175
+
+  const FoodBreakdownItem({
+    required this.name,
+    required this.portion,
+    required this.calories,
+  });
+
+  factory FoodBreakdownItem.fromJson(Map<String, dynamic> json) => FoodBreakdownItem(
+        name: json['name'] is String ? json['name'] as String : '',
+        portion: json['portion'] is String
+            ? json['portion'] as String
+            : (json['weight'] is String ? json['weight'] as String : ''),
+        calories: json['calories'] is num ? (json['calories'] as num).round() : 0,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'portion': portion,
+        'calories': calories,
+      };
+}
+
 /// 当日条目快照（F11：计划 = 模板，快照 = 事实）
 /// 餐食与运动统一模型（kind 区分）；打卡状态不在此（仍在 checkRecords，键空间 meal:/exercise:/temp:）
 /// 字段口径：content = 食物内容/运动内容；calories = 餐摄入/运动消耗（null=待补录）
@@ -83,6 +110,8 @@ class DayEntry {
   String planItemId; // 关联计划项 id；'' 表示计划外
   bool detached;
   bool caloriesDirty;
+  String? detail; // AI 拆解/测算文本描述
+  List<FoodBreakdownItem>? items; // 食物与热量拆解表格明细
 
   DayEntry({
     required this.id,
@@ -99,6 +128,8 @@ class DayEntry {
     this.planItemId = '',
     this.detached = false,
     this.caloriesDirty = false,
+    this.detail,
+    this.items,
   });
 
   factory DayEntry.fromJson(Map<String, dynamic> json) => DayEntry(
@@ -116,6 +147,11 @@ class DayEntry {
         planItemId: _str(json['planItemId']),
         detached: json['detached'] is bool ? json['detached'] as bool : false,
         caloriesDirty: json['caloriesDirty'] is bool ? json['caloriesDirty'] as bool : false,
+        detail: json['detail'] is String ? json['detail'] as String : null,
+        items: (json['items'] as List?)
+            ?.map((e) => e is Map ? FoodBreakdownItem.fromJson(Map<String, dynamic>.from(e)) : null)
+            .whereType<FoodBreakdownItem>()
+            .toList(),
       );
 
   Map<String, dynamic> toJson() => {
@@ -133,6 +169,8 @@ class DayEntry {
         'planItemId': planItemId,
         'detached': detached,
         'caloriesDirty': caloriesDirty,
+        if (detail != null) 'detail': detail,
+        if (items != null) 'items': items!.map((e) => e.toJson()).toList(),
       };
 
   /// 是否计划来源条目

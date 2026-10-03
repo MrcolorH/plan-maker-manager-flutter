@@ -360,6 +360,8 @@ class RecordProvider extends ChangeNotifier {
     String? time,
     String note = '',
     String source = 'manual',
+    String? detail,
+    List<FoodBreakdownItem>? items,
   }) async {
     final list = store.dayEntries.putIfAbsent(date, () => []);
     list.add(DayEntry(
@@ -377,6 +379,8 @@ class RecordProvider extends ChangeNotifier {
       planItemId: '',
       detached: true,
       caloriesDirty: true,
+      detail: detail,
+      items: items,
     ));
     sortDayEntries(list);
     notifyListeners();
