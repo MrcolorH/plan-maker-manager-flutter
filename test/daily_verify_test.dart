@@ -361,5 +361,22 @@ void main() {
       final exercise = provider.store.dayEntries[date]!.last;
       expect(provider.isEntryChecked(date, exercise), isTrue);
     });
+
+    test('加餐天然恒为已打卡，即使 checkRecords 无记录也是已打卡事实', () {
+      const date = '2026-10-06';
+      final legacySnack = DayEntry(
+        id: 'legacy_snack_1',
+        kind: 'meal',
+        slot: 'snack',
+        content: '吃了一个苹果',
+        calories: 90,
+      );
+
+      // checkRecords 中没有任何记录
+      expect(provider.store.checkRecords[date], isNull);
+
+      // 加餐必须恒为已打卡（吃了才录入加餐，不存在未打卡的加餐）
+      expect(provider.isEntryChecked(date, legacySnack), isTrue);
+    });
   });
 }

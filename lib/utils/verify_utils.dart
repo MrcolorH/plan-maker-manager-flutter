@@ -72,7 +72,7 @@ class VerifyUtils {
   /// 判定某条目是否属于今日已实际执行并计入统计的事实条目：
   /// - 预设计划项（isPlan）：用户可能未执行或换别的内容，未打卡坚决不计入今日统计；
   /// - 计划外正餐（早中晚）：必须有内容且已完成打卡；
-  /// - 临时加餐与临时运动：必须有实质内容（非空白项）。
+  /// - 临时加餐与临时运动：吃了/练了才录入，天然恒为已打卡事实，有实质内容即计入。
   static bool isEffectiveEntry(DayEntry e, bool isChecked) {
     if (e.isPlan) {
       return isChecked;
@@ -80,6 +80,7 @@ class VerifyUtils {
     if (e.kind == 'meal' && e.slot != 'snack') {
       return isChecked && e.content.trim().isNotEmpty;
     }
+    // 加餐与临时运动：吃了才录入，不存在未打卡加餐
     return e.content.trim().isNotEmpty;
   }
 

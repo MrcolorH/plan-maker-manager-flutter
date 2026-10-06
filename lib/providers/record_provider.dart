@@ -479,11 +479,20 @@ class RecordProvider extends ChangeNotifier {
     return 'temp:${e.id}';
   }
 
-  bool isEntryChecked(String date, DayEntry e) =>
-      store.checkRecords[date]?.containsKey(checkKeyOf(e)) ?? false;
+  bool isEntryChecked(String date, DayEntry e) {
+    // 业务铁律：加餐吃了才录入，录入即事实，天然恒为已打卡（不存在未打卡的加餐）
+    if (e.slot == 'snack') return true;
+    // 计划外临时运动录入即事实，天然恒为已打卡
+    if (!e.isPlan && e.kind == 'exercise') return true;
+    return store.checkRecords[date]?.containsKey(checkKeyOf(e)) ?? false;
+  }
 
-  /// 对任意快照条目进行打卡/取消打卡（支持计划条目与计划外正餐/加餐）
+  /// 对任意快照条目进行打卡/取消打卡（支持计划条目与计划外正餐）
   Future<bool> toggleEntryCheck(String date, DayEntry e) async {
+    // 临时加餐与临时运动无需切换打卡，始终为已完成状态（如有误用户直接删除）
+    if (e.slot == 'snack' || (!e.isPlan && e.kind == 'exercise')) {
+      return true;
+    }
     final key = checkKeyOf(e);
     final colonIdx = key.indexOf(':');
     final type = colonIdx > 0 ? key.substring(0, colonIdx) : 'temp';
