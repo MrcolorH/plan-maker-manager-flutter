@@ -32,6 +32,7 @@ import '../../widgets/food_breakdown_table.dart';
 import '../../widgets/meal_card.dart';
 import '../food/food_add_page.dart';
 import '../item/item_detail_page.dart';
+import 'daily_verify_page.dart';
 import 'day_meal_detail_page.dart';
 
 class TodayPage extends StatelessWidget {
@@ -173,6 +174,7 @@ class TodayPage extends StatelessWidget {
               plannedProtein: summary.plannedProtein,
               plannedCarbs: summary.plannedCarbs,
               plannedFat: summary.plannedFat,
+              onVerify: () => _openDailyVerify(context),
             ),
             // 今日餐食
             const SectionTitle('今日餐食'),
@@ -242,6 +244,12 @@ class TodayPage extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  void _openDailyVerify(BuildContext context) {
+    Navigator.of(context).push(AppRoutes.fade<void>(
+      DailyVerifyPage(date: todayStr()),
+    ));
   }
 
   void _openDayMealDetail(BuildContext context, DayEntry entry) {

@@ -19,6 +19,7 @@ class CalorieSummary extends StatelessWidget {
   final int plannedProtein;
   final int plannedCarbs;
   final int plannedFat;
+  final VoidCallback? onVerify;
 
   const CalorieSummary({
     super.key,
@@ -33,6 +34,7 @@ class CalorieSummary extends StatelessWidget {
     this.plannedProtein = 0,
     this.plannedCarbs = 0,
     this.plannedFat = 0,
+    this.onVerify,
   });
 
   Color get _levelColor {
@@ -130,6 +132,35 @@ class CalorieSummary extends StatelessWidget {
                 const SizedBox(width: 8),
                 _macroBadge('脂肪', intakeFat, plannedFat, const Color(0xFFFF9800)),
               ],
+            ),
+          ],
+          if (onVerify != null) ...[
+            const SizedBox(height: 10),
+            Container(height: 0.5, color: const Color(0xFFEFEFEA)),
+            const SizedBox(height: 8),
+            InkWell(
+              onTap: onVerify,
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.fact_check_outlined, size: 14, color: context.primaryColor),
+                    const SizedBox(width: 4),
+                    Text(
+                      '今日校验（AI 识别与热量二次核验）',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        color: context.primaryColor,
+                      ),
+                    ),
+                    const SizedBox(width: 2),
+                    Icon(Icons.chevron_right_rounded, size: 16, color: context.primaryColor),
+                  ],
+                ),
+              ),
             ),
           ],
         ],

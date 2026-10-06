@@ -11,6 +11,7 @@ import '../services/storage_service.dart';
 import '../utils/date_utils.dart';
 import '../utils/legacy_convert.dart';
 import '../utils/plan_utils.dart';
+import '../utils/verify_utils.dart';
 
 class RecordProvider extends ChangeNotifier {
   final StorageService _storage;
@@ -362,9 +363,10 @@ class RecordProvider extends ChangeNotifier {
     String source = 'manual',
     String? detail,
     List<FoodBreakdownItem>? items,
+    bool autoCheck = true,
   }) async {
     final list = store.dayEntries.putIfAbsent(date, () => []);
-    list.add(DayEntry(
+    final entry = DayEntry(
       id: genId(kind == 'exercise' ? 'e' : 'm'),
       kind: kind,
       slot: kind == 'meal' ? (slot.isNotEmpty ? slot : 'snack') : '',
@@ -381,7 +383,16 @@ class RecordProvider extends ChangeNotifier {
       caloriesDirty: true,
       detail: detail,
       items: items,
-    ));
+    );
+    list.add(entry);
+
+    // 用户主动记录的临时加餐与临时加练，录入即视为已吃/已练事实（自动标记为已打卡）
+    if (autoCheck) {
+      final checkMap = store.checkRecords.putIfAbsent(date, () => {});
+      checkMap['temp:${entry.id}'] = CheckEntry(checkedAt: DateTime.now().millisecondsSinceEpoch);
+      await _persistCheck();
+    }
+
     sortDayEntries(list);
     notifyListeners();
     await _persistEntries();
@@ -397,6 +408,53 @@ class RecordProvider extends ChangeNotifier {
     sortDayEntries(list);
     notifyListeners();
     await _persistEntries();
+  }
+
+  /// 批量纠偏（今日校验）：针对匹配到的条目修正估算热量与三大营养素
+  /// 【核心铁律】：永远不修改 content（用户原始输入），只修正估算数值
+  Future<int> batchUpdateEntryCalories(
+    String date,
+    List<CorrectionItem> corrections,
+  ) async {
+    final list = store.dayEntries[date];
+    if (list == null || list.isEmpty || corrections.isEmpty) return 0;
+
+    var updatedCount = 0;
+    for (final item in corrections) {
+      if (item.matchedEntry == null) continue;
+      final targetId = item.matchedEntry!.id;
+      final idx = list.indexWhere((e) => e.id == targetId);
+      if (idx < 0) continue;
+
+      final old = list[idx];
+      // 保持原始输入不变，仅覆盖估算热量与宏量营养素
+      list[idx] = DayEntry(
+        id: old.id,
+        kind: old.kind,
+        slot: old.slot,
+        time: old.time,
+        content: old.content, // 保持用户原始输入绝对不变
+        calories: item.calories ?? old.calories,
+        protein: item.protein ?? old.protein,
+        carbs: item.carbs ?? old.carbs,
+        fat: item.fat ?? old.fat,
+        note: old.note,
+        source: old.source,
+        planItemId: old.planItemId,
+        detached: old.detached,
+        caloriesDirty: true, // 标记已被纠偏/自定义热量
+        detail: old.detail,
+        items: old.items,
+      );
+      updatedCount++;
+    }
+
+    if (updatedCount > 0) {
+      sortDayEntries(list);
+      notifyListeners();
+      await _persistEntries();
+    }
+    return updatedCount;
   }
 
   /// 删除计划外条目（加餐/加练，可删；正餐/计划运动快照不提供删除入口）
