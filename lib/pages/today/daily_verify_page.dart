@@ -18,6 +18,7 @@ import '../../providers/record_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../theme/app_theme.dart';
 import '../../utils/calorie_utils.dart';
+import '../../utils/date_utils.dart';
 import '../../utils/verify_utils.dart';
 
 class DailyVerifyPage extends StatefulWidget {
@@ -34,13 +35,25 @@ class DailyVerifyPage extends StatefulWidget {
 
 class _DailyVerifyPageState extends State<DailyVerifyPage> {
   final TextEditingController _correctionCtrl = TextEditingController();
+  final ScrollController _summaryScrollCtrl = ScrollController();
   CorrectionResult? _correctionResult;
   final Set<int> _selectedIndices = {}; // 用户当前勾选需要采纳修正的条目索引
   bool _isApplying = false;
 
+  String get _dayName {
+    final t = todayStr();
+    if (widget.date == t) return '今日';
+    final pa = parseDate(widget.date);
+    final pb = parseDate(t);
+    final diff = DateTime(pa.y, pa.m, pa.d).difference(DateTime(pb.y, pb.m, pb.d)).inDays;
+    if (diff == -1) return '昨日';
+    return dateCn(widget.date);
+  }
+
   @override
   void dispose() {
     _correctionCtrl.dispose();
+    _summaryScrollCtrl.dispose();
     super.dispose();
   }
 
@@ -50,12 +63,12 @@ class _DailyVerifyPageState extends State<DailyVerifyPage> {
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: const Row(
+        content: Row(
           children: [
-            Icon(Icons.check_circle_outline, color: Colors.white, size: 18),
-            SizedBox(width: 8),
+            const Icon(Icons.check_circle_outline, color: Colors.white, size: 18),
+            const SizedBox(width: 8),
             Expanded(
-              child: Text('已复制今日记录与校验提示词！可直接粘贴给第三方 AI 咨询。'),
+              child: Text('已复制$_dayName记录与校验提示词！可直接粘贴给第三方 AI 咨询。'),
             ),
           ],
         ),
@@ -222,7 +235,7 @@ class _DailyVerifyPageState extends State<DailyVerifyPage> {
     return Scaffold(
       backgroundColor: AppColors.bg,
       appBar: AppBar(
-        title: Text('今日校验 · ${widget.date}'),
+        title: Text('${_dayName == '今日' ? '今日' : (_dayName == '昨日' ? '昨日' : '热量')}校验 · ${widget.date}'),
         centerTitle: true,
         elevation: 0,
         backgroundColor: Colors.white,
@@ -232,10 +245,10 @@ class _DailyVerifyPageState extends State<DailyVerifyPage> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 14, 16, 32),
           children: [
-            // 1. 今日总结区（固定高度，文本可滚动）
+            // 1. 条目总结区（固定高度，文本可滚动）
             _buildSectionHeader(
               icon: Icons.article_outlined,
-              title: '今日条目总结',
+              title: '$_dayName条目总结',
               trailing: '仅包含已打卡/实际执行项目',
             ),
             const SizedBox(height: 8),
@@ -385,25 +398,29 @@ class _DailyVerifyPageState extends State<DailyVerifyPage> {
           ? Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
-                children: const [
-                  Icon(Icons.event_note_outlined, size: 36, color: AppColors.textSub),
-                  SizedBox(height: 8),
+                children: [
+                  const Icon(Icons.event_note_outlined, size: 36, color: AppColors.textSub),
+                  const SizedBox(height: 8),
                   Text(
-                    '今日暂无已完成打卡的记录',
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.text),
+                    '$_dayName暂无已完成打卡的记录',
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.text),
                   ),
-                  SizedBox(height: 4),
+                  const SizedBox(height: 4),
                   Text(
-                    '预设计划项未打卡执行前不计入今日统计。\n请先在「今日」主页打卡后，再来此处进行校验。',
+                    widget.date == todayStr()
+                        ? '预设计划项未打卡执行前不计入今日统计。\n请先在「今日」主页打卡后，再来此处进行校验。'
+                        : '预设计划项未打卡执行前不计入统计。\n请先在日历补录或打卡后，再来此处进行校验。',
                     textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 11, color: AppColors.textSub, height: 1.4),
+                    style: const TextStyle(fontSize: 11, color: AppColors.textSub, height: 1.4),
                   ),
                 ],
               ),
             )
           : Scrollbar(
+              controller: _summaryScrollCtrl,
               thumbVisibility: true,
               child: SingleChildScrollView(
+                controller: _summaryScrollCtrl,
                 child: SelectableText(
                   content,
                   style: const TextStyle(

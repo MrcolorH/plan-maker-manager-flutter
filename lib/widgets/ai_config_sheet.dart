@@ -153,8 +153,8 @@ class _AiConfigSheetState extends State<_AiConfigSheet> {
     });
     try {
       final usage = context.read<UsageProvider>();
-      await AiService.instance.testAI(cfg, onUsage: usage.addUsage);
-      _setStatus('连接成功 ✓ 测试问答正常返回', ok: true);
+      final reply = await AiService.instance.testAI(cfg, onUsage: usage.addUsage);
+      _setStatus(reply, ok: true);
     } catch (e) {
       _setStatus(e.toString().replaceFirst('Exception: ', ''));
     } finally {
@@ -260,15 +260,7 @@ class _AiConfigSheetState extends State<_AiConfigSheet> {
             if (provider == 'gemini') ...[
               _buildGeminiModelSelector(),
             ] else
-              _field(_modelCtrl, 'deepseek-v4-flash'),
-            if (_status != null) ...[
-              const SizedBox(height: 6),
-              Text(_status!,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: _statusOk ? AppColors.primary : AppColors.danger,
-                  )),
-            ],
+              _field(_modelCtrl, 'deepseek-chat'),
             const SizedBox(height: 12),
             PrimaryButton(
               _saving ? '保存中…' : widget.confirmText,
@@ -279,6 +271,54 @@ class _AiConfigSheetState extends State<_AiConfigSheet> {
               _testing ? '测试中…' : '测试连接（实际发一句问答验证）',
               onPressed: _testing ? null : _test,
             ),
+            if (_testing) ...[
+              const SizedBox(height: 10),
+              const Row(
+                children: [
+                  SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+                  SizedBox(width: 8),
+                  Text('正在向 AI 发送测试问答请求…', style: TextStyle(fontSize: 12, color: AppColors.textSub)),
+                ],
+              ),
+            ] else if (_status != null) ...[
+              const SizedBox(height: 10),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: _statusOk
+                      ? AppColors.primary.withValues(alpha: 0.08)
+                      : AppColors.danger.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: _statusOk
+                        ? AppColors.primary.withValues(alpha: 0.3)
+                        : AppColors.danger.withValues(alpha: 0.3),
+                  ),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      _statusOk ? Icons.check_circle_outline : Icons.error_outline,
+                      size: 16,
+                      color: _statusOk ? AppColors.primary : AppColors.danger,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _status!,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: _statusOk ? AppColors.primary : AppColors.danger,
+                          height: 1.4,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             if (widget.allowSkip) ...[
               const SizedBox(height: 8),
               Center(

@@ -116,7 +116,10 @@ class MealCard extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         if (isSnack)
-                          const Tag('今日加', color: 'orange')
+                          Tag(
+                            entry.calories != null && entry.calories! < 0 ? '损耗扣减' : '今日加',
+                            color: entry.calories != null && entry.calories! < 0 ? 'primary' : 'orange',
+                          )
                         else
                           Tag(kTypeCn[entry.slot] ?? entry.slot, color: 'green'),
                         if (entry.detached && entry.isPlan) ...[
@@ -224,7 +227,14 @@ class MealCard extends StatelessWidget {
           Row(
             children: [
               if (cal != null)
-                Text('$cal kcal', style: const TextStyle(fontSize: 12, color: AppColors.orange))
+                Text(
+                  '$cal kcal',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: cal < 0 ? AppColors.primary : AppColors.orange,
+                    fontWeight: cal < 0 ? FontWeight.w600 : FontWeight.normal,
+                  ),
+                )
               else
                 const Text('待补录热量', style: TextStyle(fontSize: 12, color: AppColors.textSub)),
               if (entry.note.isNotEmpty) ...[

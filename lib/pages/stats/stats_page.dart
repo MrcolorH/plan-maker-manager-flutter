@@ -22,6 +22,7 @@ import '../../utils/date_utils.dart';
 import '../../utils/plan_utils.dart';
 import '../../widgets/ai_config_sheet.dart';
 import '../../widgets/meal_card.dart';
+import '../today/daily_verify_page.dart';
 
 class StatsPage extends StatefulWidget {
   const StatsPage({super.key});
@@ -570,14 +571,16 @@ class _LegendDot extends StatelessWidget {
   }
 }
 
-/// 某日详情弹层
-class _DayDetailSheet extends StatelessWidget {
-  final String date;
-  final DayDetail detail;
-  const _DayDetailSheet({required this.date, required this.detail});
+typedef _DayDetailSheet = DayDetailSheet;
 
-  String get _statusText {
-    if (detail.future) return '未开始';
+/// 某日详情弹层
+class DayDetailSheet extends StatelessWidget {
+  final String date;
+  final DayDetail? detail;
+  const DayDetailSheet({super.key, required this.date, this.detail});
+
+  String _statusTextFor(DayDetail d) {
+    if (d.future) return '未开始';
     final t = todayStr();
     final diff = _diffDays(date, t);
     if (diff >= -2 && diff <= 0) return '可补录';
@@ -591,42 +594,59 @@ class _DayDetailSheet extends StatelessWidget {
   }
 
   // 弹层缺口文案：未来显示「待开始」，无记录显示「暂无」，避免出现 TDEE 假缺口
-  String _defText() {
-    final s = detail.summary;
-    if (detail.future) return '待开始';
+  String _defText(DayDetail d) {
+    final s = d.summary;
+    if (d.future) return '待开始';
     if (!s.hasData) return '暂无';
     final v = s.deficit.round();
     return v > 0 ? '+$v' : '$v';
   }
 
   // 缺口着色（对照 numClass）：未来/无数据 muted；负 red；0-300 orange；其余绿
-  Color _defColor() {
-    final s = detail.summary;
-    if (detail.future || !s.hasData) return AppColors.textSub;
+  Color _defColor(DayDetail d) {
+    final s = d.summary;
+    if (d.future || !s.hasData) return AppColors.textSub;
     if (s.deficit < 0) return AppColors.danger;
     if (s.deficit <= 300) return AppColors.orange;
     return AppColors.primary;
   }
 
   // F10 体重格：未来「—」；沿用链生效体重；无任何来源「未记录」
-  String _weightText(RecordStore store) {
-    if (detail.future) return '—';
+  String _weightText(RecordStore store, DayDetail d) {
+    if (d.future) return '—';
     final wt = weightForDate(store, date);
     if (wt == null) return '未记录';
     return wt == wt.roundToDouble() ? '${wt.round()} kg' : '$wt kg';
   }
 
-  Color _weightColor(RecordStore store) {
-    if (detail.future) return AppColors.textSub;
+  Color _weightColor(RecordStore store, DayDetail d) {
+    if (d.future) return AppColors.textSub;
     final wt = weightForDate(store, date);
     return wt == null ? AppColors.textSub : AppColors.text;
   }
 
+  String _verifyLabel(String targetDate) {
+    final t = todayStr();
+    if (targetDate == t) {
+      return '今日校验（AI 识别与热量二次核验）';
+    }
+    final diff = _diffDays(targetDate, t);
+    if (diff == -1) {
+      return '昨日校验（AI 识别与热量二次核验）';
+    }
+    return '热量校验（AI 识别与热量二次核验）';
+  }
+
   @override
   Widget build(BuildContext context) {
-    final records = context.read<RecordProvider>();
-    final s = detail.summary;
-    final canAdjust = _statusText == '可补录';
+    final plan = context.watch<PlanProvider>().plan;
+    final records = context.watch<RecordProvider>();
+    final settings = context.watch<SettingsProvider>().settings;
+    final profile = context.watch<OnboardingProvider>().state.profile;
+    final curDetail = dayDetail(plan, settings, records.store, date, profile: profile);
+    final s = curDetail.summary;
+    final statusText = _statusTextFor(curDetail);
+    final canAdjust = statusText == '可补录';
     return DraggableScrollableSheet(
       expand: false,
       initialChildSize: 0.75,
@@ -642,8 +662,8 @@ class _DayDetailSheet extends StatelessWidget {
                   Text(dateCn(date), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
                   Row(
                     children: [
-                      if (_statusText.isNotEmpty)
-                        Tag(_statusText, color: 'orange'),
+                      if (statusText.isNotEmpty)
+                        Tag(statusText, color: 'orange'),
                       IconButton(
                         onPressed: () => Navigator.pop(ctx),
                         icon: const Icon(Icons.close, size: 20, color: AppColors.textSub),
@@ -655,15 +675,15 @@ class _DayDetailSheet extends StatelessWidget {
               Row(
                 children: [
                   Expanded(child: _stat('计划完成', '${s.doneCount}/${s.taskCount}', AppColors.text)),
-                  Expanded(child: _stat('已摄入', detail.future ? '—' : '${s.intake.round()}', detail.future ? AppColors.textSub : AppColors.orange)),
-                  Expanded(child: _stat('热量缺口', _defText(), _defColor())),
+                  Expanded(child: _stat('已摄入', curDetail.future ? '—' : '${s.intake.round()}', curDetail.future ? AppColors.textSub : AppColors.orange)),
+                  Expanded(child: _stat('热量缺口', _defText(curDetail), _defColor(curDetail))),
                   Expanded(
                     child: _stat(
                       '体重',
-                      _weightText(records.store),
-                      _weightColor(records.store),
+                      _weightText(records.store, curDetail),
+                      _weightColor(records.store, curDetail),
                       subValue: () {
-                        if (detail.future) return null;
+                        if (curDetail.future) return null;
                         final bf = bodyFatForDate(records.store, date);
                         return (bf != null && bf > 0) ? '体脂 ${fmtBodyFat(bf)}%' : null;
                       }(),
@@ -671,7 +691,7 @@ class _DayDetailSheet extends StatelessWidget {
                   ),
                 ],
               ),
-              if (!detail.future && !detail.beforeStart && (s.intakeProtein > 0 || s.intakeCarbs > 0 || s.intakeFat > 0))
+              if (!curDetail.future && !curDetail.beforeStart && (s.intakeProtein > 0 || s.intakeCarbs > 0 || s.intakeFat > 0))
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
                   child: Container(
@@ -690,7 +710,7 @@ class _DayDetailSheet extends StatelessWidget {
                     ),
                   ),
                 ),
-              if (!detail.future && !detail.beforeStart && s.hasData)
+              if (!curDetail.future && !curDetail.beforeStart && s.hasData)
                 Padding(
                   padding: const EdgeInsets.only(top: 6),
                   child: Text(
@@ -698,9 +718,44 @@ class _DayDetailSheet extends StatelessWidget {
                     style: const TextStyle(fontSize: 11, color: AppColors.textSub),
                   ),
                 ),
-              if (detail.future)
+              if (!curDetail.future && !curDetail.beforeStart) ...[
+                const SizedBox(height: 10),
+                Container(height: 0.5, color: const Color(0xFFEFEFEA)),
+                const SizedBox(height: 8),
+                InkWell(
+                  onTap: () {
+                    Navigator.of(context).push(
+                      AppRoutes.fade<void>(
+                        DailyVerifyPage(date: date),
+                      ),
+                    );
+                  },
+                  borderRadius: BorderRadius.circular(8),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.fact_check_outlined, size: 14, color: context.primaryColor),
+                        const SizedBox(width: 4),
+                        Text(
+                          _verifyLabel(date),
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                            color: context.primaryColor,
+                          ),
+                        ),
+                        const SizedBox(width: 2),
+                        Icon(Icons.chevron_right_rounded, size: 16, color: context.primaryColor),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+              if (curDetail.future)
                 const _DetailHint('还没到这天，以下是计划安排')
-              else if (detail.beforeStart)
+              else if (curDetail.beforeStart)
                 const _DetailHint('计划开始前，无统计数据')
               else if (!canAdjust)
                 const _DetailHint('仅支持补录近 3 天（前天～今天）的记录'),
@@ -709,21 +764,21 @@ class _DayDetailSheet extends StatelessWidget {
                 child: ListView(
                   controller: scrollController,
                   children: [
-                    if (detail.meals.isNotEmpty) ...[
+                    if (curDetail.meals.isNotEmpty) ...[
                       const _SectionLabel('餐食'),
-                      ...detail.meals.map((m) => _mealRow(context, records, m, canAdjust)),
+                      ...curDetail.meals.map((m) => _mealRow(context, records, m, canAdjust)),
                     ],
-                    if (detail.snacks.isNotEmpty) ...[
+                    if (curDetail.snacks.isNotEmpty) ...[
                       const _SectionLabel('加餐'),
-                      ...detail.snacks.map((t) => _snackRow(context, records, t)),
+                      ...curDetail.snacks.map((t) => _snackRow(context, records, t)),
                     ],
-                    if (detail.exercises.isNotEmpty) ...[
+                    if (curDetail.exercises.isNotEmpty) ...[
                       const _SectionLabel('运动'),
-                      ...detail.exercises.map((e) => _exerciseRow(context, records, e, canAdjust)),
+                      ...curDetail.exercises.map((e) => _exerciseRow(context, records, e, canAdjust)),
                     ],
-                    if (detail.tempExercises.isNotEmpty) ...[
+                    if (curDetail.tempExercises.isNotEmpty) ...[
                       const _SectionLabel('临时运动'),
-                      ...detail.tempExercises.map((t) => _tempExRow(context, records, t)),
+                      ...curDetail.tempExercises.map((t) => _tempExRow(context, records, t)),
                     ],
                     if (canAdjust) ...[
                       const SizedBox(height: 10),
@@ -805,25 +860,49 @@ class _DayDetailSheet extends StatelessWidget {
     if (t.carbs != null) macroParts.add('C ${t.carbs}g');
     if (t.fat != null) macroParts.add('F ${t.fat}g');
     final macroStr = macroParts.isNotEmpty ? macroParts.join(' · ') : null;
+    final isLoss = t.calories < 0;
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
         children: [
-          const Text('＋', style: TextStyle(fontSize: 16, color: AppColors.orange)),
+          Text(isLoss ? '－' : '＋',
+              style: TextStyle(
+                fontSize: 16,
+                color: isLoss ? AppColors.primary : AppColors.orange,
+                fontWeight: FontWeight.bold,
+              )),
           const SizedBox(width: 8),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(t.name, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                Row(
+                  children: [
+                    if (isLoss) ...[
+                      const Tag('损耗扣减', color: 'primary'),
+                      const SizedBox(width: 4),
+                    ],
+                    Expanded(
+                      child: Text(t.name,
+                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis),
+                    ),
+                  ],
+                ),
                 Text('食物库/AI · ${t.time}', style: const TextStyle(fontSize: 11, color: AppColors.textSub)),
                 if (macroStr != null)
                   Text(macroStr, style: const TextStyle(fontSize: 10, color: AppColors.primary, fontWeight: FontWeight.w500)),
               ],
             ),
           ),
-          Text('${t.calories} kcal', style: const TextStyle(fontSize: 12, color: AppColors.orange)),
+          Text('${t.calories} kcal',
+              style: TextStyle(
+                fontSize: 12,
+                color: isLoss ? AppColors.primary : AppColors.orange,
+                fontWeight: isLoss ? FontWeight.w600 : FontWeight.normal,
+              )),
           IconButton(
             onPressed: () => records.removeDayEntry(date, t.id),
             icon: const Icon(Icons.close, size: 16, color: AppColors.textSub),
@@ -1008,8 +1087,11 @@ class _RecordSheetState extends State<_RecordSheet> {
   Future<void> _save() async {
     final name = _nameCtrl.text.trim();
     final cal = int.tryParse(_calCtrl.text.trim());
-    if (name.isEmpty || cal == null || cal < 0 || cal > 5000) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('请填写名称和 0-5000 的热量')));
+    final minCal = _isSnack ? -2000 : 0;
+    if (name.isEmpty || cal == null || cal < minCal || cal > 5000) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(_isSnack ? '请填写名称和 -2000 ~ 5000 的热量（损耗填负数）' : '请填写运动名和 0-5000 的消耗'),
+      ));
       return;
     }
     await context.read<RecordProvider>().addDayEntry(
@@ -1082,9 +1164,9 @@ class _RecordSheetState extends State<_RecordSheet> {
             const SizedBox(height: 8),
             TextField(
               controller: _calCtrl,
-              keyboardType: TextInputType.number,
+              keyboardType: _isSnack ? const TextInputType.numberWithOptions(signed: true) : TextInputType.number,
               decoration: InputDecoration(
-                hintText: _isSnack ? '热量 kcal' : '消耗 kcal',
+                hintText: _isSnack ? '热量 kcal (损耗填负数)' : '消耗 kcal',
                 filled: true,
                 fillColor: AppColors.bg,
                 border: const OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(8)), borderSide: BorderSide.none),

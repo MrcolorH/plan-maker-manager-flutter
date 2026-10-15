@@ -89,8 +89,9 @@ class _FoodAddPageState extends State<FoodAddPage> {
           items: items,
         );
     if (!mounted) return;
+    final prefix = calories < 0 ? '已扣减损耗' : '已记录';
     ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text('已记录：$name（$calories kcal）')));
+        .showSnackBar(SnackBar(content: Text('$prefix：$name（$calories kcal）')));
   }
 
   // ---------- 常用方案：份量选择与长按管理 ----------
@@ -412,8 +413,8 @@ class _FoodAddPageState extends State<FoodAddPage> {
 
   Future<void> _confirmSmart() async {
     final cal = int.tryParse(_calCtrl.text.trim());
-    if (cal == null || cal < 0 || cal > 5000) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('请输入 0-5000 的有效热量')));
+    if (cal == null || cal < -2000 || cal > 5000) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('请输入 -2000 ~ 5000 的有效热量（损耗可填负数）')));
       return;
     }
     final name = (_resName != null && _resName!.isNotEmpty) ? _resName! : _descCtrl.text.trim();
@@ -484,8 +485,8 @@ class _FoodAddPageState extends State<FoodAddPage> {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('请输入食物名称')));
       return;
     }
-    if (cal == null || cal < 0 || cal > 5000) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('请输入 0-5000 的热量')));
+    if (cal == null || cal < -2000 || cal > 5000) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('请输入 -2000 ~ 5000 的热量（损耗可填负数）')));
       return;
     }
     final p = int.tryParse(_manualProteinCtrl.text.trim());
@@ -716,9 +717,9 @@ class _FoodAddPageState extends State<FoodAddPage> {
                       Expanded(
                         child: TextField(
                           controller: _calCtrl,
-                          keyboardType: TextInputType.number,
+                          keyboardType: const TextInputType.numberWithOptions(signed: true),
                           decoration: const InputDecoration(
-                            hintText: '热量 kcal',
+                            hintText: '热量 kcal (损耗填负数)',
                             filled: true,
                             fillColor: AppColors.bg,
                             border: OutlineInputBorder(
@@ -738,7 +739,7 @@ class _FoodAddPageState extends State<FoodAddPage> {
                           backgroundColor: AppColors.primary,
                           foregroundColor: Colors.white,
                         ),
-                        child: const Text('记录'),
+                        child: Text((int.tryParse(_calCtrl.text) ?? 0) < 0 ? '扣减损耗' : '记录'),
                       ),
                       const SizedBox(width: 6),
                       IconButton(
@@ -792,7 +793,7 @@ class _FoodAddPageState extends State<FoodAddPage> {
                       Expanded(
                         child: TextField(
                           controller: _fatCtrl,
-                          keyboardType: TextInputType.number,
+                          keyboardType: const TextInputType.numberWithOptions(signed: true),
                           decoration: const InputDecoration(
                             hintText: '脂肪 g',
                             filled: true,
@@ -843,9 +844,9 @@ class _FoodAddPageState extends State<FoodAddPage> {
                     Expanded(
                       child: TextField(
                         controller: _manualCalCtrl,
-                        keyboardType: TextInputType.number,
+                        keyboardType: const TextInputType.numberWithOptions(signed: true),
                         decoration: const InputDecoration(
-                          hintText: '热量 kcal',
+                          hintText: '热量 kcal (损耗填负数)',
                           filled: true,
                           fillColor: AppColors.bg,
                           border: OutlineInputBorder(
@@ -862,7 +863,7 @@ class _FoodAddPageState extends State<FoodAddPage> {
                     ElevatedButton(
                       onPressed: _manualAdd,
                       style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary, foregroundColor: Colors.white),
-                      child: const Text('添加'),
+                      child: Text((int.tryParse(_manualCalCtrl.text) ?? 0) < 0 ? '扣减损耗' : '添加'),
                     ),
                   ],
                 ),
@@ -910,7 +911,7 @@ class _FoodAddPageState extends State<FoodAddPage> {
                     Expanded(
                       child: TextField(
                         controller: _manualFatCtrl,
-                        keyboardType: TextInputType.number,
+                        keyboardType: const TextInputType.numberWithOptions(signed: true),
                         decoration: const InputDecoration(
                           hintText: '脂肪 g',
                           filled: true,

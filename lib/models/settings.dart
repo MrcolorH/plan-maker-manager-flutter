@@ -14,14 +14,14 @@ class AiConfig {
     this.provider = 'deepseek',
     this.endpoint = 'https://api.deepseek.com',
     this.apiKey = '',
-    this.model = 'deepseek-v4-flash',
+    this.model = 'deepseek-chat',
   });
 
   factory AiConfig.fromJson(Map<String, dynamic> json) => AiConfig(
         provider: _str(json['provider'], 'deepseek'),
         endpoint: _str(json['endpoint'], 'https://api.deepseek.com'),
         apiKey: _str(json['apiKey']),
-        model: _str(json['model'], 'deepseek-v4-flash'),
+        model: _str(json['model'], 'deepseek-chat'),
       );
 
   Map<String, dynamic> toJson() => {
@@ -122,8 +122,8 @@ class AiProviderPreset {
 }
 
 const List<AiProviderPreset> kAiProviders = [
-  AiProviderPreset('deepseek', 'DeepSeek', 'https://api.deepseek.com', 'deepseek-v4-flash'),
-  AiProviderPreset('gemini', 'Google Gemini', 'https://generativelanguage.googleapis.com/v1beta', 'gemini-3.1-flash-lite'),
+  AiProviderPreset('deepseek', 'DeepSeek', 'https://api.deepseek.com', 'deepseek-chat'),
+  AiProviderPreset('gemini', 'Google Gemini', 'https://generativelanguage.googleapis.com/v1beta', 'gemini-2.5-flash'),
   AiProviderPreset('kimi', 'Kimi（月之暗面）', 'https://api.moonshot.cn/v1', 'kimi-k3'),
   AiProviderPreset('mimo', 'MiMo（小米）', 'https://api.xiaomimimo.com/v1', 'mimo-v2.5'),
   AiProviderPreset('minimax', 'MiniMax', 'https://api.minimaxi.com/v1', 'MiniMax-M3'),
@@ -154,55 +154,41 @@ class GeminiModelOption {
 
 const List<GeminiModelOption> kGeminiModels = [
   GeminiModelOption(
-    model: 'gemini-3.1-flash-lite',
-    name: 'Gemini 3.1 Flash Lite',
+    model: 'gemini-2.5-flash',
+    name: 'Gemini 2.5 Flash',
     rpm: 15,
     tpm: '250K',
     rpd: 500,
     recommended: true,
   ),
   GeminiModelOption(
-    model: 'gemini-3.5-flash-lite',
-    name: 'Gemini 3.5 Flash Lite',
+    model: 'gemini-2.0-flash',
+    name: 'Gemini 2.0 Flash',
     rpm: 15,
     tpm: '250K',
     rpd: 500,
     recommended: true,
   ),
   GeminiModelOption(
-    model: 'gemini-3.8-flash',
-    name: 'Gemini 3.8 Flash',
-    rpm: 5,
+    model: 'gemini-1.5-flash',
+    name: 'Gemini 1.5 Flash',
+    rpm: 15,
     tpm: '250K',
-    rpd: 20,
+    rpd: 500,
   ),
   GeminiModelOption(
-    model: 'gemini-3.7-flash',
-    name: 'Gemini 3.7 Flash',
+    model: 'gemini-2.5-pro',
+    name: 'Gemini 2.5 Pro',
     rpm: 5,
     tpm: '250K',
-    rpd: 20,
+    rpd: 50,
   ),
   GeminiModelOption(
-    model: 'gemini-3.6-flash',
-    name: 'Gemini 3.6 Flash',
+    model: 'gemini-1.5-pro',
+    name: 'Gemini 1.5 Pro',
     rpm: 5,
     tpm: '250K',
-    rpd: 20,
-  ),
-  GeminiModelOption(
-    model: 'gemini-3.5-flash',
-    name: 'Gemini 3.5 Flash',
-    rpm: 5,
-    tpm: '250K',
-    rpd: 20,
-  ),
-  GeminiModelOption(
-    model: 'gemini-3-flash',
-    name: 'Gemini 3 Flash',
-    rpm: 5,
-    tpm: '250K',
-    rpd: 20,
+    rpd: 50,
   ),
   GeminiModelOption(
     model: 'gemini-2.5-flash-lite',
@@ -212,21 +198,24 @@ const List<GeminiModelOption> kGeminiModels = [
     rpd: 20,
   ),
   GeminiModelOption(
-    model: 'gemini-2.5-flash',
-    name: 'Gemini 2.5 Flash',
+    model: 'gemini-3.1-flash-lite',
+    name: 'Gemini 3.1 Flash Lite (实验/预览)',
+    rpm: 15,
+    tpm: '250K',
+    rpd: 500,
+  ),
+  GeminiModelOption(
+    model: 'gemini-3.8-flash',
+    name: 'Gemini 3.8 Flash (实验/预览)',
     rpm: 5,
     tpm: '250K',
     rpd: 20,
   ),
 ];
 
-/// 已退役的 DeepSeek 旧模型名 → 当前可用模型名
+/// 已退役的旧模型名 → 当前可用模型名
 const Map<String, String> kRetiredModelMap = {
-  'deepseek-chat': 'deepseek-v4-flash',
-  // 官方映射：deepseek-reasoner = v4-flash 的思考模式（并非 v4-pro）；
-  // 本 App 所有 DeepSeek 请求显式关闭思考（thinking disabled），迁到 v4-flash
-  // 即保留原别名可用性且输出单价约 1/3.1（v4-pro $0.87 vs v4-flash $0.28 /M token）
-  'deepseek-reasoner': 'deepseek-v4-flash',
+  // deepseek-chat 属于官方长期标准端点，支持非思考快速问答，保留原样
 };
 
 /// 全部设置

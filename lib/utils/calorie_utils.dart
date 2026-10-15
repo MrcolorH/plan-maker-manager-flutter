@@ -198,7 +198,7 @@ class DailySummary {
   });
 
   /// 是否有记录（供趋势/月历判断）
-  bool get hasData => doneCount > 0 || tempIntake > 0 || tempBurn > 0 || extraIntake > 0;
+  bool get hasData => doneCount > 0 || tempIntake != 0 || tempBurn > 0 || extraIntake != 0;
 }
 
 DailySummary dailySummary(
@@ -243,7 +243,7 @@ DailySummary _snapshotSummary(
   final taskCount = planEntries.length;
   final doneCount = planEntries.where(checked).length;
 
-  // 计算宏量元素（已打卡计划餐 + 临时加餐）
+  // 计算宏量元素（已打卡计划餐 + 临时加餐，支持损耗扣减）
   int inP = 0;
   int inC = 0;
   int inF = 0;
@@ -257,6 +257,9 @@ DailySummary _snapshotSummary(
     inC += s.carbs ?? 0;
     inF += s.fat ?? 0;
   }
+  inP = max(0, inP);
+  inC = max(0, inC);
+  inF = max(0, inF);
 
   // 计划期望宏量元素：
   // 严格以「根据身高体重、体脂率科学估算出的每日营养素标准」为基准目标

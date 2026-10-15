@@ -21,16 +21,22 @@ const String kCalorieSys = '''你是中国营养学会专业营养师。用户�
    - 普通家常炒菜（整盘生重约250-350g）：中国家庭常态整盘放油约8-12g（约一平汤匙；清淡小炒仅5-8g底油滑锅；吸油蔬菜如家常炒茄子、干煸豆角整盘放油约12-15g）。装盘出锅后，盘底与菜汤会残留20%-35%余油不被摄入；
    - 餐厅外卖/重油滑炒：整份油量约12-18g；只有明确油炸时才考虑18g以上；
    - 水煮/清蒸/凉拌/白灼：用油按0-3g计算。
-3. 多人共食与分摊比例折算（关键铁律）：
+3. 【烹饪与复热油脂损耗 / 扣减规则（必查）】：
+   - 当用户描述「空气炸锅逼出油/油脂」「沥油」「吸油纸吸油」「去皮」「滤出油」「倒掉余油」「吃肉不吃皮」或明确指出「损耗/减去/扣除X克油」等明确未食用的油脂损耗时，必须精准计算损耗并从总热量与总脂肪中扣除！
+   - 扣除常识：纯油脂每 1g 约含 9 kcal 热量与 1g 纯脂肪（如逼出 3g 油 ≈ 扣减 27 kcal 热量与 3g 脂肪；逼出 5g 油 ≈ 扣减 45 kcal 与 5g 脂肪）；
+   - 计算规则：实际总热量 = 食物基准总热量 - 逼出/损耗油脂热量（总脂肪也等量扣减，严禁只加不减）；
+   - 拆解要求：在 detail 文本中明确写出扣减过程，如：汉堡2个≈900，空气炸锅逼出油3g≈-27，合计873；
+   - 若用户单独录入损耗（如仅输入「空气炸锅逼出3克油」或「扣除3克油」），请直接输出负值热量（calories: -27, fat: -3），作为热量扣减项！
+4. 多人共食与分摊比例折算（关键铁律）：
    - 当用户描述与家人共吃、按比例食用（如「1/4盘炒菜」「半盘」「吃了几口」「尝了一点」）时，所有成分（主料、配料、实际摄入油量、总脂肪及各营养素）必须严格等比例折算！
    - 典型示例：整盘家常炒茄子整盘摄入油约10-12g，若用户吃 1/4 盘，则实际摄入油量仅约 2.5-3g（脂肪约2.5-3g，折合22-27kcal），茄子本身约15kcal，1/4盘总热量仅约40-45kcal！
    - 严禁违背常识：绝对不可直接给「1/4盘炒菜」算8-15g油（否则倒推整盘高达32-60g纯油，相当于油炸或浸油，严重脱离家常事实）！
-4. 严格遵循能量守恒：总热量 ≈ 蛋白质*4 + 碳水*4 + 脂肪*9。肉类按熟重计算。
-5. 【总计数值绝对一致（严禁前后矛盾）】：
+5. 严格遵循能量守恒：总热量 ≈ 蛋白质*4 + 碳水*4 + 脂肪*9。肉类按熟重计算。
+6. 【总计数值绝对一致（严禁前后矛盾）】：
    calories 字段数值必须与 detail 拆解文本结尾的「合计 XXX」数值 100% 完全相同！detail 内部各项数值相加之和也必须严格等于该合计，绝对不允许 detail 里的合计与 calories 字段出现任何偏差！
 
 严格只返回一个 JSON 对象，不要输出任何其他文字或 markdown 代码块：
-{"name":"规范食物名或多食物组合名","calories":总热量整数kcal,"protein":蛋白质克数整数g,"carbs":碳水克数整数g,"fat":脂肪克数整数g,"unit":"份量描述（如：1/4盘、1碗+1个等）","detail":"过程详解与分项拆解，如：米饭100g≈116，炒茄子1/4盘(含油约2.5g)≈45，合计161","confidence":0到1}
+{"name":"规范食物名或损耗扣减名","calories":总热量整数kcal(损耗扣减可为负数),"protein":蛋白质克数整数g,"carbs":碳水克数整数g,"fat":脂肪克数整数g,"unit":"份量描述（如：1/4盘、1碗+1个等）","detail":"过程详解与分项拆解，如：米饭100g≈116，炒茄子1/4盘(含油约2.5g)≈45，合计161；或：汉堡2个≈900，空气炸锅逼出油3g≈-27，合计873","confidence":0到1}
 描述模糊时 confidence 给低值。''';
 
 const String kMealEstSys = '''你是减脂临床营养与食物成分分析专家。用户会描述这一餐实际吃了什么（可能是完整菜名、食材用量，或是"原计划+今天少了/多了什么"的大白话描述，带备注）。
@@ -39,23 +45,30 @@ const String kMealEstSys = '''你是减脂临床营养与食物成分分析专�
 1. 真实烹饪用油与分食折算：
    - 普通家常炒菜一整盘（250-350g）整盘用油约8-12g（清淡小炒5-8g，吸油菜如炒茄子整盘约12-15g），盘底残留余油不吃；外卖重油菜整份约12-18g；凉拌水煮清蒸少油或无油（0-3g）；
    - 若多人共食或按比例分吃（如吃 1/4 盘、半盘、吃了几口），食材用量与摄入油量必须严格等比例缩减！例如 1/4 盘家常炒茄子摄入油量仅约 2.5-3g，严禁将单人整份底油直接套给 1/4 盘（否则倒推整盘高达32g油，脱离常识）；
-2. 多食物与复合描述必须全面合并计算，不漏掉任何一项食材；
-3. 严格核验能量守恒：总热量必须约等于 (蛋白质*4 + 碳水*4 + 脂肪*9)；
-4. 【总计数值绝对一致（严禁前后矛盾）】：
+2. 【烹饪与复热油脂损耗 / 扣减规则（必查）】：
+   - 当用户描述「空气炸锅逼出油/油脂」「沥油」「吸油纸吸油」「去皮」「滤出油」「倒掉余油」「吃肉不吃皮」或明确指出「损耗/减去/扣除X克油」等明确未食用的油脂损耗时，必须精准计算损耗并从总热量与总脂肪中扣除！
+   - 扣除常识：纯油脂每 1g 约含 9 kcal 热量与 1g 纯脂肪（如逼出 3g 油 ≈ 扣减 27 kcal 热量与 3g 脂肪；逼出 5g 油 ≈ 扣减 45 kcal 与 5g 脂肪）；
+   - 计算规则：实际总热量 = 食物原本总热量 - 逼出/损耗油脂热量（总脂肪也等量扣减，严禁只加不减）；
+   - 拆解要求：在 items 拆解明细数组中单独列出一项损耗扣减项（热量为负整数），例如：{"name": "空气炸锅逼出油脂(损耗扣减)", "portion": "3g", "calories": -27}；在 detail 文本中明确写出扣减过程，如：汉堡2个≈900，空气炸锅逼出油3g≈-27，合计873；
+   - 若用户单独录入损耗（如仅输入「空气炸锅逼出3克油」或「扣除3克油」），请直接输出负值热量（calories: -27, fat: -3），作为热量扣减项！
+3. 多食物与复合描述必须全面合并计算，不漏掉任何一项食材；
+4. 严格核验能量守恒：总热量必须约等于 (蛋白质*4 + 碳水*4 + 脂肪*9)；
+5. 【总计数值绝对一致（严禁前后矛盾）】：
    calories 字段数值必须与 detail 拆解文本结尾的「合计 XXX」数值 100% 完全相同！detail 内部各项数值相加之和也必须严格等于该合计，绝对不允许 detail 里的合计与 calories 字段出现任何偏差！
-5. 【拆分成分明细列表】：
-   识别出该餐实际包含的所有主要食物/食材（如米饭、去皮鸡肉、青椒、烹调用油等），输出在 items 数组中，每项包含：
-   - name: 食物/食材名称（如"米饭"、"鸡胸肉"）
-   - portion: 估算重量或份量描述（如"150g"、"半盘"、"1个"）
-   - calories: 该项预估热量整数（kcal）
-6. 严格只返回一个 JSON 对象，不要输出任何其他文字或代码块：
-{"calories":实际总热量整数kcal,"protein":蛋白质整数g,"carbs":碳水整数g,"fat":脂肪整数g,"items":[{"name":"食物名","portion":"估算重量或份量","calories":该项热量整数}],"detail":"一句话分项拆解，如：米饭100g≈116，炒茄子1/4盘(含油约2.5g)≈45，合计161"}
+6. 【拆分成分明细列表】：
+   识别出该餐实际包含的所有主要食物/食材（如米饭、去皮鸡肉、青椒、烹调用油、空气炸锅逼出油脂等），输出在 items 数组中，每项包含：
+   - name: 食物/食材名称（如"米饭"、"鸡胸肉"、"空气炸锅逼出油脂(损耗扣减)"）
+   - portion: 估算重量或份量描述（如"150g"、"半盘"、"3g"）
+   - calories: 该项预估热量整数（kcal，损耗扣减项为负数）
+7. 严格只返回一个 JSON 对象，不要输出任何其他文字或代码块：
+{"calories":实际总热量整数kcal(损耗扣减可为负数),"protein":蛋白质整数g,"carbs":碳水整数g,"fat":脂肪整数g,"items":[{"name":"食物名","portion":"估算重量或份量","calories":该项热量整数}],"detail":"一句话分项拆解，如：米饭100g≈116，炒茄子1/4盘(含油约2.5g)≈45，合计161；或：汉堡2个≈900，空气炸锅逼出油3g≈-27，合计873"}
 描述模糊时按常规份量估算。''';
 
 /// FR6.9：计划条目编辑器专用——输入是结构化食材清单（含用量）+ 做法步骤，非口语描述
 const String kItemCalSys = '''你是减脂计划餐食的热量与宏量营养素估算助手。用户给出一份计划餐食的结构化描述：餐名、食材清单（含用量）、做法步骤、备注。
 请按中国常见食物热量成分，对食材清单逐项按给出的用量估算；做法步骤中提到的烹饪用油/糖/酱料等隐藏热量必须计入；未标注用量的食材按常见份量估算。
 【烹饪用油常识】普通家常炒菜整盘用油约8-12g（清淡小炒5-8g，吸油菜12-15g）；若为分食（如吃几分之几盘）油量必须按比例等比缩减。
+【油脂损耗扣减】若做法或备注中提到空气炸锅逼油、滤油、倒掉浮油等，按 1g 油 = 9 kcal 与 1g 脂肪从总热量和总脂肪中等量扣除。
 严格遵循营养守恒：总热量 ≈ 蛋白质*4 + 碳水*4 + 脂肪*9。
 【总计数值绝对一致】：calories 字段数值必须与 detail 拆解文本结尾的「合计 XXX」数值 100% 完全相同！
 严格只返回一个 JSON 对象，不要输出任何其他文字：
@@ -145,12 +158,33 @@ Map<String, dynamic>? extractJsonObj(String? text) {
   }
 }
 
-/// 判断是否为 Google Gemini 协议
+/// 判断是否为 Google Gemini 原生 REST 协议
 bool isGeminiProvider(AiConfig config) {
+  final ep = config.endpoint.toLowerCase().trim();
   final p = config.provider.trim().toLowerCase();
-  if (p == 'gemini' || p == 'google') return true;
-  final ep = config.endpoint.toLowerCase();
-  return ep.contains('generativelanguage.googleapis.com') || ep.contains(':generatecontent');
+
+  // 1. 若端点明确含有 Gemini 专属特征（googleapis 或 generatecontent）
+  if (ep.contains('generativelanguage.googleapis.com') ||
+      ep.contains('generatecontent')) {
+    return true;
+  }
+
+  // 2. 若端点明确是 OpenAI 协议（含有 /chat/completions 或 /openai）
+  if (ep.contains('/chat/completions') || ep.contains('/openai')) {
+    return false;
+  }
+
+  // 3. 若提供商显式为 gemini 或 google
+  if (p == 'gemini' || p == 'google') {
+    // 只有当 endpoint 被明确设置为非 deepseek 默认值的第三方 /v1 路径时才视为 OpenAI 代理
+    if (ep.contains('/v1') && !ep.contains('/v1beta') && !ep.contains('deepseek.com') && !ep.contains('googleapis.com')) {
+      return false;
+    }
+    return true;
+  }
+
+  // 4. 自定义端点：如果包含 v1beta 则为 Gemini 原生
+  return ep.contains('v1beta');
 }
 
 /// 规范化 Gemini 端点并组装 generateContent 完整 URL
@@ -165,7 +199,7 @@ String buildGeminiUrl(String rawEndpoint, String model) {
   } else if (!e.contains('/v1') && !e.contains('/v1beta')) {
     e = '$e/v1beta';
   }
-  final m = model.trim().isEmpty ? 'gemini-3.1-flash-lite' : model.trim();
+  final m = model.trim().isEmpty ? 'gemini-2.5-flash' : model.trim();
   return '$e/models/$m:generateContent';
 }
 
@@ -242,12 +276,22 @@ String parseGeminiResponse(
     final contentMap = cand['content'];
     if (contentMap is Map && contentMap['parts'] is List) {
       final parts = contentMap['parts'] as List;
+      // 优先拼接非思维链的正文文本（忽略 thought: true 部分）
       final text = parts
           .whereType<Map>()
+          .where((p) => p['thought'] != true)
           .map((p) => p['text'])
           .whereType<String>()
           .join('');
       if (text.isNotEmpty) return text;
+
+      // 兜底：若全是 thought，取全部 text
+      final allText = parts
+          .whereType<Map>()
+          .map((p) => p['text'])
+          .whereType<String>()
+          .join('');
+      if (allText.isNotEmpty) return allText;
     }
     final finishReason = cand['finishReason'];
     if (finishReason != null && finishReason != 'STOP') {
@@ -266,14 +310,32 @@ String _extractGeminiError(dynamic data, int? statusCode) {
       return 'Google API Key 无效或格式不正确，请核对后再试';
     }
     if (msg.contains('location') || msg.contains('not supported')) {
-      return '当前网络地区暂不支持 Google API，请切换网络环境';
+      return '当前网络地区暂不支持 Google API，请切换网络环境或使用代理接口';
     }
     if (status == 'RESOURCE_EXHAUSTED' || statusCode == 429) {
-      return '已超出 Gemini 速率限制（429）：请稍后再试或在设置中换用额度更高的模型（如 Gemini 3.1 Flash Lite）';
+      return '已超出 Gemini 速率限制（429）：请稍后再试或在设置中换用其他模型';
     }
     if (msg.isNotEmpty) return 'Gemini 错误（$status）：$msg';
   }
   return httpErrorMsg(statusCode ?? 0);
+}
+
+String? _extractOpenAiError(dynamic data, int? statusCode) {
+  if (data is Map) {
+    if (data['error'] is Map) {
+      final err = data['error'] as Map;
+      final msg = err['message']?.toString();
+      if (msg != null && msg.isNotEmpty) {
+        if (msg.contains('Insufficient Balance')) {
+          return '账户余额不足（402）：请到服务商官网充值';
+        }
+        return 'AI 接口报错（$statusCode）：$msg';
+      }
+    } else if (data['message'] is String && (data['message'] as String).isNotEmpty) {
+      return 'AI 接口报错（$statusCode）：${data['message']}';
+    }
+  }
+  return null;
 }
 
 /// 校准与对齐 AI 返回的总热量与拆解详情，确保 100% 绝对一致，消除前后打架
@@ -284,9 +346,9 @@ String _extractGeminiError(dynamic data, int? statusCode) {
   }
 
   // 匹配 detail 末尾或其中的合计表达，如：
-  // "合计161", "合计 161", "合计约161", "合计：161", "总计 161", "共计161", "共约 161", "＝161", "= 161"
+  // "合计161", "合计 161", "合计约161", "合计：161", "总计 161", "共计161", "共约 161", "＝161", "= 161", "合计 873"
   final sumRegex = RegExp(
-    r'(?:合计|总计|共计|共约|合计约|总计约|小计|＝|=)\s*[:：]?\s*≈?\s*(\d+)\s*(?:kcal|大卡)?',
+    r'(?:合计|总计|共计|共约|合计约|总计约|小计|＝|=)\s*[:：]?\s*≈?\s*(-?\d+)\s*(?:kcal|大卡)?',
     caseSensitive: false,
   );
 
@@ -294,12 +356,12 @@ String _extractGeminiError(dynamic data, int? statusCode) {
   if (matches.isNotEmpty) {
     final lastMatch = matches.last;
     final parsedCal = int.tryParse(lastMatch.group(1) ?? '');
-    if (parsedCal != null && parsedCal > 0) {
+    if (parsedCal != null && (parsedCal != 0 || rawCal != 0)) {
       if (parsedCal != rawCal) {
         // 当 detail 的合计值与顶层 calories 字段不一致时：
         // 若差异在合理范围（<=150 kcal 或 25% 比例内），说明 detail 的分项累加推导更细致，以 detail 的加总值为准
         final diff = (parsedCal - rawCal).abs();
-        if (diff <= 150 || (rawCal > 0 && diff / rawCal <= 0.25)) {
+        if (diff <= 150 || (rawCal != 0 && diff / rawCal.abs() <= 0.25)) {
           rawCal = parsedCal;
         } else {
           // 若差异过大，强制将 detail 末尾的合计修正为 rawCal，确保两者绝对一致
@@ -315,6 +377,23 @@ String _extractGeminiError(dynamic data, int? statusCode) {
   }
 
   return (rawCal, detail);
+}
+
+/// 判断在 OpenAI 兼容协议下是否应向服务端发送 'thinking': {'type': 'disabled'}
+/// 官方 deepseek-chat 等标准模型接口不支持 thinking 参数，传递会直接 400 报错。
+/// 仅针对明确是 deepseek-flash 或 v4 架构且非 deepseek-chat 基础模型时，才在关闭思考时传 disabled。
+bool shouldPassThinkingDisabled(
+  String model, {
+  String provider = 'deepseek',
+  String endpoint = 'https://api.deepseek.com',
+  bool enableThinking = false,
+}) {
+  if (enableThinking) return false;
+  final isDeepSeek = provider.trim().toLowerCase() == 'deepseek' ||
+      endpoint.toLowerCase().contains('deepseek.com');
+  if (!isDeepSeek) return false;
+  final m = model.toLowerCase();
+  return (m.contains('v4') || m.contains('flash')) && !m.contains('chat');
 }
 
 class AiService {
@@ -351,30 +430,38 @@ class AiService {
     }
 
     final base = normalizeEndpoint(config.endpoint);
-    final model = config.model.isEmpty ? 'deepseek-v4-flash' : config.model;
+    final model = config.model.isEmpty ? 'deepseek-chat' : config.model;
     final sw = Stopwatch()..start();
     debugPrint('[AiService] >>> $base/chat/completions model=$model thinking=$enableThinking '
         'msg=${messages.map((m) => '${m['role']}:${(m['content'] ?? '').length}字').join(' | ')}');
+    // 仅在明确是 deepseek-flash 或 v4 架构且非 deepseek-chat 基础模型时，才默认传 thinking: disabled
+    final shouldPassThinkingDisabledFlag = shouldPassThinkingDisabled(
+      model,
+      provider: config.provider,
+      endpoint: base,
+      enableThinking: enableThinking,
+    );
+
     try {
-      final isDeepSeek = config.provider == 'deepseek' ||
-          RegExp(r'deepseek', caseSensitive: false).hasMatch(base);
       final res = await _client().post(
         '$base/chat/completions',
         data: {
           'model': model,
           'temperature': 0.2,
           'messages': messages,
-          // 仅在显式不开启思考模式时给 DeepSeek 传 disabled；开启思考模式时不传 disabled（让模型进入 chain-of-thought 推理）
-          if (isDeepSeek && !enableThinking) 'thinking': {'type': 'disabled'},
+          if (shouldPassThinkingDisabledFlag) 'thinking': {'type': 'disabled'},
         },
         options: Options(
-          headers: {'Authorization': 'Bearer ${config.apiKey}'},
+          headers: {'Authorization': 'Bearer ${config.apiKey.trim()}'},
           // 深度思考模式放宽到 90s 超时，普通模式 60s
           receiveTimeout: Duration(milliseconds: enableThinking ? 90000 : timeoutMs),
         ),
       );
       debugPrint('[AiService] <<< HTTP ${res.statusCode} 耗时 ${sw.elapsedMilliseconds}ms');
-      if (res.statusCode != 200) throw Exception(httpErrorMsg(res.statusCode ?? 0));
+      if (res.statusCode != 200) {
+        final serverErr = _extractOpenAiError(res.data, res.statusCode);
+        throw Exception(serverErr ?? httpErrorMsg(res.statusCode ?? 0));
+      }
       final data = (res.data is Map) ? Map<String, dynamic>.from(res.data as Map) : {};
       // 累计本 App 的 API 用量（tokens/次数）
       final usage = data['usage'];
@@ -389,9 +476,28 @@ class AiService {
       return content;
     } on DioException catch (e) {
       final code = e.response?.statusCode;
+      final responseData = e.response?.data;
       debugPrint('[AiService] !!! DioException type=${e.type} '
           'status=$code 耗时 ${sw.elapsedMilliseconds}ms err=${e.error} msg=${e.message}');
-      if (e.response?.data != null) debugPrint('[AiService] !!! body=${e.response?.data}');
+      if (responseData != null) debugPrint('[AiService] !!! body=$responseData');
+
+      // 若携带 thinking 参数被服务端 400 拒绝，自动剔除 thinking 参数重试一次
+      if (code == 400 && shouldPassThinkingDisabledFlag) {
+        try {
+          debugPrint('[AiService] 400 尝试不带 thinking 重试...');
+          return await _chatWithoutThinking(
+            base,
+            model,
+            config.apiKey.trim(),
+            messages,
+            timeoutMs: timeoutMs,
+            onUsage: onUsage,
+          );
+        } catch (_) {}
+      }
+
+      final serverErr = _extractOpenAiError(responseData, code);
+      if (serverErr != null) throw Exception(serverErr);
       if (code != null && code >= 400) throw Exception(httpErrorMsg(code));
       if (e.type == DioExceptionType.connectionTimeout) {
         throw Exception('连接 AI 服务超时：请检查网络后重试');
@@ -409,6 +515,44 @@ class AiService {
     }
   }
 
+  /// 兜底不带思考控制参数的标准 OpenAI chat 调用
+  Future<String> _chatWithoutThinking(
+    String base,
+    String model,
+    String apiKey,
+    List<Map<String, String>> messages, {
+    int timeoutMs = 60000,
+    void Function(Map<String, dynamic> usage)? onUsage,
+  }) async {
+    final res = await _client().post(
+      '$base/chat/completions',
+      data: {
+        'model': model,
+        'temperature': 0.2,
+        'messages': messages,
+      },
+      options: Options(
+        headers: {'Authorization': 'Bearer $apiKey'},
+        receiveTimeout: Duration(milliseconds: timeoutMs),
+      ),
+    );
+    if (res.statusCode != 200) {
+      final serverErr = _extractOpenAiError(res.data, res.statusCode);
+      throw Exception(serverErr ?? httpErrorMsg(res.statusCode ?? 0));
+    }
+    final data = (res.data is Map) ? Map<String, dynamic>.from(res.data as Map) : {};
+    final usage = data['usage'];
+    if (usage is Map) {
+      onUsage?.call(Map<String, dynamic>.from(usage));
+    }
+    final choices = data['choices'];
+    if (choices is! List || choices.isEmpty) throw Exception('AI 未返回内容，请重试');
+    final ch = choices[0];
+    final content = (ch is Map) ? (ch['message'] is Map ? (ch['message'] as Map)['content'] : null) : null;
+    if (content is! String || content.isEmpty) throw Exception('AI 未返回内容，请重试');
+    return content;
+  }
+
   /// Google Gemini 原生 REST 协议调用（generateContent）
   Future<String> _chatGemini(
     AiConfig config,
@@ -416,7 +560,7 @@ class AiService {
     int timeoutMs = 60000,
     void Function(Map<String, dynamic> usage)? onUsage,
   }) async {
-    final model = config.model.trim().isEmpty ? 'gemini-3.1-flash-lite' : config.model.trim();
+    final model = config.model.trim().isEmpty ? 'gemini-2.5-flash' : config.model.trim();
     final url = buildGeminiUrl(config.endpoint, model);
     final reqBody = buildGeminiRequestBody(messages);
     final sw = Stopwatch()..start();
@@ -466,7 +610,7 @@ class AiService {
 
   bool hasConfig(AiConfig config) => config.hasConfig;
 
-  /// 食物热量及营养素查询（支持本地缓存）
+  /// 食物热量及营养素查询（支持本地缓存与损耗扣减）
   Future<Map<String, dynamic>> queryCalorie(AiConfig config, String foodDesc,
       {bool enableThinking = false, void Function(Map<String, dynamic>)? onUsage}) async {
     final content = await chat(
@@ -481,7 +625,7 @@ class AiService {
     final obj = extractJsonObj(content);
     if (obj == null) throw Exception('AI 返回格式异常，请手动录入热量');
     final cal = num.tryParse('${obj['calories']}');
-    if (cal == null || cal < 0 || cal > 20000) throw Exception('AI 返回的热量数值异常，请手动录入');
+    if (cal == null || cal < -2000 || cal > 20000) throw Exception('AI 返回的热量数值异常，请手动录入');
     final reconciled = reconcileCalorieAndDetail(cal.round(), obj['detail'] as String?);
     return {
       'name': (obj['name'] is String && (obj['name'] as String).isNotEmpty) ? obj['name'] : '食物',
@@ -514,9 +658,31 @@ class AiService {
     return obj;
   }
 
-  /// 测试连接
-  Future<void> testAI(AiConfig config, {void Function(Map<String, dynamic>)? onUsage}) async {
-    await queryCalorie(config, '一个水煮蛋', onUsage: onUsage);
+  /// 测试连接：向 AI 发送测试并返回清晰反馈结果
+  Future<String> testAI(AiConfig config, {void Function(Map<String, dynamic>)? onUsage}) async {
+    try {
+      final res = await queryCalorie(config, '一个水煮蛋', onUsage: onUsage);
+      final cal = res['calories'];
+      final p = res['protein'];
+      final c = res['carbs'];
+      final f = res['fat'];
+      final macroStr = (p != null || c != null || f != null)
+          ? '（P: ${p ?? 0}g / C: ${c ?? 0}g / F: ${f ?? 0}g）'
+          : '';
+      return '连接成功 ✓ AI 测算返回：水煮蛋 约 $cal kcal$macroStr';
+    } catch (e) {
+      // 若因 strict JSON 解析失败但实际网络通畅，降级验证简单纯文本问答
+      final text = await chat(
+        config,
+        [
+          {'role': 'user', 'content': '请回复六个字：AI服务已连接'}
+        ],
+        timeoutMs: 15000,
+        onUsage: onUsage,
+      );
+      final clean = text.trim();
+      return '连接成功 ✓ AI 回复：${clean.length > 50 ? '${clean.substring(0, 50)}...' : clean}';
+    }
   }
 
   /// 从文本描述中容错解析食物拆解明细表格（兜底与历史兼容）
@@ -553,10 +719,10 @@ class AiService {
     for (final rawSeg in segments) {
       final seg = rawSeg.trim();
       if (seg.isEmpty) continue;
-      if (RegExp(r'^(?:合计|总计|共计)\s*(?:约|≈)?\s*\d+').hasMatch(seg)) continue;
+      if (RegExp(r'^(?:合计|总计|共计)\s*(?:约|≈)?\s*-?\d+').hasMatch(seg)) continue;
 
       // 1. 本地食物库格式：如 "牛肉面(1碗, 550kcal)" 或 "葡式蛋挞(1个, 290kcal)"
-      final mDb = RegExp(r'^([^\(（]+)[\(（]([^\,，]+)[\,，]\s*(\d+)\s*(?:kcal)?[\)）]?$', caseSensitive: false).firstMatch(seg);
+      final mDb = RegExp(r'^([^\(（]+)[\(（]([^\,，]+)[\,，]\s*(-?\d+)\s*(?:kcal)?[\)）]?$', caseSensitive: false).firstMatch(seg);
       if (mDb != null) {
         final name = mDb.group(1)?.trim() ?? '';
         final portion = mDb.group(2)?.trim() ?? '';
@@ -567,14 +733,14 @@ class AiService {
         }
       }
 
-      // 2. 带 ≈、=、: 的拆解格式，如 "米饭100g≈116" 或 "炒茄子1/4盘(含油约2.5g)≈45" 或 "鸡胸肉150g≈200(P45g)"
+      // 2. 带 ≈、=、: 的拆解格式，如 "米饭100g≈116" 或 "炒茄子1/4盘(含油约2.5g)≈45" 或 "空气炸锅逼出油3g≈-27"
       // 从后往前找最后一个分隔符（避免食物括号内备注中的冒号等干扰）
       final allSeps = RegExp(r'[≈=：:]').allMatches(seg).toList();
       if (allSeps.isNotEmpty) {
         final lastSep = allSeps.last;
         final left = seg.substring(0, lastSep.start).trim();
         final right = seg.substring(lastSep.end).trim();
-        final calMatch = RegExp(r'^\s*(\d+)').firstMatch(right);
+        final calMatch = RegExp(r'^\s*(-?\d+)').firstMatch(right);
         if (calMatch != null) {
           final cal = int.tryParse(calMatch.group(1) ?? '') ?? 0;
           final pMatch = RegExp(r'([\d\.\/]+[^\d\s\(\)（）]+(?:\([^\)]+\)|（[^）]+）)?)\s*$').firstMatch(left);
@@ -594,8 +760,8 @@ class AiService {
         }
       }
 
-      // 3. 通用兜底：提取末尾数字为热量
-      final endCal = RegExp(r'(\d+)\s*(?:kcal)?\s*$', caseSensitive: false).firstMatch(seg);
+      // 3. 通用兜底：提取末尾数字为热量（支持负数损耗）
+      final endCal = RegExp(r'(-?\d+)\s*(?:kcal)?\s*$', caseSensitive: false).firstMatch(seg);
       if (endCal != null) {
         final cal = int.tryParse(endCal.group(1) ?? '') ?? 0;
         final left = seg.substring(0, endCal.start).trim();
@@ -639,7 +805,7 @@ class AiService {
     final obj = extractJsonObj(content);
     if (obj == null) throw Exception('AI 返回格式异常，请手动填写热量');
     final cal = num.tryParse('${obj['calories']}');
-    if (cal == null || cal < 0 || cal > 5000) throw Exception('AI 估算的热量超出合理范围，请手动填写');
+    if (cal == null || cal < -2000 || cal > 5000) throw Exception('AI 估算的热量超出合理范围，请手动填写');
     final reconciled = reconcileCalorieAndDetail(cal.round(), obj['detail'] as String?);
     final items = parseBreakdownItems(obj['items'], reconciled.$2);
     return {
@@ -668,7 +834,7 @@ class AiService {
     final obj = extractJsonObj(content);
     if (obj == null) throw Exception('AI 返回格式异常，请手动填写热量');
     final cal = num.tryParse('${obj['calories']}');
-    if (cal == null || cal < 0 || cal > 5000) throw Exception('AI 估算的热量超出合理范围，请手动填写');
+    if (cal == null || cal < -2000 || cal > 5000) throw Exception('AI 估算的热量超出合理范围，请手动填写');
     final reconciled = reconcileCalorieAndDetail(cal.round(), obj['detail'] as String?);
     return {
       'calories': reconciled.$1,

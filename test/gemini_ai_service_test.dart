@@ -118,10 +118,10 @@ void main() {
     test('kGeminiModels 包含主要模型与推荐配置', () {
       expect(kGeminiModels.isNotEmpty, isTrue);
 
-      final flashLite31 = kGeminiModels.firstWhere((m) => m.model == 'gemini-3.1-flash-lite');
-      expect(flashLite31.rpm, 15);
-      expect(flashLite31.rpd, 500);
-      expect(flashLite31.recommended, isTrue);
+      final flash25 = kGeminiModels.firstWhere((m) => m.model == 'gemini-2.5-flash');
+      expect(flash25.rpm, 15);
+      expect(flash25.rpd, 500);
+      expect(flash25.recommended, isTrue);
 
       final flash38 = kGeminiModels.firstWhere((m) => m.model == 'gemini-3.8-flash');
       expect(flash38.rpm, 5);
@@ -132,7 +132,7 @@ void main() {
       final geminiPreset = kAiProviders.firstWhere((p) => p.value == 'gemini');
       expect(geminiPreset.label, 'Google Gemini');
       expect(geminiPreset.endpoint, 'https://generativelanguage.googleapis.com/v1beta');
-      expect(geminiPreset.model, 'gemini-3.1-flash-lite');
+      expect(geminiPreset.model, 'gemini-2.5-flash');
     });
 
     test('AI 估算 Prompt 明确区分家常菜用油常识、分食比例与总计绝对一致性要求', () {

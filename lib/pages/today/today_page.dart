@@ -580,9 +580,10 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
     int? cal;
     if (calText.isNotEmpty) {
       cal = int.tryParse(calText);
-      if (cal == null || cal < 0 || cal > 5000) {
+      final minCal = _isEx ? 0 : -2000;
+      if (cal == null || cal < minCal || cal > 5000) {
         ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('请输入 0-5000 的${_isEx ? '消耗' : '热量'}，留空=待补录')));
+            SnackBar(content: Text('请输入 ${_isEx ? '0-5000 的消耗' : '-2000 ~ 5000 的热量（损耗可填负数）'}，留空=待补录')));
         return null;
       }
     }
@@ -756,9 +757,9 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
                 Expanded(
                   child: TextField(
                     controller: _calCtrl,
-                    keyboardType: TextInputType.number,
+                    keyboardType: _isEx ? TextInputType.number : const TextInputType.numberWithOptions(signed: true),
                     decoration: InputDecoration(
-                      hintText: _isEx ? '消耗 kcal' : '热量 kcal',
+                      hintText: _isEx ? '消耗 kcal' : '热量 kcal (损耗填负数)',
                       filled: true,
                       fillColor: AppColors.bg,
                       border: const OutlineInputBorder(
@@ -811,7 +812,7 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
                   Expanded(
                     child: TextField(
                       controller: _fatCtrl,
-                      keyboardType: TextInputType.number,
+                      keyboardType: const TextInputType.numberWithOptions(signed: true),
                       decoration: const InputDecoration(
                         hintText: '脂肪 g',
                         filled: true,

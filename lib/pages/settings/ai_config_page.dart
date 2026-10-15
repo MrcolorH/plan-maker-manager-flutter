@@ -25,7 +25,8 @@ class _AiConfigPageState extends State<AiConfigPage> {
   bool _testing = false;
   bool _queryingBalance = false;
   String? _balanceText;
-  String? _statusText;
+  String? _testResult;
+  bool _testOk = false;
 
   AiProfile? get _active => context.read<SettingsProvider>().settings.activeProfile;
 
@@ -110,18 +111,30 @@ class _AiConfigPageState extends State<AiConfigPage> {
   Future<void> _test() async {
     final active = _active;
     if (active == null) {
-      setState(() => _statusText = '请先添加并启用一个 AI 配置');
+      setState(() {
+        _testResult = '请先添加并启用一个 AI 配置';
+        _testOk = false;
+      });
       return;
     }
-    setState(() => _testing = true);
+    setState(() {
+      _testing = true;
+      _testResult = null;
+    });
     try {
       final usage = context.read<UsageProvider>();
-      await AiService.instance.testAI(active.toAiConfig(), onUsage: usage.addUsage);
+      final reply = await AiService.instance.testAI(active.toAiConfig(), onUsage: usage.addUsage);
       if (!mounted) return;
-      setState(() => _statusText = '连接成功 ✓ 测试问答正常返回');
+      setState(() {
+        _testResult = reply;
+        _testOk = true;
+      });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _statusText = e.toString().replaceFirst('Exception: ', ''));
+      setState(() {
+        _testResult = e.toString().replaceFirst('Exception: ', '');
+        _testOk = false;
+      });
     } finally {
       if (mounted) setState(() => _testing = false);
     }
@@ -130,7 +143,7 @@ class _AiConfigPageState extends State<AiConfigPage> {
   Future<void> _queryBalance() async {
     final active = _active;
     if (active == null) {
-      setState(() => _statusText = '请先添加并启用一个 AI 配置');
+      setState(() => _balanceText = '请先添加并启用一个 AI 配置');
       return;
     }
     setState(() {
@@ -152,7 +165,7 @@ class _AiConfigPageState extends State<AiConfigPage> {
       setState(() => _balanceText = sb.toString().trim());
     } catch (e) {
       if (!mounted) return;
-      setState(() => _statusText = e.toString().replaceFirst('Exception: ', ''));
+      setState(() => _balanceText = '查询失败：${e.toString().replaceFirst('Exception: ', '')}');
     } finally {
       if (mounted) setState(() => _queryingBalance = false);
     }
@@ -191,10 +204,6 @@ class _AiConfigPageState extends State<AiConfigPage> {
           const SizedBox(height: 12),
           PrimaryButton('+ 添加新配置', onPressed: _add),
           const SizedBox(height: 16),
-          if (_statusText != null) ...[
-            Text(_statusText!, style: const TextStyle(fontSize: 12, color: AppColors.textSub)),
-            const SizedBox(height: 8),
-          ],
           AppCard(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -245,6 +254,54 @@ class _AiConfigPageState extends State<AiConfigPage> {
                   _testing ? '测试中…' : '测试连接（实际发一句问答验证）',
                   onPressed: _testing ? null : _test,
                 ),
+                if (_testing) ...[
+                  const SizedBox(height: 10),
+                  const Row(
+                    children: [
+                      SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+                      SizedBox(width: 8),
+                      Text('正在向 AI 发送测试问答请求…', style: TextStyle(fontSize: 12, color: AppColors.textSub)),
+                    ],
+                  ),
+                ] else if (_testResult != null) ...[
+                  const SizedBox(height: 10),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: _testOk
+                          ? AppColors.primary.withValues(alpha: 0.08)
+                          : AppColors.danger.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: _testOk
+                            ? AppColors.primary.withValues(alpha: 0.3)
+                            : AppColors.danger.withValues(alpha: 0.3),
+                      ),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          _testOk ? Icons.check_circle_outline : Icons.error_outline,
+                          size: 16,
+                          color: _testOk ? AppColors.primary : AppColors.danger,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _testResult!,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: _testOk ? AppColors.primary : AppColors.danger,
+                              height: 1.4,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ],
             ),
           ),

@@ -28,7 +28,7 @@ class FoodBreakdownTable extends StatelessWidget {
     }
 
     final sumCal = items.fold<int>(0, (sum, it) => sum + it.calories);
-    final displayTotal = totalCalories ?? (sumCal > 0 ? sumCal : null);
+    final displayTotal = totalCalories ?? (items.isNotEmpty ? sumCal : null);
 
     return Container(
       width: double.infinity,
@@ -147,7 +147,7 @@ class FoodBreakdownTable extends StatelessWidget {
                       style: TextStyle(
                         fontSize: compact ? 11 : 12,
                         fontWeight: FontWeight.w600,
-                        color: AppColors.primary,
+                        color: item.calories < 0 ? AppColors.orange : AppColors.primary,
                       ),
                     ),
                   ),
