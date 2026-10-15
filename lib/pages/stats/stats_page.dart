@@ -9,9 +9,11 @@ import 'package:provider/provider.dart';
 
 import '../../models/onboarding.dart' show fmtBodyFat;
 import '../../models/plan_data.dart';
+import '../../models/preset_food.dart';
 import '../../models/records.dart';
 import '../../providers/onboarding_provider.dart';
 import '../../providers/plan_provider.dart';
+import '../../providers/preset_provider.dart';
 import '../../providers/record_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/usage_provider.dart';
@@ -573,24 +575,54 @@ class _LegendDot extends StatelessWidget {
 
 typedef _DayDetailSheet = DayDetailSheet;
 
-/// 某日详情弹层
-class DayDetailSheet extends StatelessWidget {
+/// 某日详情弹层（支持左右滑动切换前一天/后一天，支持自选常用方案补录加餐）
+class DayDetailSheet extends StatefulWidget {
   final String date;
   final DayDetail? detail;
   const DayDetailSheet({super.key, required this.date, this.detail});
 
-  String _statusTextFor(DayDetail d) {
-    if (d.future) return '未开始';
-    final t = todayStr();
-    final diff = _diffDays(date, t);
-    if (diff >= -2 && diff <= 0) return '可补录';
-    return '';
+  @override
+  State<DayDetailSheet> createState() => _DayDetailSheetState();
+}
+
+class _DayDetailSheetState extends State<DayDetailSheet> {
+  static const int _baseIndex = 5000;
+  late PageController _pageController;
+  late int _currentIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentIndex = _baseIndex;
+    _pageController = PageController(initialPage: _baseIndex);
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  String _dateForIndex(int index) {
+    final offset = index - _baseIndex;
+    if (offset == 0) return widget.date;
+    final p = parseDate(widget.date);
+    final d = DateTime(p.y, p.m, p.d + offset);
+    return fmtDate(d);
   }
 
   int _diffDays(String a, String b) {
     final pa = parseDate(a);
     final pb = parseDate(b);
     return DateTime(pa.y, pa.m, pa.d).difference(DateTime(pb.y, pb.m, pb.d)).inDays;
+  }
+
+  String _statusTextFor(DayDetail d, String date) {
+    if (d.future) return '未开始';
+    final t = todayStr();
+    final diff = _diffDays(date, t);
+    if (diff >= -2 && diff <= 0) return '可补录';
+    return '';
   }
 
   // 弹层缺口文案：未来显示「待开始」，无记录显示「暂无」，避免出现 TDEE 假缺口
@@ -612,14 +644,14 @@ class DayDetailSheet extends StatelessWidget {
   }
 
   // F10 体重格：未来「—」；沿用链生效体重；无任何来源「未记录」
-  String _weightText(RecordStore store, DayDetail d) {
+  String _weightText(RecordStore store, DayDetail d, String date) {
     if (d.future) return '—';
     final wt = weightForDate(store, date);
     if (wt == null) return '未记录';
     return wt == wt.roundToDouble() ? '${wt.round()} kg' : '$wt kg';
   }
 
-  Color _weightColor(RecordStore store, DayDetail d) {
+  Color _weightColor(RecordStore store, DayDetail d, String date) {
     if (d.future) return AppColors.textSub;
     final wt = weightForDate(store, date);
     return wt == null ? AppColors.textSub : AppColors.text;
@@ -639,164 +671,249 @@ class DayDetailSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.78,
+      minChildSize: 0.5,
+      maxChildSize: 0.94,
+      builder: (ctx, _) {
+        return PageView.builder(
+          controller: _pageController,
+          onPageChanged: (index) {
+            setState(() => _currentIndex = index);
+          },
+          itemBuilder: (pageCtx, index) {
+            final date = _dateForIndex(index);
+            return _buildDayPage(pageCtx, date);
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildDayPage(BuildContext context, String date) {
     final plan = context.watch<PlanProvider>().plan;
     final records = context.watch<RecordProvider>();
     final settings = context.watch<SettingsProvider>().settings;
     final profile = context.watch<OnboardingProvider>().state.profile;
+    PresetProvider? presetProv;
+    try {
+      presetProv = context.watch<PresetProvider>();
+    } catch (_) {
+      presetProv = null;
+    }
+    final presets = presetProv?.presets ?? const <PresetFood>[];
     final curDetail = dayDetail(plan, settings, records.store, date, profile: profile);
     final s = curDetail.summary;
-    final statusText = _statusTextFor(curDetail);
+    final statusText = _statusTextFor(curDetail, date);
     final canAdjust = statusText == '可补录';
-    return DraggableScrollableSheet(
-      expand: false,
-      initialChildSize: 0.75,
-      maxChildSize: 0.92,
-      builder: (ctx, scrollController) {
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-          child: Column(
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
+                  IconButton(
+                    onPressed: () {
+                      _pageController.previousPage(
+                        duration: const Duration(milliseconds: 260),
+                        curve: Curves.easeOutCubic,
+                      );
+                    },
+                    icon: const Icon(Icons.chevron_left, size: 22, color: AppColors.textSub),
+                    tooltip: '前一天',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                  ),
                   Text(dateCn(date), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-                  Row(
-                    children: [
-                      if (statusText.isNotEmpty)
-                        Tag(statusText, color: 'orange'),
-                      IconButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        icon: const Icon(Icons.close, size: 20, color: AppColors.textSub),
-                      ),
-                    ],
+                  IconButton(
+                    onPressed: () {
+                      _pageController.nextPage(
+                        duration: const Duration(milliseconds: 260),
+                        curve: Curves.easeOutCubic,
+                      );
+                    },
+                    icon: const Icon(Icons.chevron_right, size: 22, color: AppColors.textSub),
+                    tooltip: '后一天',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                   ),
                 ],
               ),
               Row(
                 children: [
-                  Expanded(child: _stat('计划完成', '${s.doneCount}/${s.taskCount}', AppColors.text)),
-                  Expanded(child: _stat('已摄入', curDetail.future ? '—' : '${s.intake.round()}', curDetail.future ? AppColors.textSub : AppColors.orange)),
-                  Expanded(child: _stat('热量缺口', _defText(curDetail), _defColor(curDetail))),
-                  Expanded(
-                    child: _stat(
-                      '体重',
-                      _weightText(records.store, curDetail),
-                      _weightColor(records.store, curDetail),
-                      subValue: () {
-                        if (curDetail.future) return null;
-                        final bf = bodyFatForDate(records.store, date);
-                        return (bf != null && bf > 0) ? '体脂 ${fmtBodyFat(bf)}%' : null;
-                      }(),
-                    ),
+                  if (statusText.isNotEmpty)
+                    Tag(statusText, color: 'orange'),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close, size: 20, color: AppColors.textSub),
                   ),
                 ],
               ),
-              if (!curDetail.future && !curDetail.beforeStart && (s.intakeProtein > 0 || s.intakeCarbs > 0 || s.intakeFat > 0))
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: AppColors.tagBg,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceAround,
-                      children: [
-                        Text('蛋白质: ${s.intakeProtein}g', style: const TextStyle(fontSize: 11, color: Color(0xFF4CAF50), fontWeight: FontWeight.w600)),
-                        Text('碳水: ${s.intakeCarbs}g', style: const TextStyle(fontSize: 11, color: Color(0xFF2196F3), fontWeight: FontWeight.w600)),
-                        Text('脂肪: ${s.intakeFat}g', style: const TextStyle(fontSize: 11, color: Color(0xFFFF9800), fontWeight: FontWeight.w600)),
-                      ],
-                    ),
-                  ),
-                ),
-              if (!curDetail.future && !curDetail.beforeStart && s.hasData)
-                Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: Text(
-                    '基础消耗 ${s.baseBurn} kcal（BMR×1.2，不含运动）· 运动消耗 ${s.exerciseBurn.round()} kcal',
-                    style: const TextStyle(fontSize: 11, color: AppColors.textSub),
-                  ),
-                ),
-              if (!curDetail.future && !curDetail.beforeStart) ...[
-                const SizedBox(height: 10),
-                Container(height: 0.5, color: const Color(0xFFEFEFEA)),
-                const SizedBox(height: 8),
-                InkWell(
-                  onTap: () {
-                    Navigator.of(context).push(
-                      AppRoutes.fade<void>(
-                        DailyVerifyPage(date: date),
-                      ),
-                    );
-                  },
-                  borderRadius: BorderRadius.circular(8),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 2),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.fact_check_outlined, size: 14, color: context.primaryColor),
-                        const SizedBox(width: 4),
-                        Text(
-                          _verifyLabel(date),
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                            color: context.primaryColor,
-                          ),
-                        ),
-                        const SizedBox(width: 2),
-                        Icon(Icons.chevron_right_rounded, size: 16, color: context.primaryColor),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-              if (curDetail.future)
-                const _DetailHint('还没到这天，以下是计划安排')
-              else if (curDetail.beforeStart)
-                const _DetailHint('计划开始前，无统计数据')
-              else if (!canAdjust)
-                const _DetailHint('仅支持补录近 3 天（前天～今天）的记录'),
-              const SizedBox(height: 10),
+            ],
+          ),
+          Row(
+            children: [
+              Expanded(child: _stat('计划完成', '${s.doneCount}/${s.taskCount}', AppColors.text)),
+              Expanded(child: _stat('已摄入', curDetail.future ? '—' : '${s.intake.round()}', curDetail.future ? AppColors.textSub : AppColors.orange)),
+              Expanded(child: _stat('热量缺口', _defText(curDetail), _defColor(curDetail))),
               Expanded(
-                child: ListView(
-                  controller: scrollController,
-                  children: [
-                    if (curDetail.meals.isNotEmpty) ...[
-                      const _SectionLabel('餐食'),
-                      ...curDetail.meals.map((m) => _mealRow(context, records, m, canAdjust)),
-                    ],
-                    if (curDetail.snacks.isNotEmpty) ...[
-                      const _SectionLabel('加餐'),
-                      ...curDetail.snacks.map((t) => _snackRow(context, records, t)),
-                    ],
-                    if (curDetail.exercises.isNotEmpty) ...[
-                      const _SectionLabel('运动'),
-                      ...curDetail.exercises.map((e) => _exerciseRow(context, records, e, canAdjust)),
-                    ],
-                    if (curDetail.tempExercises.isNotEmpty) ...[
-                      const _SectionLabel('临时运动'),
-                      ...curDetail.tempExercises.map((t) => _tempExRow(context, records, t)),
-                    ],
-                    if (canAdjust) ...[
-                      const SizedBox(height: 10),
-                      DashedAddButton('＋ 补录加餐',
-                          margin: const EdgeInsets.symmetric(horizontal: 0),
-                          onTap: () => _addSnack(ctx, date)),
-                      const SizedBox(height: 8),
-                      DashedAddButton('＋ 补录锻炼',
-                          margin: const EdgeInsets.symmetric(horizontal: 0),
-                          onTap: () => _addExercise(ctx, date)),
-                    ],
-                  ],
+                child: _stat(
+                  '体重',
+                  _weightText(records.store, curDetail, date),
+                  _weightColor(records.store, curDetail, date),
+                  subValue: () {
+                    if (curDetail.future) return null;
+                    final bf = bodyFatForDate(records.store, date);
+                    return (bf != null && bf > 0) ? '体脂 ${fmtBodyFat(bf)}%' : null;
+                  }(),
                 ),
               ),
             ],
           ),
-        );
-      },
+          if (!curDetail.future && !curDetail.beforeStart && (s.intakeProtein > 0 || s.intakeCarbs > 0 || s.intakeFat > 0))
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: AppColors.tagBg,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    Text('蛋白质: ${s.intakeProtein}g', style: const TextStyle(fontSize: 11, color: Color(0xFF4CAF50), fontWeight: FontWeight.w600)),
+                    Text('碳水: ${s.intakeCarbs}g', style: const TextStyle(fontSize: 11, color: Color(0xFF2196F3), fontWeight: FontWeight.w600)),
+                    Text('脂肪: ${s.intakeFat}g', style: const TextStyle(fontSize: 11, color: Color(0xFFFF9800), fontWeight: FontWeight.w600)),
+                  ],
+                ),
+              ),
+            ),
+          if (!curDetail.future && !curDetail.beforeStart && s.hasData)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                '基础消耗 ${s.baseBurn} kcal（BMR×1.2，不含运动）· 运动消耗 ${s.exerciseBurn.round()} kcal',
+                style: const TextStyle(fontSize: 11, color: AppColors.textSub),
+              ),
+            ),
+          if (!curDetail.future && !curDetail.beforeStart) ...[
+            const SizedBox(height: 10),
+            Container(height: 0.5, color: const Color(0xFFEFEFEA)),
+            const SizedBox(height: 8),
+            InkWell(
+              onTap: () {
+                Navigator.of(context).push(
+                  AppRoutes.fade<void>(
+                    DailyVerifyPage(date: date),
+                  ),
+                );
+              },
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.fact_check_outlined, size: 14, color: context.primaryColor),
+                    const SizedBox(width: 4),
+                    Text(
+                      _verifyLabel(date),
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                        color: context.primaryColor,
+                      ),
+                    ),
+                    const SizedBox(width: 2),
+                    Icon(Icons.chevron_right_rounded, size: 16, color: context.primaryColor),
+                  ],
+                ),
+              ),
+            ),
+          ],
+          if (curDetail.future)
+            const _DetailHint('还没到这天，以下是计划安排')
+          else if (curDetail.beforeStart)
+            const _DetailHint('计划开始前，无统计数据')
+          else if (!canAdjust)
+            const _DetailHint('仅支持补录近 3 天（前天～今天）的记录'),
+          const SizedBox(height: 10),
+          Expanded(
+            child: ListView(
+              children: [
+                if (curDetail.meals.isNotEmpty) ...[
+                  const _SectionLabel('餐食'),
+                  ...curDetail.meals.map((m) => _mealRow(context, records, m, canAdjust, date)),
+                ],
+                if (curDetail.snacks.isNotEmpty) ...[
+                  const _SectionLabel('加餐'),
+                  ...curDetail.snacks.map((t) => _snackRow(context, records, t, date)),
+                ],
+                if (curDetail.exercises.isNotEmpty) ...[
+                  const _SectionLabel('运动'),
+                  ...curDetail.exercises.map((e) => _exerciseRow(context, records, e, canAdjust, date)),
+                ],
+                if (curDetail.tempExercises.isNotEmpty) ...[
+                  const _SectionLabel('临时运动'),
+                  ...curDetail.tempExercises.map((t) => _tempExRow(context, records, t, date)),
+                ],
+                if (canAdjust) ...[
+                  if (presets.isNotEmpty) ...[
+                    const _SectionLabel('常用加餐方案'),
+                    SizedBox(
+                      height: 38,
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: presets.length,
+                        separatorBuilder: (_, _) => const SizedBox(width: 8),
+                        itemBuilder: (ctx, i) {
+                          final p = presets[i];
+                          return GestureDetector(
+                            onTap: () => _showPresetPortionSheet(context, p, date),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(19),
+                                border: Border.all(color: const Color(0xFFE2E2DC)),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.star, size: 14, color: AppColors.orange),
+                                  const SizedBox(width: 4),
+                                  Text(p.name, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500)),
+                                  const SizedBox(width: 4),
+                                  Text('${p.calories}k', style: const TextStyle(fontSize: 11, color: AppColors.orange)),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  const SizedBox(height: 6),
+                  DashedAddButton('＋ 补录加餐',
+                      margin: const EdgeInsets.symmetric(horizontal: 0),
+                      onTap: () => _addSnack(context, date)),
+                  const SizedBox(height: 8),
+                  DashedAddButton('＋ 补录锻炼',
+                      margin: const EdgeInsets.symmetric(horizontal: 0),
+                      onTap: () => _addExercise(context, date)),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -818,7 +935,7 @@ class DayDetailSheet extends StatelessWidget {
     );
   }
 
-  Widget _mealRow(BuildContext context, RecordProvider records, DayDetailItem m, bool canAdjust) {
+  Widget _mealRow(BuildContext context, RecordProvider records, DayDetailItem m, bool canAdjust, String date) {
     final macroParts = <String>[];
     if (m.protein != null) macroParts.add('P ${m.protein}g');
     if (m.carbs != null) macroParts.add('C ${m.carbs}g');
@@ -854,7 +971,7 @@ class DayDetailSheet extends StatelessWidget {
     );
   }
 
-  Widget _snackRow(BuildContext context, RecordProvider records, DaySnack t) {
+  Widget _snackRow(BuildContext context, RecordProvider records, DaySnack t, String date) {
     final macroParts = <String>[];
     if (t.protein != null) macroParts.add('P ${t.protein}g');
     if (t.carbs != null) macroParts.add('C ${t.carbs}g');
@@ -912,7 +1029,7 @@ class DayDetailSheet extends StatelessWidget {
     );
   }
 
-  Widget _exerciseRow(BuildContext context, RecordProvider records, DayDetailExercise e, bool canAdjust) {
+  Widget _exerciseRow(BuildContext context, RecordProvider records, DayDetailExercise e, bool canAdjust, String date) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
@@ -931,7 +1048,7 @@ class DayDetailSheet extends StatelessWidget {
     );
   }
 
-  Widget _tempExRow(BuildContext context, RecordProvider records, DaySnack t) {
+  Widget _tempExRow(BuildContext context, RecordProvider records, DaySnack t, String date) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
@@ -946,6 +1063,162 @@ class DayDetailSheet extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+
+  void _showPresetPortionSheet(BuildContext context, PresetFood p, String targetDate) {
+    double portion = 1.0;
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            final curCal = (p.calories * portion).round();
+            final curP = p.protein != null ? (p.protein! * portion).round() : null;
+            final curC = p.carbs != null ? (p.carbs! * portion).round() : null;
+            final curF = p.fat != null ? (p.fat! * portion).round() : null;
+
+            return Padding(
+              padding: EdgeInsets.fromLTRB(
+                16,
+                16,
+                16,
+                MediaQuery.of(context).viewInsets.bottom + 24,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.restaurant, size: 18, color: AppColors.orange),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          p.name,
+                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 20, color: AppColors.textSub),
+                        onPressed: () => Navigator.pop(ctx),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '基准：${p.calories} kcal / ${p.unit.isNotEmpty ? p.unit : '1份'}',
+                    style: const TextStyle(fontSize: 12, color: AppColors.textSub),
+                  ),
+                  const Divider(height: 24),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('选择份量：', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                      Text(
+                        portion == 1.0 ? '1 份' : '${portion.toStringAsFixed(1)} 份',
+                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppColors.orange),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [0.5, 1.0, 1.5, 2.0].map((val) {
+                      final selected = (portion - val).abs() < 0.05;
+                      return Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          child: OutlinedButton(
+                            onPressed: () => setSheetState(() => portion = val),
+                            style: OutlinedButton.styleFrom(
+                              backgroundColor: selected ? AppColors.orange.withValues(alpha: 0.1) : Colors.white,
+                              side: BorderSide(
+                                color: selected ? AppColors.orange : const Color(0xFFE2E2DC),
+                              ),
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                            ),
+                            child: Text(
+                              '${val == 1.0 ? '1' : val == 2.0 ? '2' : val}份',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+                                color: selected ? AppColors.orange : AppColors.text,
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppColors.bg,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          '实际折算：$curCal kcal',
+                          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: AppColors.primary),
+                        ),
+                        if (curP != null || curC != null || curF != null)
+                          Text(
+                            'P:${curP ?? 0}g  C:${curC ?? 0}g  F:${curF ?? 0}g',
+                            style: const TextStyle(fontSize: 11, color: AppColors.textSub),
+                          ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 44,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                      onPressed: () async {
+                        final presetProv = context.read<PresetProvider>();
+                        Navigator.pop(ctx);
+                        final displayName = portion == 1.0 ? p.name : '${p.name} (${portion.toStringAsFixed(1)}份)';
+                        await context.read<RecordProvider>().addDayEntry(
+                              targetDate,
+                              kind: 'meal',
+                              slot: 'snack',
+                              content: displayName,
+                              calories: curCal,
+                              protein: curP,
+                              carbs: curC,
+                              fat: curF,
+                              source: 'preset',
+                            );
+                        await presetProv.recordUsed(p.id);
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text('已补录加餐：$displayName（$curCal kcal）')),
+                          );
+                        }
+                      },
+                      child: Text('＋ 确认补录（$curCal kcal）', style: const TextStyle(fontSize: 15)),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
     );
   }
 
@@ -993,7 +1266,7 @@ class _DetailHint extends StatelessWidget {
   }
 }
 
-/// 补录弹窗（加餐/锻炼）：AI 估算 + 手动录入
+/// 补录弹窗（加餐/锻炼）：AI 估算 + 常用预设方案 + 手动录入
 class _RecordSheet extends StatefulWidget {
   final String date;
   final String type;
@@ -1011,6 +1284,13 @@ class _RecordSheetState extends State<_RecordSheet> {
   bool _aiUsed = false;
   String? _aiDetail;
 
+  PresetFood? _selectedPreset;
+  double _portion = 1.0;
+  int? _curProtein;
+  int? _curCarbs;
+  int? _curFat;
+  bool _saveAsPreset = false;
+
   bool get _isSnack => widget.type == 'snack';
 
   @override
@@ -1019,6 +1299,35 @@ class _RecordSheetState extends State<_RecordSheet> {
     _nameCtrl.dispose();
     _calCtrl.dispose();
     super.dispose();
+  }
+
+  void _selectPreset(PresetFood p) {
+    setState(() {
+      _selectedPreset = p;
+      _portion = 1.0;
+      _nameCtrl.text = p.name;
+      _calCtrl.text = '${p.calories}';
+      _curProtein = p.protein;
+      _curCarbs = p.carbs;
+      _curFat = p.fat;
+      _aiUsed = false;
+      _aiDetail = '常用方案：${p.name}（${p.calories} kcal / ${p.unit}）';
+    });
+  }
+
+  void _setPortion(double portion) {
+    if (_selectedPreset == null) return;
+    setState(() {
+      _portion = portion;
+      final p = _selectedPreset!;
+      _nameCtrl.text = portion == 1.0 ? p.name : '${p.name} (${portion.toStringAsFixed(1)}份)';
+      final cal = (p.calories * portion).round();
+      _calCtrl.text = '$cal';
+      _curProtein = p.protein != null ? (p.protein! * portion).round() : null;
+      _curCarbs = p.carbs != null ? (p.carbs! * portion).round() : null;
+      _curFat = p.fat != null ? (p.fat! * portion).round() : null;
+      _aiDetail = '常用方案：${p.name} · ${portion.toStringAsFixed(1)}份';
+    });
   }
 
   Future<void> _aiEstimate() async {
@@ -1045,6 +1354,9 @@ class _RecordSheetState extends State<_RecordSheet> {
         if (!mounted) return;
         _nameCtrl.text = r['name'] as String;
         _calCtrl.text = '${r['calories']}';
+        _curProtein = r['protein'] is num ? (r['protein'] as num).round() : null;
+        _curCarbs = r['carbs'] is num ? (r['carbs'] as num).round() : null;
+        _curFat = r['fat'] is num ? (r['fat'] as num).round() : null;
         final unit = (r['unit'] as String?) ?? '';
         final conf = ((r['confidence'] as num?) ?? 0);
         final dt = (r['detail'] as String?)?.trim();
@@ -1072,6 +1384,7 @@ class _RecordSheetState extends State<_RecordSheet> {
         if (d != null && d.isNotEmpty) detail = 'AI 拆解：$d';
       }
       setState(() {
+        _selectedPreset = null;
         _aiUsed = true;
         _aiDetail = detail;
       });
@@ -1094,20 +1407,50 @@ class _RecordSheetState extends State<_RecordSheet> {
       ));
       return;
     }
+    final isPreset = _selectedPreset != null;
     await context.read<RecordProvider>().addDayEntry(
           widget.date,
           kind: _isSnack ? 'meal' : 'exercise',
           slot: _isSnack ? 'snack' : '',
           content: name,
           calories: cal,
-          source: _aiUsed ? 'ai' : 'manual',
+          protein: _curProtein,
+          carbs: _curCarbs,
+          fat: _curFat,
+          source: isPreset ? 'preset' : (_aiUsed ? 'ai' : 'manual'),
         );
-    if (mounted) Navigator.pop(context);
+    if (isPreset) {
+      await context.read<PresetProvider>().recordUsed(_selectedPreset!.id);
+    } else if (_saveAsPreset && _isSnack) {
+      await context.read<PresetProvider>().savePreset(
+            name: name,
+            calories: cal,
+            protein: _curProtein,
+            carbs: _curCarbs,
+            fat: _curFat,
+          );
+    }
+    if (mounted) {
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已补录${_isSnack ? '加餐' : '运动'}：$name（$cal kcal）')),
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final pad = MediaQuery.of(context).viewInsets.bottom;
+    PresetProvider? presetProv;
+    if (_isSnack) {
+      try {
+        presetProv = context.watch<PresetProvider>();
+      } catch (_) {
+        presetProv = null;
+      }
+    }
+    final presets = presetProv?.presets ?? const <PresetFood>[];
+
     return Padding(
       padding: EdgeInsets.only(bottom: pad),
       child: SingleChildScrollView(
@@ -1116,9 +1459,134 @@ class _RecordSheetState extends State<_RecordSheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(_isSnack ? '补录加餐' : '补录锻炼',
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(_isSnack ? '补录加餐' : '补录锻炼',
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                IconButton(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close, size: 20, color: AppColors.textSub),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+
+            // 常用方案快捷选择
+            if (_isSnack && presets.isNotEmpty) ...[
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('常用方案', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textSub)),
+                  Text(
+                    _selectedPreset != null ? '已选：${_selectedPreset!.name}' : '点选常用方案快速填入',
+                    style: const TextStyle(fontSize: 11, color: AppColors.textSub),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              SizedBox(
+                height: 38,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: presets.length,
+                  separatorBuilder: (_, _) => const SizedBox(width: 8),
+                  itemBuilder: (ctx, i) {
+                    final p = presets[i];
+                    final isSelected = _selectedPreset?.id == p.id;
+                    return GestureDetector(
+                      onTap: () => _selectPreset(p),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: isSelected ? AppColors.orange.withValues(alpha: 0.12) : Colors.white,
+                          borderRadius: BorderRadius.circular(19),
+                          border: Border.all(
+                            color: isSelected ? AppColors.orange : const Color(0xFFE2E2DC),
+                            width: isSelected ? 1.5 : 1.0,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.star, size: 14, color: isSelected ? AppColors.orange : const Color(0xFFFFA000)),
+                            const SizedBox(width: 4),
+                            Text(
+                              p.name,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                                color: isSelected ? AppColors.orange : AppColors.text,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              '${p.calories}k',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: isSelected ? AppColors.orange : AppColors.textSub,
+                                fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              if (_selectedPreset != null) ...[
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: AppColors.bg,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      const Text('份量：', style: TextStyle(fontSize: 12, color: AppColors.textSub)),
+                      ...[0.5, 1.0, 1.5, 2.0].map((val) {
+                        final sel = (_portion - val).abs() < 0.05;
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 3),
+                          child: InkWell(
+                            onTap: () => _setPortion(val),
+                            borderRadius: BorderRadius.circular(6),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: sel ? AppColors.orange : Colors.white,
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(
+                                  color: sel ? AppColors.orange : const Color(0xFFE2E2DC),
+                                ),
+                              ),
+                              child: Text(
+                                '${val == 1.0 ? '1' : val == 2.0 ? '2' : val}份',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: sel ? Colors.white : AppColors.text,
+                                  fontWeight: sel ? FontWeight.bold : FontWeight.normal,
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      }),
+                      const Spacer(),
+                      if (_curProtein != null || _curCarbs != null || _curFat != null)
+                        Text(
+                          'P:${_curProtein ?? 0}g C:${_curCarbs ?? 0}g F:${_curFat ?? 0}g',
+                          style: const TextStyle(fontSize: 10, color: AppColors.textSub),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+              const SizedBox(height: 12),
+            ],
+
             TextField(
               controller: _descCtrl,
               maxLines: _isSnack ? 2 : 1,
@@ -1179,11 +1647,39 @@ class _RecordSheetState extends State<_RecordSheet> {
                 padding: const EdgeInsets.only(top: 6),
                 child: Text(_aiDetail!, style: const TextStyle(fontSize: 12, color: AppColors.textSub)),
               ),
+            if (_isSnack && _selectedPreset == null)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: Checkbox(
+                        value: _saveAsPreset,
+                        onChanged: (v) => setState(() => _saveAsPreset = v ?? false),
+                        activeColor: AppColors.orange,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    const Text('同时存为常用方案', style: TextStyle(fontSize: 12, color: AppColors.textSub)),
+                  ],
+                ),
+              ),
             const SizedBox(height: 12),
             ElevatedButton(
               onPressed: _save,
-              style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary, foregroundColor: Colors.white, minimumSize: const Size.fromHeight(44)),
-              child: const Text('保存'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+                minimumSize: const Size.fromHeight(44),
+              ),
+              child: Text(
+                _selectedPreset != null
+                    ? '保存加餐（${_calCtrl.text.isNotEmpty ? _calCtrl.text : _selectedPreset!.calories} kcal）'
+                    : '保存',
+              ),
             ),
           ],
         ),

@@ -18,6 +18,7 @@ import 'package:jianfei_dazi/pages/stats/stats_page.dart';
 import 'package:jianfei_dazi/pages/today/daily_verify_page.dart';
 import 'package:jianfei_dazi/providers/onboarding_provider.dart';
 import 'package:jianfei_dazi/providers/plan_provider.dart';
+import 'package:jianfei_dazi/providers/preset_provider.dart';
 import 'package:jianfei_dazi/providers/record_provider.dart';
 import 'package:jianfei_dazi/providers/settings_provider.dart';
 import 'package:jianfei_dazi/services/reminder_service.dart';
@@ -55,6 +56,7 @@ Widget buildTestWidget({
   }
   final onbP = OnboardingProvider(storage, planP, setP, recP);
   onbP.state.done = true;
+  final presetP = PresetProvider();
   if (onSetupRecords != null) {
     onSetupRecords(recP);
   }
@@ -65,6 +67,7 @@ Widget buildTestWidget({
       ChangeNotifierProvider.value(value: recP),
       ChangeNotifierProvider.value(value: setP),
       ChangeNotifierProvider.value(value: onbP),
+      ChangeNotifierProvider.value(value: presetP),
     ],
     child: MaterialApp(
       theme: AppTheme.light,
