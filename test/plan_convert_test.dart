@@ -351,4 +351,161 @@ void main() {
       expect(recordProv.isChecked(today, 'meal', 'new-plan-id'), true);
     });
   });
+
+  group('设为日常计划防重与存量脏数据智能合并 (TC-17 ~ TC-19)', () {
+    test('TC-17: 设为日常计划时原子升级快照，今日有且仅有 1 条计划快照，打卡绝不重复计算热量', () async {
+      final (planProv, recordProv) = createProviders();
+      final today = todayStr();
+
+      // 用户今天录入了一个午餐
+      await recordProv.addDayEntry(
+        today,
+        kind: 'meal',
+        slot: 'lunch',
+        time: '12:00',
+        content: '两个汉堡',
+        calories: 600,
+        autoCheck: false,
+      );
+
+      final entriesBefore = recordProv.getDayEntries(today);
+      expect(entriesBefore.length, 1);
+      final initialEntry = entriesBefore.first;
+      expect(recordProv.isEntryChecked(today, initialEntry), false);
+
+      // 用户点击打卡
+      await recordProv.toggleEntryCheck(today, initialEntry);
+      expect(recordProv.isEntryChecked(today, initialEntry), true);
+
+      // 用户点击「设为日常计划」（每天执行）
+      final newMeal = await planProv.convertSnapshotToPlan(
+        type: 'lunch',
+        name: '两个汉堡',
+        time: '12:00',
+        calories: 600,
+        days: [1, 2, 3, 4, 5, 6, 7],
+        sourceSnapshotDate: today,
+        sourceSnapshotEntryId: initialEntry.id,
+      );
+
+      // 验证 1：今日快照列表有且仅有 1 条该午餐条目，绝无第二条重复计划！
+      final entriesAfter = recordProv.getDayEntries(today);
+      final lunchEntries = entriesAfter.where((e) => e.kind == 'meal' && e.slot == 'lunch').toList();
+      expect(lunchEntries.length, 1, reason: '今日午餐必须有且仅有 1 条，不能产生重复计划');
+      expect(lunchEntries.first.planItemId, newMeal.id);
+      expect(lunchEntries.first.isPlan, true);
+
+      // 验证 2：打卡状态迁移至新计划项，且依然处于打卡状态
+      expect(recordProv.isEntryChecked(today, lunchEntries.first), true);
+
+      // 验证 3：今日热量摄入计算恰好为 600 kcal，绝不重复计算翻倍！
+      final summary = dailySummary(planProv.plan, AppSettings(), recordProv.store, today);
+      expect(summary.mealIntake, 600, reason: '已打卡热量摄入只能计算一次 600 kcal，绝不能翻倍为 1200 kcal');
+      expect(summary.taskCount, 1);
+      expect(summary.doneCount, 1);
+    });
+
+    test('TC-18: 存量脏数据（今日已存在两个相同 planItemId 的计划项）经 syncDayEntries 自动智能合并', () async {
+      final (planProv, recordProv) = createProviders();
+      final today = todayStr();
+
+      final meal = MealItem(
+        id: 'm-dup-01',
+        type: 'lunch',
+        name: '两个汉堡',
+        time: '12:00',
+        calories: 600,
+        days: [1, 2, 3, 4, 5, 6, 7],
+      );
+      planProv.plan.meals.add(meal);
+
+      // 人为在今日放入 2 个指向同一个日常计划项的重复条目（模拟线上发生过的脏数据）
+      recordProv.store.dayEntries[today] = [
+        DayEntry(
+          id: 'dup-1',
+          kind: 'meal',
+          slot: 'lunch',
+          time: '12:00',
+          content: '两个汉堡（自定义）',
+          calories: 650, // 手改过热量
+          source: 'plan',
+          planItemId: 'm-dup-01',
+          caloriesDirty: true,
+        ),
+        DayEntry(
+          id: 'm-dup-01',
+          kind: 'meal',
+          slot: 'lunch',
+          time: '12:00',
+          content: '两个汉堡',
+          calories: 600,
+          source: 'plan',
+          planItemId: 'm-dup-01',
+        ),
+      ];
+
+      // 给其中一个打上卡
+      recordProv.store.checkRecords[today] = {
+        'meal:m-dup-01': CheckEntry(checkedAt: 123456),
+      };
+
+      // 触发 syncDayEntries
+      await recordProv.syncDayEntries(today, planProv.plan);
+
+      // 验证 1：自动去重合并为 1 条
+      final entries = recordProv.getDayEntries(today);
+      expect(entries.length, 1, reason: '同一 planItemId 的重复条目必须被自动清洗合并为 1 条');
+      final merged = entries.first;
+      expect(merged.planItemId, 'm-dup-01');
+      expect(merged.calories, 650, reason: '保留手改过的自定义有效数值');
+      expect(merged.caloriesDirty, true);
+
+      // 验证 2：打卡状态完好保持
+      expect(recordProv.isEntryChecked(today, merged), true);
+
+      // 验证 3：热量摄入计算正常（为 650，绝不叠加成 1250）
+      final summary = dailySummary(planProv.plan, AppSettings(), recordProv.store, today);
+      expect(summary.mealIntake, 650);
+      expect(summary.taskCount, 1);
+      expect(summary.doneCount, 1);
+    });
+
+    test('TC-19: 正餐已有日常计划快照时，未填写的空白正餐骨架被自动清理', () async {
+      final (planProv, recordProv) = createProviders();
+      final today = todayStr();
+
+      // 计划中制定了日常晚餐
+      planProv.plan.meals.add(MealItem(
+        id: 'm-dinner-01',
+        type: 'dinner',
+        name: '鸡胸肉沙拉',
+        time: '18:30',
+        calories: 350,
+        days: [1, 2, 3, 4, 5, 6, 7],
+      ));
+
+      // 今日既有空白晚餐骨架，又有其他条目
+      recordProv.store.dayEntries[today] = [
+        DayEntry(
+          id: 'blank-dinner',
+          kind: 'meal',
+          slot: 'dinner',
+          time: '18:30',
+          content: '',
+          calories: null,
+          source: 'manual',
+        ),
+      ];
+
+      // 触发 syncDayEntries
+      await recordProv.syncDayEntries(today, planProv.plan);
+
+      // 验证空白骨架被日常计划快照替换，晚餐仅有 1 条
+      final entries = recordProv.getDayEntries(today);
+      expect(entries.length, 1);
+      expect(entries.first.content, '鸡胸肉沙拉');
+      expect(entries.first.calories, 350);
+      expect(entries.first.isPlan, true);
+    });
+  });
 }

@@ -7,7 +7,6 @@ import 'package:provider/provider.dart';
 
 import '../models/records.dart';
 import '../providers/plan_provider.dart';
-import '../providers/record_provider.dart';
 import '../theme/app_theme.dart';
 import '../utils/date_utils.dart';
 import '../utils/plan_utils.dart';
@@ -184,13 +183,11 @@ class _ConvertToPlanSheetState extends State<ConvertToPlanSheet> {
     setState(() => _saving = true);
     try {
       final planProvider = context.read<PlanProvider>();
-      final recordProvider = context.read<RecordProvider>();
       final oldEntry = widget.entry;
       final targetSlot = oldEntry.slot.isNotEmpty ? oldEntry.slot : 'lunch';
-      final oldCheckKey = recordProvider.checkKeyOf(oldEntry);
 
-      // 1. 转为长期日常计划（含旧冲突项自动裁剪或删除）
-      final newMeal = await planProvider.convertSnapshotToPlan(
+      // 1. 转为长期日常计划并原子升级当天快照（含旧冲突裁剪、当天快照就地升级、打卡平滑迁移、防重）
+      await planProvider.convertSnapshotToPlan(
         type: targetSlot,
         name: oldEntry.content,
         time: _timeCtrl.text.trim().isNotEmpty ? _timeCtrl.text.trim() : '12:00',
@@ -201,33 +198,8 @@ class _ConvertToPlanSheetState extends State<ConvertToPlanSheet> {
         days: daysList,
         reminder: _reminder,
         note: oldEntry.note,
-      );
-
-      // 2. 升级当天快照为已关联计划项
-      final updated = DayEntry(
-        id: oldEntry.id,
-        kind: 'meal',
-        slot: targetSlot,
-        time: _timeCtrl.text.trim().isNotEmpty ? _timeCtrl.text.trim() : oldEntry.time,
-        content: oldEntry.content,
-        calories: oldEntry.calories,
-        protein: oldEntry.protein,
-        carbs: oldEntry.carbs,
-        fat: oldEntry.fat,
-        note: oldEntry.note,
-        source: 'plan',
-        planItemId: newMeal.id,
-        detached: false,
-        caloriesDirty: oldEntry.caloriesDirty,
-      );
-      await recordProvider.updateDayEntry(widget.date, updated);
-
-      // 3. 打卡状态平滑迁移
-      final newCheckKey = recordProvider.checkKeyOf(updated);
-      await recordProvider.migrateEntryCheck(
-        date: widget.date,
-        oldCheckKey: oldCheckKey,
-        newCheckKey: newCheckKey,
+        sourceSnapshotDate: widget.date,
+        sourceSnapshotEntryId: oldEntry.id,
       );
 
       if (!mounted) return;

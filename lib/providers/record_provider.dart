@@ -33,6 +33,20 @@ class RecordProvider extends ChangeNotifier {
     });
     _prune();
     _migrateExtraFoods();
+    _deduplicateAllDayEntries();
+  }
+
+  /// 扫描清洗存量脏数据：对所有日期快照执行去重合并，防止历史重复计划项残留
+  void _deduplicateAllDayEntries() {
+    var dirty = false;
+    store.dayEntries.forEach((date, list) {
+      if (_deduplicateDayEntriesInPlace(date, list)) {
+        dirty = true;
+      }
+    });
+    if (dirty) {
+      _persistEntries();
+    }
   }
 
   Future<void> _persistAll() async {
@@ -264,10 +278,106 @@ class RecordProvider extends ChangeNotifier {
       a.detached == b.detached &&
       a.caloriesDirty == b.caloriesDirty;
 
+  /// 对单日条目快照执行就地去重合并：
+  /// 1. 同一计划项（同 kind 且同 planItemId）在同一天有且仅能保留一条，多余重复项智能合并（保留打卡状态、损耗、手改热量、备注等事实）；
+  /// 2. 当日已有某正餐餐次的有效计划项时，清理多余的未填写的空白正餐骨架；
+  /// 返回是否有改动（有改动需落盘）。
+  bool _deduplicateDayEntriesInPlace(String date, List<DayEntry> list) {
+    if (list.length <= 1) return false;
+    final seenPlanKeys = <String, int>{};
+    final kept = <DayEntry>[];
+    var changed = false;
+
+    final hasPlanMealSlots = <String>{};
+    for (final e in list) {
+      if (e.isPlan && e.kind == 'meal' && e.slot.isNotEmpty) {
+        hasPlanMealSlots.add(e.slot);
+      }
+    }
+
+    for (final e in list) {
+      // 场景 1：无内容且无热量的正餐空白骨架，且当天已有该餐次的日常计划快照 → 自动清理
+      if (!e.isPlan &&
+          e.kind == 'meal' &&
+          e.slot != 'snack' &&
+          e.content.trim().isEmpty &&
+          e.calories == null &&
+          hasPlanMealSlots.contains(e.slot)) {
+        changed = true;
+        continue;
+      }
+
+      // 场景 2：相同日常计划项快照重复 → 智能合并
+      if (e.isPlan && e.planItemId.isNotEmpty) {
+        final key = '${e.kind}:${e.planItemId}';
+        if (seenPlanKeys.containsKey(key)) {
+          final idx = seenPlanKeys[key]!;
+          final existing = kept[idx];
+          changed = true;
+
+          final eChecked = isEntryChecked(date, e);
+          final existChecked = isEntryChecked(date, existing);
+          if (eChecked && !existChecked) {
+            final kExist = checkKeyOf(existing);
+            final kE = checkKeyOf(e);
+            store.checkRecords[date] ??= {};
+            store.checkRecords[date]![kExist] = store.checkRecords[date]![kE] ??
+                CheckEntry(checkedAt: DateTime.now().millisecondsSinceEpoch);
+          }
+          final preferE = e.caloriesDirty ||
+              (e.content.isNotEmpty && existing.content.isEmpty) ||
+              (e.items != null && e.items!.isNotEmpty);
+
+          kept[idx] = DayEntry(
+            id: existing.id,
+            kind: existing.kind,
+            slot: existing.slot,
+            time: (preferE && e.time.isNotEmpty) ? e.time : existing.time,
+            content: (preferE && e.content.isNotEmpty) ? e.content : existing.content,
+            calories: (preferE && e.caloriesDirty)
+                ? e.calories
+                : (existing.caloriesDirty ? existing.calories : e.calories),
+            protein: (preferE && e.caloriesDirty)
+                ? e.protein
+                : (existing.caloriesDirty ? existing.protein : e.protein),
+            carbs: (preferE && e.caloriesDirty)
+                ? e.carbs
+                : (existing.caloriesDirty ? existing.carbs : e.carbs),
+            fat: (preferE && e.caloriesDirty)
+                ? e.fat
+                : (existing.caloriesDirty ? existing.fat : e.fat),
+            note: e.note.isNotEmpty ? e.note : existing.note,
+            source: 'plan',
+            planItemId: existing.planItemId,
+            detached: existing.detached && e.detached,
+            caloriesDirty: existing.caloriesDirty || e.caloriesDirty,
+            detail: (preferE && e.detail != null) ? e.detail : existing.detail,
+            items: (preferE && e.items != null) ? e.items : existing.items,
+          );
+          continue;
+        } else {
+          seenPlanKeys[key] = kept.length;
+          kept.add(e);
+        }
+      } else {
+        kept.add(e);
+      }
+    }
+
+    if (changed || kept.length != list.length) {
+      list.clear();
+      list.addAll(kept);
+      sortDayEntries(list);
+      return true;
+    }
+    return false;
+  }
+
   /// 同步某天快照与当前计划（幂等；只对 ≤ 今天操作，未来日期不生成）。
   /// 规则（spec day-snapshot-design §4.1）：
   ///   - 计划外条目（加餐/加练，source != plan）原样保留，永不触碰
   ///   - 未脱钩条目跟随计划（content/time/slot；calories 未被手改则跟随）
+  ///   - 严禁重复：同一日常计划项在同日仅保留一条，多余重复项就地智能合并，杜绝双重打卡与热量重复计算
   ///   - 未脱钩但计划里已删除（该日无此计划项）→ 移除；脱钩条目永不动
   ///   - 计划里新增 → 追加新快照
   /// 有变化才 notify + 落盘。
@@ -282,34 +392,97 @@ class RecordProvider extends ChangeNotifier {
     }
 
     final kept = <DayEntry>[];
+    final seenPlanKeys = <String, int>{};
+
     for (final e in (old ?? const <DayEntry>[])) {
       if (!e.isPlan) {
+        // 若当天已有该正餐餐次的日常计划快照，清理掉未填写的空白骨架
+        if (e.kind == 'meal' &&
+            e.slot != 'snack' &&
+            e.content.trim().isEmpty &&
+            e.calories == null &&
+            planItems.any((p) => p.kind == 'meal' && p.slot == e.slot)) {
+          continue;
+        }
         kept.add(e);
         continue;
       }
+
       final p = planItems.where((x) => x.kind == e.kind && x.id == e.planItemId).toList();
       if (p.isEmpty) {
         if (e.detached) kept.add(e); // 脱钩：计划里删了也永久保留
-      } else if (!e.detached) {
-        final s = p.first;
-        kept.add(DayEntry(
-          id: e.id,
-          kind: e.kind,
-          slot: s.slot,
-          time: s.time,
-          content: s.content,
-          calories: e.caloriesDirty ? e.calories : s.calories,
-          protein: e.caloriesDirty ? e.protein : s.protein,
-          carbs: e.caloriesDirty ? e.carbs : s.carbs,
-          fat: e.caloriesDirty ? e.fat : s.fat,
-          note: e.note,
-          source: 'plan',
-          planItemId: e.planItemId,
-          detached: false,
-          caloriesDirty: e.caloriesDirty,
-        ));
       } else {
-        kept.add(e);
+        final s = p.first;
+        final mapped = (!e.detached)
+            ? DayEntry(
+                id: e.id,
+                kind: e.kind,
+                slot: s.slot,
+                time: s.time,
+                content: s.content,
+                calories: e.caloriesDirty ? e.calories : s.calories,
+                protein: e.caloriesDirty ? e.protein : s.protein,
+                carbs: e.caloriesDirty ? e.carbs : s.carbs,
+                fat: e.caloriesDirty ? e.fat : s.fat,
+                note: e.note,
+                source: 'plan',
+                planItemId: e.planItemId,
+                detached: false,
+                caloriesDirty: e.caloriesDirty,
+                detail: e.detail,
+                items: e.items,
+              )
+            : e;
+
+        // 去重合并：同一计划项 (kind, planItemId) 严禁在同日重复出现
+        final key = '${mapped.kind}:${mapped.planItemId}';
+        if (seenPlanKeys.containsKey(key)) {
+          final idx = seenPlanKeys[key]!;
+          final existing = kept[idx];
+
+          final eChecked = isEntryChecked(date, mapped);
+          final existChecked = isEntryChecked(date, existing);
+          if (eChecked && !existChecked) {
+            final kExist = checkKeyOf(existing);
+            final kMapped = checkKeyOf(mapped);
+            store.checkRecords[date] ??= {};
+            store.checkRecords[date]![kExist] = store.checkRecords[date]![kMapped] ??
+                CheckEntry(checkedAt: DateTime.now().millisecondsSinceEpoch);
+          }
+          final preferMapped = mapped.caloriesDirty ||
+              (mapped.content.isNotEmpty && existing.content.isEmpty) ||
+              (mapped.items != null && mapped.items!.isNotEmpty);
+
+          kept[idx] = DayEntry(
+            id: existing.id,
+            kind: existing.kind,
+            slot: s.slot,
+            time: (preferMapped && mapped.time.isNotEmpty) ? mapped.time : existing.time,
+            content: (preferMapped && mapped.content.isNotEmpty) ? mapped.content : existing.content,
+            calories: (preferMapped && mapped.caloriesDirty)
+                ? mapped.calories
+                : (existing.caloriesDirty ? existing.calories : s.calories),
+            protein: (preferMapped && mapped.caloriesDirty)
+                ? mapped.protein
+                : (existing.caloriesDirty ? existing.protein : s.protein),
+            carbs: (preferMapped && mapped.caloriesDirty)
+                ? mapped.carbs
+                : (existing.caloriesDirty ? existing.carbs : s.carbs),
+            fat: (preferMapped && mapped.caloriesDirty)
+                ? mapped.fat
+                : (existing.caloriesDirty ? existing.fat : s.fat),
+            note: mapped.note.isNotEmpty ? mapped.note : existing.note,
+            source: 'plan',
+            planItemId: s.id,
+            detached: existing.detached && mapped.detached,
+            caloriesDirty: existing.caloriesDirty || mapped.caloriesDirty,
+            detail: (preferMapped && mapped.detail != null) ? mapped.detail : existing.detail,
+            items: (preferMapped && mapped.items != null) ? mapped.items : existing.items,
+          );
+        } else {
+          seenPlanKeys[key] = kept.length;
+          kept.add(mapped);
+        }
       }
     }
     for (final p in planItems) {

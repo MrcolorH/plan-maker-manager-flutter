@@ -6,6 +6,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../models/plan_data.dart';
+import '../models/records.dart';
 import '../services/reminder_service.dart';
 import '../services/storage_service.dart';
 import '../utils/date_utils.dart';
@@ -335,6 +336,8 @@ class PlanProvider extends ChangeNotifier {
     required List<int> days,
     bool reminder = true,
     String note = '',
+    String? sourceSnapshotDate,
+    String? sourceSnapshotEntryId,
   }) async {
     final selectedDays = [...days]..sort();
 
@@ -390,6 +393,48 @@ class PlanProvider extends ChangeNotifier {
     // 3. 首次添加计划初始化 startedAt
     if (plan.meta.startedAt.isEmpty) {
       plan.meta.startedAt = todayStr();
+    }
+
+    // 4. 源快照就地原子升级绑定：在触发 _syncToday 前，必须把当天的该快照条目直接就地升级关联为 newMeal，
+    // 这样当 _syncToday 运行时，就绝不会把 newMeal 当成未实例化的新计划而追加一条重复快照！
+    if (sourceSnapshotDate != null &&
+        sourceSnapshotEntryId != null &&
+        sourceSnapshotDate.isNotEmpty &&
+        sourceSnapshotEntryId.isNotEmpty) {
+      final dayList = _records.getDayEntries(sourceSnapshotDate);
+      final entryIdx = dayList.indexWhere((e) => e.id == sourceSnapshotEntryId);
+      if (entryIdx >= 0) {
+        final oldEntry = dayList[entryIdx];
+        final oldCheckKey = _records.checkKeyOf(oldEntry);
+
+        final updated = DayEntry(
+          id: oldEntry.id,
+          kind: 'meal',
+          slot: type,
+          time: time.isNotEmpty ? time : oldEntry.time,
+          content: name,
+          calories: calories,
+          protein: protein ?? oldEntry.protein,
+          carbs: carbs ?? oldEntry.carbs,
+          fat: fat ?? oldEntry.fat,
+          note: note.isNotEmpty ? note : oldEntry.note,
+          source: 'plan',
+          planItemId: newMeal.id,
+          detached: false,
+          caloriesDirty: oldEntry.caloriesDirty,
+          detail: oldEntry.detail,
+          items: oldEntry.items,
+        );
+        await _records.updateDayEntry(sourceSnapshotDate, updated);
+
+        // 平滑迁移打卡状态（若原条目已有打卡，迁移到 meal:${newMeal.id}）
+        final newCheckKey = _records.checkKeyOf(updated);
+        await _records.migrateEntryCheck(
+          date: sourceSnapshotDate,
+          oldCheckKey: oldCheckKey,
+          newCheckKey: newCheckKey,
+        );
+      }
     }
 
     notifyListeners();
