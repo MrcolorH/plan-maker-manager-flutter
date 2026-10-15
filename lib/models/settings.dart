@@ -14,14 +14,14 @@ class AiConfig {
     this.provider = 'deepseek',
     this.endpoint = 'https://api.deepseek.com',
     this.apiKey = '',
-    this.model = 'deepseek-chat',
+    this.model = 'deepseek-v4.1-flash',
   });
 
   factory AiConfig.fromJson(Map<String, dynamic> json) => AiConfig(
         provider: _str(json['provider'], 'deepseek'),
         endpoint: _str(json['endpoint'], 'https://api.deepseek.com'),
         apiKey: _str(json['apiKey']),
-        model: _str(json['model'], 'deepseek-chat'),
+        model: _str(json['model'], 'deepseek-v4.1-flash'),
       );
 
   Map<String, dynamic> toJson() => {
@@ -122,7 +122,7 @@ class AiProviderPreset {
 }
 
 const List<AiProviderPreset> kAiProviders = [
-  AiProviderPreset('deepseek', 'DeepSeek', 'https://api.deepseek.com', 'deepseek-chat'),
+  AiProviderPreset('deepseek', 'DeepSeek', 'https://api.deepseek.com', 'deepseek-v4.1-flash'),
   AiProviderPreset('gemini', 'Google Gemini', 'https://generativelanguage.googleapis.com/v1beta', 'gemini-2.5-flash'),
   AiProviderPreset('kimi', 'Kimi（月之暗面）', 'https://api.moonshot.cn/v1', 'kimi-k3'),
   AiProviderPreset('mimo', 'MiMo（小米）', 'https://api.xiaomimimo.com/v1', 'mimo-v2.5'),
@@ -215,8 +215,16 @@ const List<GeminiModelOption> kGeminiModels = [
 
 /// 已退役的旧模型名 → 当前可用模型名
 const Map<String, String> kRetiredModelMap = {
-  // deepseek-chat 属于官方长期标准端点，支持非思考快速问答，保留原样
+  // DeepSeek 官方于 2026 年 7 月退役旧版 deepseek-chat 与 deepseek-reasoner 别名，
+  // 9 月上线最新的 DeepSeek-V4.1-Flash 架构；此处自动平滑迁移老用户的历史配置
+  'deepseek-chat': 'deepseek-v4.1-flash',
+  'deepseek-reasoner': 'deepseek-v4.1-flash',
+  'deepseek-v4-flash': 'deepseek-v4.1-flash',
+  'deepseek-v4-flash-vision-exp': 'deepseek-v4.1-flash',
 };
+
+/// 模型退役自动迁移辅助函数
+String migrateRetiredModel(String model) => kRetiredModelMap[model.trim()] ?? model;
 
 /// 全部设置
 class AppSettings {

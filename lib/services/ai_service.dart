@@ -380,8 +380,8 @@ String? _extractOpenAiError(dynamic data, int? statusCode) {
 }
 
 /// 判断在 OpenAI 兼容协议下是否应向服务端发送 'thinking': {'type': 'disabled'}
-/// 官方 deepseek-chat 等标准模型接口不支持 thinking 参数，传递会直接 400 报错。
-/// 仅针对明确是 deepseek-flash 或 v4 架构且非 deepseek-chat 基础模型时，才在关闭思考时传 disabled。
+/// DeepSeek V4 / V4.1 系列默认开启思考模式 (effort=high)，
+/// 估算热量/运动消耗这类结构化小任务使用非思考模式可极大提速（从 30~40s 缩减到 1~2s 秒级返回）。
 bool shouldPassThinkingDisabled(
   String model, {
   String provider = 'deepseek',
@@ -393,7 +393,7 @@ bool shouldPassThinkingDisabled(
       endpoint.toLowerCase().contains('deepseek.com');
   if (!isDeepSeek) return false;
   final m = model.toLowerCase();
-  return (m.contains('v4') || m.contains('flash')) && !m.contains('chat');
+  return m.contains('flash') || m.contains('v4') || m.contains('pro');
 }
 
 class AiService {
@@ -430,11 +430,11 @@ class AiService {
     }
 
     final base = normalizeEndpoint(config.endpoint);
-    final model = config.model.isEmpty ? 'deepseek-chat' : config.model;
+    final model = config.model.isEmpty ? 'deepseek-v4.1-flash' : config.model;
     final sw = Stopwatch()..start();
     debugPrint('[AiService] >>> $base/chat/completions model=$model thinking=$enableThinking '
         'msg=${messages.map((m) => '${m['role']}:${(m['content'] ?? '').length}字').join(' | ')}');
-    // 仅在明确是 deepseek-flash 或 v4 架构且非 deepseek-chat 基础模型时，才默认传 thinking: disabled
+    // 仅在明确是 deepseek-flash 或 v4 架构时，才在非深度思考时传 thinking: disabled 提速
     final shouldPassThinkingDisabledFlag = shouldPassThinkingDisabled(
       model,
       provider: config.provider,

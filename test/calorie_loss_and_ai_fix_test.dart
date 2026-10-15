@@ -161,10 +161,14 @@ void main() {
       );
     });
 
-    test('DeepSeek 官方预设默认模型为 deepseek-chat，且默认不强制重写', () {
+    test('DeepSeek 官方预设默认模型为 deepseek-v4.1-flash，且退役旧别名映射至 deepseek-v4.1-flash', () {
       final deepseekPreset = kAiProviders.firstWhere((p) => p.value == 'deepseek');
-      expect(deepseekPreset.model, 'deepseek-chat');
-      expect(kRetiredModelMap.containsKey('deepseek-chat'), isFalse);
+      expect(deepseekPreset.model, 'deepseek-v4.1-flash');
+      expect(kRetiredModelMap['deepseek-chat'], 'deepseek-v4.1-flash');
+      expect(kRetiredModelMap['deepseek-reasoner'], 'deepseek-v4.1-flash');
+      expect(kRetiredModelMap['deepseek-v4-flash'], 'deepseek-v4.1-flash');
+      expect(migrateRetiredModel('deepseek-chat'), 'deepseek-v4.1-flash');
+      expect(migrateRetiredModel('deepseek-v4.1-flash'), 'deepseek-v4.1-flash');
     });
 
     test('Gemini 官方预设默认模型为 gemini-2.5-flash', () {
@@ -172,11 +176,13 @@ void main() {
       expect(geminiPreset.model, 'gemini-2.5-flash');
     });
 
-    test('shouldPassThinkingDisabled 仅对 flash/v4 传递，deepseek-chat 绝不传递 thinking 参数', () {
-      expect(shouldPassThinkingDisabled('deepseek-chat'), isFalse);
-      expect(shouldPassThinkingDisabled('deepseek-reasoner'), isFalse);
+    test('shouldPassThinkingDisabled 仅对 flash/v4/pro 且非深度思考时传递 disabled 提速', () {
+      expect(shouldPassThinkingDisabled('deepseek-v4.1-flash'), isTrue);
+      expect(shouldPassThinkingDisabled('deepseek-v4.1-flash', enableThinking: true), isFalse);
       expect(shouldPassThinkingDisabled('deepseek-v4-flash'), isTrue);
+      expect(shouldPassThinkingDisabled('deepseek-chat'), isFalse);
       expect(shouldPassThinkingDisabled('kimi-k3'), isFalse);
     });
   });
 }
+

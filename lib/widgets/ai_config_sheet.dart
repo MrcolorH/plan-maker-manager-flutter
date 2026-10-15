@@ -260,7 +260,7 @@ class _AiConfigSheetState extends State<_AiConfigSheet> {
             if (provider == 'gemini') ...[
               _buildGeminiModelSelector(),
             ] else
-              _field(_modelCtrl, 'deepseek-chat'),
+              _field(_modelCtrl, 'deepseek-v4.1-flash'),
             const SizedBox(height: 12),
             PrimaryButton(
               _saving ? '保存中…' : widget.confirmText,
