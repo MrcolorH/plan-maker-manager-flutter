@@ -430,7 +430,7 @@ class AiService {
     }
 
     final base = normalizeEndpoint(config.endpoint);
-    final model = config.model.isEmpty ? 'deepseek-v4.1-flash' : config.model;
+    final model = config.model.isEmpty ? 'deepseek-flash' : config.model;
     final sw = Stopwatch()..start();
     debugPrint('[AiService] >>> $base/chat/completions model=$model thinking=$enableThinking '
         'msg=${messages.map((m) => '${m['role']}:${(m['content'] ?? '').length}字').join(' | ')}');
