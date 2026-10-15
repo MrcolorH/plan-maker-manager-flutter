@@ -25,6 +25,7 @@ import '../../utils/plan_utils.dart';
 import '../../widgets/ai_config_sheet.dart';
 import '../../widgets/meal_card.dart';
 import '../today/daily_verify_page.dart';
+import 'weekly_report_page.dart';
 
 class StatsPage extends StatefulWidget {
   const StatsPage({super.key});
@@ -130,14 +131,43 @@ class _StatsPageState extends State<StatsPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               const Text('本周热量缺口', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+              const SizedBox(width: 8),
+              Text('共 $total · 日均 $avg',
+                  style: const TextStyle(fontSize: 11, color: AppColors.textSub)),
               const Spacer(),
-              Padding(
-                padding: const EdgeInsets.only(top: 2),
-                child: Text('共 $total · 日均 $avg',
-                    style: const TextStyle(fontSize: 11, color: AppColors.textSub)),
+              GestureDetector(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const WeeklyReportPage()),
+                  );
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: AppColors.primaryBg,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('✨', style: TextStyle(fontSize: 10)),
+                      SizedBox(width: 3),
+                      Text(
+                        'AI 周复盘',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.primary,
+                        ),
+                      ),
+                      Icon(Icons.chevron_right, size: 14, color: AppColors.primary),
+                    ],
+                  ),
+                ),
               ),
             ],
           ),
@@ -217,9 +247,40 @@ class _StatsPageState extends State<StatsPage> {
           const SizedBox(height: 6),
           const Text('0 线以上=缺口（掉秤方向，绿），以下=超标（橙）；点某天可补录',
               style: TextStyle(fontSize: 10, color: AppColors.textFaint)),
+          const SizedBox(height: 10),
+          GestureDetector(
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const WeeklyReportPage()),
+              );
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppColors.tagBg,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Row(
+                children: [
+                  Text('🌿', style: TextStyle(fontSize: 12)),
+                  SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'AI 周度复盘与未来减脂建议',
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.text),
+                    ),
+                  ),
+                  Text('生成长图海报', style: TextStyle(fontSize: 10, color: AppColors.primary, fontWeight: FontWeight.w500)),
+                  Icon(Icons.chevron_right, size: 14, color: AppColors.primary),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );
+
   }
 
   Color _barColor(num deficit) {

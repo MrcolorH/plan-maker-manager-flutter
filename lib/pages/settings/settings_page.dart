@@ -112,7 +112,7 @@ class SettingsPage extends StatelessWidget {
               Navigator.of(context).push(AppRoutes.fade<void>(const OnboardingPage()));
             }),
             const _GroupLabel('关于'),
-            const _Row('版本', '1.2.1'),
+            const _Row('版本', '1.3.1'),
             const _Row('作者', '听风闻人语'),
             _Row('QQ', '1419046431', onTap: () => _copyQQ(context, '1419046431')),
             const SizedBox(height: 12),

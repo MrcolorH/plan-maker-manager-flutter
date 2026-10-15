@@ -23,6 +23,7 @@ class StorageService {
   static const String kUserPresets = 'userPresets';
   static const String kUserFoods = 'userFoods';
   static const String kAiEstimateCache = 'aiEstimateCache';
+  static const String kWeeklyReportCache = 'weeklyReportCache';
 
   late SharedPreferences _prefs;
   bool _ready = false;

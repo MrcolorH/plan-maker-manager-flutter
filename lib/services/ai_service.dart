@@ -105,6 +105,119 @@ JSON 结构：
 5. 用户提供了体重时，运动消耗按该体重估算
 6. name 用简洁中文（20字内）；meta.dailyCalorieTarget 填用户给定的目标摄入，未给定则省略''';
 
+const String kWeeklyAdviceSys = '''你是资深注册营养师与专业运动减脂教练。
+用户会提供他在减脂 App 中统计好的过去 7 天真实减脂数据（包含体重体脂变化、每日摄入/消耗/热量缺口、三大营养素实际克数与供能比、打卡与运动情况）。
+
+【你的核心任务】
+仅针对所提供的客观数据进行定性分析与指导。绝对不要做繁杂的数据重算，把重点放在减脂成效复盘、饮食结构优缺点、以及未来一周切实可执行的微习惯调整建议上。
+
+严格只返回一个 JSON 对象，不要输出任何额外的问候、寒暄或 markdown 围栏标记：
+{
+  "headline": "一句话核心评价（15字内，如：执行稳健，减脂节奏良好 / 需重点提升蛋白质饱腹感）",
+  "review": "本周点评（120~220字，客观复盘掉秤速度、热量缺口达成度、三大营养素合理性与生活运动配合，指明主要优点与具体短板）",
+  "suggestions": [
+    "第1条下周落地建议（具体到下一周的三餐或摄入微调，如：早餐增加1个水煮蛋，将日均蛋白质补足至75g）",
+    "第2条下周落地建议（针对饮食控油、烹饪方式或某一餐的改进建议）",
+    "第3条下周落地建议（针对运动频次、非运动消耗NEAT或热量预算的微调建议）"
+  ],
+  "encouragement": "教练寄语（40~80字，结合平台期与减脂心态给予真诚、科学的鼓励）"
+}''';
+
+/// 周报 AI 点评与建议模型
+class WeeklyAdviceResult {
+  final String headline;
+  final String review;
+  final List<String> suggestions;
+  final String encouragement;
+
+  const WeeklyAdviceResult({
+    required this.headline,
+    required this.review,
+    required this.suggestions,
+    required this.encouragement,
+  });
+
+  factory WeeklyAdviceResult.fromJson(Map<String, dynamic> json) {
+    final hl = json['headline'] is String ? (json['headline'] as String).trim() : '';
+    final rv = json['review'] is String ? (json['review'] as String).trim() : '';
+    final sugs = <String>[];
+    if (json['suggestions'] is List) {
+      for (final s in json['suggestions'] as List) {
+        if (s is String && s.trim().isNotEmpty) {
+          sugs.add(s.trim());
+        }
+      }
+    }
+    final enc = json['encouragement'] is String ? (json['encouragement'] as String).trim() : '';
+    return WeeklyAdviceResult(
+      headline: hl.isNotEmpty ? hl : '执行稳健，减脂节奏良好',
+      review: rv,
+      suggestions: sugs,
+      encouragement: enc,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'headline': headline,
+        'review': review,
+        'suggestions': suggestions,
+        'encouragement': encouragement,
+      };
+}
+
+/// 解析 AI 周报建议（支持 JSON 解析与纯文本降级提取）
+WeeklyAdviceResult parseWeeklyAdvice(String text) {
+  final json = extractJsonObj(text);
+  if (json != null && (json['review'] != null || json['suggestions'] != null)) {
+    return WeeklyAdviceResult.fromJson(json);
+  }
+
+  var headline = '减脂周度复盘与建议';
+  final suggestions = <String>[];
+  final reviewBuffer = StringBuffer();
+  final encBuffer = StringBuffer();
+  var currentSection = '';
+
+  final lines = text.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
+  for (final line in lines) {
+    if (line.contains('本周点评') || line.contains('整体点评')) {
+      currentSection = 'review';
+      continue;
+    } else if (line.contains('建议') || line.contains('下周建议')) {
+      currentSection = 'suggestions';
+      continue;
+    } else if (line.contains('寄语') || line.contains('心态') || line.contains('教练寄语')) {
+      currentSection = 'encouragement';
+      continue;
+    }
+
+    if (currentSection == 'review') {
+      reviewBuffer.writeln(line);
+    } else if (currentSection == 'suggestions') {
+      if (RegExp(r'^[-*•\d+.]').hasMatch(line)) {
+        final clean = line.replaceFirst(RegExp(r'^[-*•\d+.\s]+'), '').trim();
+        if (clean.isNotEmpty) suggestions.add(clean);
+      } else {
+        if (line.isNotEmpty) suggestions.add(line);
+      }
+    } else if (currentSection == 'encouragement') {
+      encBuffer.writeln(line);
+    } else if (headline == '减脂周度复盘与建议' && line.length < 30 && !line.startsWith('#')) {
+      headline = line.replaceAll(RegExp(r'[*#]'), '').trim();
+    }
+  }
+
+  final review = reviewBuffer.toString().trim();
+  final encouragement = encBuffer.toString().trim();
+
+  return WeeklyAdviceResult(
+    headline: headline,
+    review: review.isNotEmpty ? review : (text.length > 300 ? text.substring(0, 300) : text),
+    suggestions: suggestions.isNotEmpty ? suggestions : ['继续保持合理热量缺口，规律作息与记录。'],
+    encouragement: encouragement.isNotEmpty ? encouragement : '不求快但求稳，坚持就是胜利！',
+  );
+}
+
 /// HTTP 状态码 → 中文提示
 String httpErrorMsg(int code) {
   const map = {
@@ -936,4 +1049,27 @@ class AiService {
     obj['version'] = '1.0';
     return obj;
   }
+
+  /// 周报「AI 营养师点评与建议」：根据本地统计数据生成定性分析与下周建议
+  Future<WeeklyAdviceResult> generateWeeklyAdvice(
+    AiConfig config,
+    String statsSummary, {
+    void Function(Map<String, dynamic>)? onUsage,
+  }) async {
+    final messages = [
+      {'role': 'system', 'content': kWeeklyAdviceSys},
+      {
+        'role': 'user',
+        'content': '请根据以下我过去 7 天的真实减脂数据，给出专业客观的周度复盘与下周指导：\n\n$statsSummary',
+      },
+    ];
+    final content = await chat(
+      config,
+      messages,
+      timeoutMs: 60000,
+      onUsage: onUsage,
+    );
+    return parseWeeklyAdvice(content);
+  }
 }
+
