@@ -30,13 +30,13 @@ String addDays(String str, int n) {
   return fmtDate(date);
 }
 
-const List<String> _weekCn = ['', '一', '二', '三', '四', '五', '六', '七'];
+const List<String> _weekCn = ['', '一', '二', '三', '四', '五', '六', '日'];
 
 String weekCn(int weekday) => (weekday >= 1 && weekday <= 7) ? _weekCn[weekday] : '';
 
 /// days 数组 → '一三五' / '每天'
 String daysCn(List<int>? days) {
-  if (days == null || days.isEmpty) return '每天';
+  if (days == null || days.isEmpty || days.toSet().length == 7) return '每天';
   final list = [...days]..sort();
   return list.map((d) => _weekCn[d]).join();
 }

@@ -323,10 +323,10 @@ class _PlanPageState extends State<PlanPage> {
     final selected = _selected.contains(m.id);
     final sub = Row(
       children: [
-        if (m.days.isNotEmpty)
-          Tag(daysCn(m.days), color: 'green')
-        else if (m.dates.isNotEmpty)
-          Tag(datesCn(m.dates), color: 'green'),
+        if (m.dates.isNotEmpty)
+          Tag(datesCn(m.dates), color: 'green')
+        else
+          Tag(daysCn(m.days), color: 'green'),
         const SizedBox(width: 2),
         Text(m.time, style: const TextStyle(fontSize: 12, color: AppColors.orange)),
         const SizedBox(width: 8),
@@ -353,10 +353,10 @@ class _PlanPageState extends State<PlanPage> {
     final selected = _selected.contains(e.id);
     final sub = Row(
       children: [
-        if (e.days.isNotEmpty)
-          Tag(daysCn(e.days), color: 'green')
-        else if (e.dates.isNotEmpty)
-          Tag(datesCn(e.dates), color: 'green'),
+        if (e.dates.isNotEmpty)
+          Tag(datesCn(e.dates), color: 'green')
+        else
+          Tag(daysCn(e.days), color: 'green'),
         const SizedBox(width: 2),
         Text(e.time, style: const TextStyle(fontSize: 12, color: AppColors.orange)),
         const SizedBox(width: 8),

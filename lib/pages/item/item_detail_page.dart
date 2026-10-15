@@ -101,7 +101,11 @@ class ItemDetailPage extends StatelessWidget {
             if (m.dates.isNotEmpty)
               _infoRow('执行日期', datesCn(m.dates, 3))
             else
-              _infoRow('执行星期', '每周${daysCn(m.days)}'),
+              _infoRow(
+                '执行星期',
+                daysCn(m.days) == '每天' ? '每天' : '每周${daysCn(m.days)}',
+                onTap: () => _edit(context),
+              ),
             if (m.startDate.isNotEmpty || m.endDate.isNotEmpty)
               _infoRow('阶段范围', '${m.startDate} ~ ${m.endDate}'),
             if (m.note.isNotEmpty) _infoRow('备注', m.note),
@@ -185,7 +189,11 @@ class ItemDetailPage extends StatelessWidget {
             if (e.dates.isNotEmpty)
               _infoRow('执行日期', datesCn(e.dates, 3))
             else
-              _infoRow('执行星期', '每周${daysCn(e.days)}'),
+              _infoRow(
+                '执行星期',
+                daysCn(e.days) == '每天' ? '每天' : '每周${daysCn(e.days)}',
+                onTap: () => _edit(context),
+              ),
             if (e.startDate.isNotEmpty || e.endDate.isNotEmpty)
               _infoRow('阶段范围', '${e.startDate} ~ ${e.endDate}'),
             if (e.note.isNotEmpty) _infoRow('注意事项', e.note),
@@ -231,8 +239,8 @@ class ItemDetailPage extends StatelessWidget {
     ];
   }
 
-  Widget _infoRow(String label, String value) {
-    return Padding(
+  Widget _infoRow(String label, String value, {VoidCallback? onTap}) {
+    final row = Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -241,10 +249,29 @@ class ItemDetailPage extends StatelessWidget {
             width: 64,
             child: Text(label, style: const TextStyle(fontSize: 12, color: AppColors.textSub)),
           ),
-          Expanded(child: Text(value, style: const TextStyle(fontSize: 13))),
+          Expanded(
+            child: Row(
+              children: [
+                Expanded(child: Text(value, style: const TextStyle(fontSize: 13))),
+                if (onTap != null)
+                  const Padding(
+                    padding: EdgeInsets.only(left: 4),
+                    child: Icon(Icons.edit_outlined, size: 14, color: AppColors.primary),
+                  ),
+              ],
+            ),
+          ),
         ],
       ),
     );
+    if (onTap != null) {
+      return InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(4),
+        child: row,
+      );
+    }
+    return row;
   }
 
   Widget _reminderRow(BuildContext context, String type, String id, bool reminder) {

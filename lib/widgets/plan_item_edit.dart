@@ -106,6 +106,7 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
   late final TextEditingController _burn;
   late final TextEditingController _note;
   late String _type;
+  late final Set<int> _selectedDays;
 
   final List<_DetC> _details = [];
   final List<_StepC> _steps = [];
@@ -114,6 +115,10 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
   @override
   void initState() {
     super.initState();
+    final rawDays = _isMeal ? widget.meal!.days : widget.exercise!.days;
+    final validDays = rawDays.where((d) => d >= 1 && d <= 7).toSet();
+    _selectedDays = validDays.isEmpty ? {1, 2, 3, 4, 5, 6, 7} : validDays;
+
     if (_isMeal) {
       final m = widget.meal!;
       _name = TextEditingController(text: m.name);
@@ -166,6 +171,7 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
   // ---------- 组装 ----------
 
   Object _collect() {
+    final daysList = _selectedDays.length == 7 ? <int>[] : (_selectedDays.toList()..sort());
     if (_isMeal) {
       final m = widget.meal!;
       final name = _name.text.trim();
@@ -176,6 +182,7 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
       final cal = int.tryParse(_cal.text.trim());
       m.calories = (cal != null && cal >= 0) ? cal : null;
       m.note = _note.text.trim();
+      m.days = daysList;
       m.details = _details
           .map((d) => DetailItem(item: d.item.text.trim(), amount: d.amount.text.trim()))
           .where((d) => d.item.isNotEmpty)
@@ -193,6 +200,7 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
     final burn = int.tryParse(_burn.text.trim());
     if (burn != null && burn >= 0) e.caloriesBurned = burn;
     e.note = _note.text.trim();
+    e.days = daysList;
     e.content = _content
         .map((c) => ContentItem(
               item: c.item.text.trim(),
@@ -334,7 +342,35 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
     }
   }
 
-  void _save() => Navigator.pop(context, _collect());
+  void _save() {
+    if (_selectedDays.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请至少选择一天执行该计划')),
+      );
+      return;
+    }
+    Navigator.pop(context, _collect());
+  }
+
+  bool _isEqualDays(Set<int> a, Set<int> b) =>
+      a.length == b.length && a.containsAll(b);
+
+  void _applyPreset(Set<int> days) {
+    setState(() {
+      _selectedDays.clear();
+      _selectedDays.addAll(days);
+    });
+  }
+
+  void _toggleDay(int day) {
+    setState(() {
+      if (_selectedDays.contains(day)) {
+        _selectedDays.remove(day);
+      } else {
+        _selectedDays.add(day);
+      }
+    });
+  }
 
   // ---------- UI ----------
 
@@ -398,6 +434,7 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
                 ),
                 if (_aiInfo != null) _aiInfoText(),
               ]),
+              _daysCard(),
               _card([
                 _label('食材清单'),
                 for (var i = 0; i < _details.length; i++) _detRow(i),
@@ -425,6 +462,7 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
                 ),
                 if (_aiInfo != null) _aiInfoText(),
               ]),
+              _daysCard(),
               _card([
                 _label('训练内容（每个动作/环节一行）'),
                 for (var i = 0; i < _content.length; i++) _contentRow(i),
@@ -436,6 +474,83 @@ class _ItemEditSheetState extends State<_ItemEditSheet> {
             const SizedBox(height: 14),
             PrimaryButton('保存', onPressed: _save),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _daysCard() {
+    final isAllWeek = _isEqualDays(_selectedDays, {1, 2, 3, 4, 5, 6, 7});
+    final isWorkdays = _isEqualDays(_selectedDays, {1, 2, 3, 4, 5});
+    final isWeekends = _isEqualDays(_selectedDays, {6, 7});
+
+    return _card([
+      _label('执行周期（每周哪几天）'),
+      Row(
+        children: [
+          _presetChip('工作日', isWorkdays, () => _applyPreset({1, 2, 3, 4, 5})),
+          const SizedBox(width: 8),
+          _presetChip('周末', isWeekends, () => _applyPreset({6, 7})),
+          const SizedBox(width: 8),
+          _presetChip('每天', isAllWeek, () => _applyPreset({1, 2, 3, 4, 5, 6, 7})),
+        ],
+      ),
+      const SizedBox(height: 12),
+      Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          for (var i = 1; i <= 7; i++)
+            _dayCircle(i, _selectedDays.contains(i)),
+        ],
+      ),
+    ]);
+  }
+
+  Widget _presetChip(String label, bool selected, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        decoration: BoxDecoration(
+          color: selected ? AppColors.primary : const Color(0xFFF0F0EE),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            color: selected ? Colors.white : AppColors.textSub,
+            fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _dayCircle(int day, bool selected) {
+    const names = ['', '一', '二', '三', '四', '五', '六', '日'];
+    return GestureDetector(
+      onTap: () => _toggleDay(day),
+      child: Container(
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: selected ? AppColors.primary : const Color(0xFFF5F5F3),
+          border: Border.all(
+            color: selected ? AppColors.primary : const Color(0xFFE2E2DE),
+            width: 1.2,
+          ),
+        ),
+        alignment: Alignment.center,
+        child: Text(
+          names[day],
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+            color: selected ? Colors.white : AppColors.text,
+          ),
         ),
       ),
     );
