@@ -85,7 +85,11 @@ class TodayPage extends StatelessWidget {
           }
         },
         onCheck: e.content.isNotEmpty
-            ? () => context.read<RecordProvider>().toggleEntryCheck(today, e)
+            ? () => context.read<RecordProvider>().toggleEntryCheck(
+                  today,
+                  e,
+                  plan: context.read<PlanProvider>().plan,
+                )
             : null,
         onAdjust: () => _openEditDialog(context, e),
         onDelete: (e.isPlan || e.slot != 'snack')
@@ -93,7 +97,7 @@ class TodayPage extends StatelessWidget {
             : () => _confirmDelete(context, () {
                 context.read<RecordProvider>().removeDayEntry(today, e.id);
               }, '删除这条加餐记录？'),
-        onConvertToPlan: (e.content.isNotEmpty && e.slot != 'snack')
+        onConvertToPlan: (!e.isPlan && e.content.isNotEmpty)
             ? () => _openConvertToPlan(context, e)
             : null,
       ));
@@ -119,9 +123,11 @@ class TodayPage extends StatelessWidget {
           }
         },
         onCheck: e.isPlan
-            ? () => context
-                .read<RecordProvider>()
-                .toggleCheck(today, 'exercise', e.planItemId)
+            ? () => context.read<RecordProvider>().toggleEntryCheck(
+                  today,
+                  e,
+                  plan: context.read<PlanProvider>().plan,
+                )
             : null,
         onAdjust: () => _openEditDialog(context, e),
         onDelete: e.isPlan
@@ -649,7 +655,7 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
 
     if (checkAfter) {
       if (!records.isEntryChecked(date, updated)) {
-        await records.toggleEntryCheck(date, updated);
+        await records.toggleEntryCheck(date, updated, plan: widget.plan);
       }
     }
     if (pop && mounted) Navigator.pop(context);
@@ -911,7 +917,7 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
                       label: const Text('恢复计划', style: TextStyle(fontSize: 12)),
                       style: TextButton.styleFrom(foregroundColor: AppColors.textSub),
                     )
-                  else if (widget.entry.slot != 'snack')
+                  else if (!_isPlan)
                     TextButton.icon(
                       onPressed: _convertToPlan,
                       icon: const Icon(Icons.event_repeat_rounded, size: 15),

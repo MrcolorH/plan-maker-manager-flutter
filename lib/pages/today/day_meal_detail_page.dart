@@ -171,7 +171,7 @@ class _DayMealDetailPageState extends State<DayMealDetailPage> {
     final curEntry = curEntryList.isNotEmpty ? curEntryList.first : widget.entry;
 
     final isChecked = records.isEntryChecked(widget.date, curEntry);
-    final isSnack = curEntry.slot == 'snack';
+    final isTempSnack = !curEntry.isPlan && curEntry.slot == 'snack';
     final planMeal = _findPlanMeal(plan, curEntry.planItemId);
 
     // 解析明细表格列表
@@ -218,8 +218,8 @@ class _DayMealDetailPageState extends State<DayMealDetailPage> {
                 Row(
                   children: [
                     Tag(
-                      isSnack ? '今日加餐' : (kTypeCn[curEntry.slot] ?? '餐食'),
-                      color: isSnack ? 'orange' : 'green',
+                      isTempSnack ? '今日加餐' : (kTypeCn[curEntry.slot] ?? '餐食'),
+                      color: isTempSnack ? 'orange' : 'green',
                     ),
                     const SizedBox(width: 6),
                     Text(
@@ -450,7 +450,7 @@ class _DayMealDetailPageState extends State<DayMealDetailPage> {
               Expanded(
                 child: ElevatedButton.icon(
                   onPressed: () async {
-                    await records.toggleEntryCheck(widget.date, curEntry);
+                    await records.toggleEntryCheck(widget.date, curEntry, plan: plan);
                   },
                   icon: Icon(isChecked ? Icons.close : Icons.check, size: 18),
                   label: Text(isChecked ? '取消打卡' : '标记已吃过'),
@@ -463,7 +463,7 @@ class _DayMealDetailPageState extends State<DayMealDetailPage> {
                   ),
                 ),
               ),
-              if (!isSnack && curEntry.content.isNotEmpty) ...[
+              if (!curEntry.isPlan && curEntry.content.isNotEmpty) ...[
                 const SizedBox(width: 10),
                 Expanded(
                   child: OutlinedButton.icon(

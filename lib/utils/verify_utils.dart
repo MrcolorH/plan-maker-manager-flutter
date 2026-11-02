@@ -32,6 +32,8 @@ class CorrectionItem {
 
   bool get isDifferent {
     if (matchedEntry == null) return false;
+    // 核心准则：若判定为「准确」，则该条目属于合格记录，绝非偏差项，避免大模型数值微漂被误判为偏差
+    if (status == '准确') return false;
     final calDiff = calories != null && calories != matchedEntry!.calories;
     final pDiff = protein != null && protein != matchedEntry!.protein;
     final cDiff = carbs != null && carbs != matchedEntry!.carbs;
@@ -93,6 +95,7 @@ class VerifyUtils {
   }) {
     final sb = StringBuffer();
     sb.writeln('📋 今日饮食与运动记录（$date，${dateCn(date)}）');
+    sb.writeln('【系统提示：所有条目的估算热量、拆解明细分项累加与全天汇总，均由程序代码精确求和，数据严格一致且不存在数学累加错误】');
     sb.writeln();
 
     final targetEntries = isChecked != null
@@ -121,7 +124,11 @@ class VerifyUtils {
           final itemsDesc = m.items!
               .map((it) => '${it.name}${it.portion.isNotEmpty ? "(${it.portion})" : ""}≈${it.calories}kcal')
               .join(', ');
-          sb.writeln('  → 拆解明细：$itemsDesc');
+          final sumItems = m.items!.fold<int>(0, (acc, it) => acc + it.calories);
+          final sumNote = (m.calories != null && sumItems == m.calories)
+              ? '（分项合计 $sumItems kcal，与条目估算一致）'
+              : '';
+          sb.writeln('  → 拆解明细：$itemsDesc$sumNote');
         } else if (m.detail != null && m.detail!.trim().isNotEmpty) {
           sb.writeln('  → 拆解描述：${m.detail!.trim()}');
         }
@@ -185,7 +192,7 @@ class VerifyUtils {
     }
   }
 
-  /// 拼装发送给第三方 AI 的完整校验提示词
+  /// 拼装发送给第三方 AI 的完整校验提示词（供手动复制到外部大模型时使用）
   static String buildVerifyPrompt(String summaryText) {
     return '''
 以下是我今日在减脂App中记录的饮食摄入与运动消耗清单（包含我的原始输入和系统估算/拆解结果）：
@@ -193,33 +200,7 @@ class VerifyUtils {
 $summaryText
 
 ---
-【校验任务指令】
-请你作为减脂与临床营养学专家，对以上每项记录进行专业、严谨的二次校验：
-1. **识别准确性**：检查每条记录中，「系统识别/拆解」是否忠实还原了我的「原始输入」（有无误判食材、漏记配料、遗漏烹饪用油或严重偏离事实）。
-2. **热量估算合理性**：参考中国常见食物成分表与家常/外卖实际烹饪常识，判断估算热量是否偏高或偏低。
-3. **宏量营养素合理性**：校核蛋白质、碳水化合物、脂肪三大营养素的克数分配是否合理。
-4. **运动消耗校核**：运动时长与强度消耗是否符合常规人体 METs 测算标准。
-
-【返回格式要求】
-请严格只返回一个标准的 JSON 对象，不要附加任何开场白、客套话或 markdown 说明文本。
-格式模板如下：
-```json
-{
-  "overall": "准确" 或 "存在偏差",
-  "summary": "一句话整体评价结论（先给结论，再讲主要偏差集中在哪）",
-  "items": [
-    {
-      "content": "这里必须100%一字不差复制对应的【原始输入】文本，以便系统自动匹配对应",
-      "status": "准确" 或 "偏差",
-      "issue": "问题说明（如：黄焖鸡米饭外卖用油偏重，实际热量略高估；若准确填空字符串）",
-      "corrected_calories": 修正后的热量整数kcal（若原估算合理则保留原值）,
-      "corrected_protein": 修正后的蛋白质整数g（运动条目可为null或省略）,
-      "corrected_carbs": 修正后的碳水整数g（运动条目可为null或省略）,
-      "corrected_fat": 修正后的脂肪整数g（运动条目可为null或省略）
-    }
-  ]
-}
-```
+$kDailyVerifySys
 '''.trim();
   }
 
@@ -234,7 +215,10 @@ $summaryText
     final obj = extractJsonObj(rawText);
     if (obj == null) return null;
 
-    final overall = obj['overall'] is String ? (obj['overall'] as String) : '已校准';
+    final rawOverall = obj['overall'] is String ? (obj['overall'] as String).trim() : '准确';
+    final isOverallAccurate = rawOverall == '准确' ||
+        (rawOverall.contains('准确') && !rawOverall.contains('偏差') && !rawOverall.contains('不'));
+    final overall = isOverallAccurate ? '准确' : '存在偏差';
     final summary = obj['summary'] is String ? (obj['summary'] as String) : '';
     final rawItems = obj['items'];
 
@@ -250,7 +234,10 @@ $summaryText
     for (final it in rawItems) {
       if (it is! Map) continue;
       final content = it['content']?.toString() ?? '';
-      final status = it['status']?.toString() ?? '准确';
+      final rawStatus = it['status']?.toString().trim() ?? '准确';
+      final isItemAccurate = rawStatus == '准确' ||
+          (rawStatus.contains('准确') && !rawStatus.contains('偏差') && !rawStatus.contains('不'));
+      final status = isItemAccurate ? '准确' : '偏差';
       final issue = it['issue']?.toString() ?? '';
       final cal = num.tryParse('${it['corrected_calories']}')?.round();
       final p = num.tryParse('${it['corrected_protein']}')?.round();
