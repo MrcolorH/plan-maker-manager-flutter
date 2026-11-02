@@ -75,11 +75,20 @@ const String kItemCalSys = '''你是减脂计划餐食的热量与宏量营养�
 {"calories":整餐总热量整数kcal,"protein":蛋白质整数g,"carbs":碳水整数g,"fat":脂肪整数g,"detail":"一句话拆解，如：鸡胸肉150g≈200(P45g)，橄榄油5g≈45，米饭150g≈175，合计420"}
 备注中提到的替代/增减（如"不放糖"）以备注为准。''';
 
-const String kBurnEstSys = '''你是运动消耗估算助手。用户会描述一次实际做的运动（项目 + 时长/距离/强度，可能带备注）。
-请结合用户的基础资料（性别/年龄/身高/体重，若提供）按运动强度（MET 参照）估算总消耗；未提供体重时按 65kg 成人估算。
-严格只返回一个 JSON 对象，不要输出任何其他文字：
-{"name":"运动名（10字内）","calories":消耗整数kcal,"detail":"一句话拆解，如：慢跑40分钟≈300 kcal"}
-描述模糊时按常见强度估。''';
+const String kBurnEstSys = '''你是运动消耗估算与运动生理学专家。用户会描述一次实际做的运动（可能是一个或多个运动项目 + 时长/距离/组数/强度，可能带备注）。
+请结合用户的基础资料（性别/年龄/身高/体重，若提供）按运动强度（MET 参照）科学估算各项及总消耗；未提供体重时按 65kg 成人估算。
+规则：
+1. 【拆分子项目清单】：
+   将用户本次做的所有具体运动项目拆解列出在 items 数组中，每项包含：
+   - name: 运动项目名称（如"室外慢跑"、"哑铃弯举"、"跳绳"、"静态拉伸"）
+   - portion: 时长、距离、组数或次数（如"30分钟"、"4组共40次"、"500个"、"3公里"）
+   - calories: 该子项预估消耗热量整数（kcal）
+   若用户只做了一项运动，items 数组也包含该单项。
+2. 【总计数值绝对一致（严禁前后矛盾）】：
+   calories 字段数值必须与 items 中所有子项 calories 之和严格相等，且与 detail 拆解文本结尾的「合计 XXX」数值 100% 完全相同！
+3. 严格只返回一个 JSON 对象，不要输出任何其他文字或代码块：
+{"name":"运动概述名称（如：慢跑与拉伸）","calories":总消耗整数kcal,"items":[{"name":"运动项目名","portion":"时长/运动量","calories":该项消耗整数}],"detail":"一句话分项拆解，如：慢跑30分钟≈220，静态拉伸10分钟≈30，合计250"}
+描述模糊时按常规强度估算。''';
 
 const String kGuidePlanSys = '''你是减脂计划生成助手。用户会描述想吃的餐食和想做的运动（可能是一整段大白话，也可能是逐条列表），请把它生成为结构化计划 JSON。
 
@@ -990,10 +999,13 @@ class AiService {
     if (obj == null) throw Exception('AI 返回格式异常，请手动填写消耗');
     final cal = num.tryParse('${obj['calories']}');
     if (cal == null || cal < 0 || cal > 5000) throw Exception('AI 估算的消耗超出合理范围，请手动填写');
+    final reconciled = reconcileCalorieAndDetail(cal.round(), obj['detail'] as String?);
+    final items = parseBreakdownItems(obj['items'], reconciled.$2);
     return {
       'name': (obj['name'] is String && (obj['name'] as String).isNotEmpty) ? obj['name'] : '运动',
-      'calories': cal.round(),
-      'detail': obj['detail'] is String ? obj['detail'] : '',
+      'calories': reconciled.$1,
+      'detail': reconciled.$2,
+      'items': items,
     };
   }
 

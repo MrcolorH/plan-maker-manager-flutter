@@ -27,12 +27,14 @@ import '../../utils/plan_utils.dart';
 import '../../widgets/ai_config_sheet.dart';
 import '../../widgets/calorie_summary.dart';
 import '../../widgets/convert_to_plan_sheet.dart';
+import '../../widgets/exercise_breakdown_table.dart';
 import '../../widgets/exercise_card.dart';
 import '../../widgets/food_breakdown_table.dart';
 import '../../widgets/meal_card.dart';
 import '../food/food_add_page.dart';
 import '../item/item_detail_page.dart';
 import 'daily_verify_page.dart';
+import 'day_exercise_detail_page.dart';
 import 'day_meal_detail_page.dart';
 
 class TodayPage extends StatelessWidget {
@@ -107,9 +109,15 @@ class TodayPage extends StatelessWidget {
             : _planExBurn(plan, e.planItemId),
         checked: records.isEntryChecked(today, e),
         focused: _focusMatch(context, 'exercise:${e.isPlan ? e.planItemId : e.id}'),
-        onTap: e.isPlan
-            ? () => _openDetail(context, 'exercise', e.planItemId)
-            : () => _openEditDialog(context, e),
+        onTap: () {
+          if (e.content.isEmpty) {
+            _openEditDialog(context, e);
+          } else if (e.detached || !e.isPlan) {
+            _openDayExerciseDetail(context, e);
+          } else {
+            _openDetail(context, 'exercise', e.planItemId);
+          }
+        },
         onCheck: e.isPlan
             ? () => context
                 .read<RecordProvider>()
@@ -255,6 +263,16 @@ class TodayPage extends StatelessWidget {
   void _openDayMealDetail(BuildContext context, DayEntry entry) {
     Navigator.of(context).push(AppRoutes.fade<void>(
       DayMealDetailPage(
+        date: todayStr(),
+        entry: entry,
+        onOpenEdit: () => _openEditDialog(context, entry),
+      ),
+    ));
+  }
+
+  void _openDayExerciseDetail(BuildContext context, DayEntry entry) {
+    Navigator.of(context).push(AppRoutes.fade<void>(
+      DayExerciseDetailPage(
         date: todayStr(),
         entry: entry,
         onOpenEdit: () => _openEditDialog(context, entry),
@@ -494,12 +512,10 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
         if (r['carbs'] != null) _carbsCtrl.text = '${r['carbs']}';
         if (r['fat'] != null) _fatCtrl.text = '${r['fat']}';
         _aiDetail = r['detail'] as String?;
-        if (!_isEx) {
-          final items = r['items'] as List<FoodBreakdownItem>?;
-          _breakdownItems = (items != null && items.isNotEmpty)
-              ? items
-              : AiService.parseBreakdownFromText(r['detail'] as String?);
-        }
+        final items = r['items'] as List<FoodBreakdownItem>?;
+        _breakdownItems = (items != null && items.isNotEmpty)
+            ? items
+            : AiService.parseBreakdownFromText(r['detail'] as String?);
       });
       // 成功后自动沉淀为本地知识缓存
       if (!_isEx) {
@@ -832,11 +848,12 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
               const SizedBox(height: 10),
               Row(
                 children: [
-                  const Icon(Icons.table_chart_outlined, size: 14, color: AppColors.primary),
+                  Icon(_isEx ? Icons.fitness_center_rounded : Icons.table_chart_outlined,
+                      size: 14, color: _isEx ? AppColors.orange : AppColors.primary),
                   const SizedBox(width: 4),
-                  const Text(
-                    '成分与热量拆解',
-                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.text),
+                  Text(
+                    _isEx ? '运动项目与消耗拆解' : '成分与热量拆解',
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.text),
                   ),
                   const Spacer(),
                   if (_aiDetail != null && _aiDetail!.isNotEmpty)
@@ -850,11 +867,18 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
                 ],
               ),
               const SizedBox(height: 6),
-              FoodBreakdownTable(
-                items: _breakdownItems!,
-                compact: true,
-                totalCalories: int.tryParse(_calCtrl.text.trim()),
-              ),
+              if (_isEx)
+                ExerciseBreakdownTable(
+                  items: _breakdownItems!,
+                  compact: true,
+                  totalCalories: int.tryParse(_calCtrl.text.trim()),
+                )
+              else
+                FoodBreakdownTable(
+                  items: _breakdownItems!,
+                  compact: true,
+                  totalCalories: int.tryParse(_calCtrl.text.trim()),
+                ),
             ] else if (_aiDetail != null && _aiDetail!.isNotEmpty) ...[
               Padding(
                 padding: const EdgeInsets.only(top: 6),

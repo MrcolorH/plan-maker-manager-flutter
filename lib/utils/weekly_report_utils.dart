@@ -216,7 +216,13 @@ WeeklyReportStats calculateWeeklyReportStats({
       final entries = records.dayEntries[dStr];
       if (entries != null) {
         for (final e in entries.where((e) => e.kind == 'exercise')) {
-          if (e.content.isNotEmpty) exerciseNames.add(e.content);
+          if (e.items != null && e.items!.isNotEmpty) {
+            for (final it in e.items!) {
+              if (it.name.isNotEmpty) exerciseNames.add(it.name);
+            }
+          } else if (e.content.isNotEmpty) {
+            exerciseNames.add(e.content);
+          }
         }
       }
     }

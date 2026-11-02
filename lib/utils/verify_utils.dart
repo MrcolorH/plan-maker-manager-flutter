@@ -141,6 +141,12 @@ class VerifyUtils {
         sb.writeln('[运动$timeLabel] 原始输入：「${ex.content.isEmpty ? '空白' : ex.content}」');
         final calStr = ex.calories != null ? '${ex.calories} kcal' : '待补录';
         sb.writeln('  → 估算消耗：$calStr');
+        if (ex.items != null && ex.items!.isNotEmpty) {
+          final itemsStr = ex.items!
+              .map((it) => '${it.name}${it.portion.isNotEmpty ? '(${it.portion})' : ''}≈${it.calories}kcal')
+              .join('、');
+          sb.writeln('  → 拆解分项：$itemsStr');
+        }
         if (ex.detail != null && ex.detail!.trim().isNotEmpty) {
           sb.writeln('  → 估算说明：${ex.detail!.trim()}');
         }

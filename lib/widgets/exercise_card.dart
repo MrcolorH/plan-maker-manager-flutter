@@ -130,6 +130,24 @@ class ExerciseCard extends StatelessWidget {
                         ],
                       ],
                     ),
+                    if (entry.items != null && entry.items!.length > 1) ...[
+                      const SizedBox(height: 3),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFF7ED),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          entry.items!
+                              .map((it) => it.portion.isNotEmpty ? '${it.name} ${it.portion}' : it.name)
+                              .join(' · '),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 10, color: AppColors.orange, fontWeight: FontWeight.w500),
+                        ),
+                      ),
+                    ],
                     if (entry.note.isNotEmpty) ...[
                       const SizedBox(height: 2),
                       Text(entry.note,
