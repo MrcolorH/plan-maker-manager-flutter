@@ -2,7 +2,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:jianfei_dazi/models/plan_data.dart';
-import 'package:jianfei_dazi/models/records.dart';
 import 'package:jianfei_dazi/providers/record_provider.dart';
 import 'package:jianfei_dazi/services/storage_service.dart';
 
