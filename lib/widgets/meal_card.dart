@@ -71,11 +71,11 @@ class MealCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isSnack = entry.slot == 'snack';
+    final isTempSnack = !entry.isPlan && entry.slot == 'snack';
     final isBlank = entry.content.isEmpty;
     final Color bg = checked
         ? AppColors.primaryBg
-        : (isSnack ? const Color(0xFFFCF6EE) : Colors.white);
+        : (isTempSnack ? const Color(0xFFFCF6EE) : Colors.white);
     return Container(
       margin: const EdgeInsets.only(left: 16, right: 16, bottom: 8),
       decoration: BoxDecoration(
@@ -83,7 +83,7 @@ class MealCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         border: focused
             ? Border.all(color: AppColors.orange, width: 1.5)
-            : (isSnack ? Border.all(color: const Color(0xFFF2DDBC)) : null),
+            : (isTempSnack ? Border.all(color: const Color(0xFFF2DDBC)) : null),
       ),
       child: InkWell(
         onTap: isBlank ? onAdjust : onTap,
@@ -115,7 +115,7 @@ class MealCard extends StatelessWidget {
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        if (isSnack)
+                        if (isTempSnack)
                           Tag(
                             entry.calories != null && entry.calories! < 0 ? '损耗扣减' : '今日加',
                             color: entry.calories != null && entry.calories! < 0 ? 'primary' : 'orange',
@@ -154,7 +154,7 @@ class MealCard extends StatelessWidget {
                 children: [
                   if (isBlank) ...[
                     _iconBtn(Icons.edit_note, AppColors.primary, onAdjust, 22),
-                  ] else if (isSnack) ...[
+                  ] else if (isTempSnack) ...[
                     _iconBtn(Icons.close, AppColors.textSub, onDelete, 18),
                   ] else ...[
                     if (onConvertToPlan != null) ...[

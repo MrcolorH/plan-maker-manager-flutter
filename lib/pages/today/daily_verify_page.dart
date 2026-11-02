@@ -16,10 +16,13 @@ import '../../providers/onboarding_provider.dart';
 import '../../providers/plan_provider.dart';
 import '../../providers/record_provider.dart';
 import '../../providers/settings_provider.dart';
+import '../../providers/usage_provider.dart';
+import '../../services/ai_service.dart';
 import '../../theme/app_theme.dart';
 import '../../utils/calorie_utils.dart';
 import '../../utils/date_utils.dart';
 import '../../utils/verify_utils.dart';
+import '../../widgets/ai_config_sheet.dart';
 
 class DailyVerifyPage extends StatefulWidget {
   final String date;
@@ -36,9 +39,12 @@ class DailyVerifyPage extends StatefulWidget {
 class _DailyVerifyPageState extends State<DailyVerifyPage> {
   final TextEditingController _correctionCtrl = TextEditingController();
   final ScrollController _summaryScrollCtrl = ScrollController();
+  final ScrollController _mainScrollCtrl = ScrollController();
   CorrectionResult? _correctionResult;
   final Set<int> _selectedIndices = {}; // 用户当前勾选需要采纳修正的条目索引
   bool _isApplying = false;
+  bool _isAutoVerifying = false;
+  bool _isManualExpanded = false;
 
   String get _dayName {
     final t = todayStr();
@@ -54,7 +60,93 @@ class _DailyVerifyPageState extends State<DailyVerifyPage> {
   void dispose() {
     _correctionCtrl.dispose();
     _summaryScrollCtrl.dispose();
+    _mainScrollCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _runOneClickVerify(List<DayEntry> entries, String summaryText) async {
+    final ok = await ensureAiConfigured(
+      context,
+      message: '一键校验需要配置 AI 服务（DeepSeek / Gemini 等），配置后直接自动出结果。',
+    );
+    if (!ok || !mounted) return;
+
+    final settings = context.read<SettingsProvider>().settings;
+    final usage = context.read<UsageProvider>();
+
+    setState(() => _isAutoVerifying = true);
+    try {
+      final rawResponse = await AiService.instance.verifyDaily(
+        settings.ai,
+        summaryText,
+        onUsage: usage.addUsage,
+      );
+      if (!mounted) return;
+
+      final result = VerifyUtils.parseCorrectionResult(rawResponse, entries);
+      if (result == null) {
+        throw Exception('未能从 AI 回复中解析出有效的校验 JSON，建议稍后重试或使用备用手动校验');
+      }
+
+      setState(() {
+        _correctionResult = result;
+        _selectedIndices.clear();
+        for (var i = 0; i < result.items.length; i++) {
+          final it = result.items[i];
+          if (it.matchedEntry != null && it.isDifferent) {
+            _selectedIndices.add(i);
+          }
+        }
+      });
+
+      final matchedCount = result.items.where((e) => e.matchedEntry != null).length;
+      final diffCount = result.items.where((e) => e.isDifferent).length;
+
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            diffCount > 0
+                ? '✨ 一键校验完成！共识别 $matchedCount 项，发现 $diffCount 处偏差已自动预选。'
+                : '✨ 一键校验完成！AI 评估今日各项目估算合理准确，无明显偏差。',
+          ),
+          backgroundColor: AppColors.primary,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+
+      // 平滑滚动到底部纠偏结果区
+      Future.delayed(const Duration(milliseconds: 150), () {
+        if (_mainScrollCtrl.hasClients) {
+          _mainScrollCtrl.animateTo(
+            _mainScrollCtrl.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 350),
+            curve: Curves.easeOut,
+          );
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+      final errMsg = e.toString().replaceFirst('Exception: ', '');
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('校验失败：$errMsg'),
+          backgroundColor: AppColors.danger,
+          duration: const Duration(seconds: 5),
+          action: SnackBarAction(
+            label: '使用手动复制',
+            textColor: Colors.white,
+            onPressed: () {
+              setState(() => _isManualExpanded = true);
+              _copyForAI(summaryText);
+            },
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isAutoVerifying = false);
+    }
   }
 
   void _copyForAI(String summaryText) {
@@ -243,6 +335,7 @@ class _DailyVerifyPageState extends State<DailyVerifyPage> {
       ),
       body: SafeArea(
         child: ListView(
+          controller: _mainScrollCtrl,
           padding: const EdgeInsets.fromLTRB(16, 14, 16, 32),
           children: [
             // 1. 条目总结区（固定高度，文本可滚动）
@@ -253,74 +346,47 @@ class _DailyVerifyPageState extends State<DailyVerifyPage> {
             ),
             const SizedBox(height: 8),
             _buildSummaryBox(summaryText, isEmpty: entries.isEmpty),
-            const SizedBox(height: 10),
+            const SizedBox(height: 14),
 
-            // 2. 复制问 AI 按钮
+            // 2. 主操作：一键智能校验
             ElevatedButton.icon(
-              onPressed: entries.isEmpty ? null : () => _copyForAI(summaryText),
-              icon: const Icon(Icons.copy_rounded, size: 18),
-              label: const Text('复制问 AI（带专业校验提示词）'),
+              onPressed: (entries.isEmpty || _isAutoVerifying)
+                  ? null
+                  : () => _runOneClickVerify(entries, summaryText),
+              icon: _isAutoVerifying
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Icon(Icons.auto_awesome, size: 20),
+              label: Text(
+                _isAutoVerifying
+                    ? 'AI 营养师正在严谨复核中...'
+                    : '✨ 一键智能校验（AI 直接出结果）',
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+              ),
               style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.orange,
+                backgroundColor: AppColors.primary,
                 foregroundColor: Colors.white,
-                minimumSize: const Size.fromHeight(44),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                minimumSize: const Size.fromHeight(48),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 elevation: 0,
               ),
             ),
             const SizedBox(height: 6),
             const Center(
               child: Text(
-                '复制后直接发送给 ChatGPT、Claude 或 DeepSeek 等第三方 AI',
+                '由内置 AI 自动复核食材还原度、烹饪用油、热量合理性与三大营养素',
                 style: TextStyle(fontSize: 11, color: AppColors.textSub),
               ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 14),
 
-            // 3. 纠偏输入框
-            _buildSectionHeader(
-              icon: Icons.edit_note_rounded,
-              title: '纠偏结果回填',
-              trailing: '粘贴 AI 返回的答案',
-            ),
-            const SizedBox(height: 8),
-            Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.black.withValues(alpha: 0.08)),
-              ),
-              padding: const EdgeInsets.all(10),
-              child: TextField(
-                controller: _correctionCtrl,
-                maxLines: 5,
-                minLines: 3,
-                style: const TextStyle(fontSize: 13, height: 1.4, fontFamily: 'monospace'),
-                decoration: const InputDecoration(
-                  hintText: '将第三方 AI 评估后返回的答案全文粘贴在这里...\nApp 会自动解析结构，提取出哪些有偏差并让您自主勾选。',
-                  hintStyle: TextStyle(fontSize: 12, color: AppColors.textSub, height: 1.4),
-                  border: InputBorder.none,
-                  isDense: true,
-                  contentPadding: EdgeInsets.zero,
-                ),
-              ),
-            ),
-            const SizedBox(height: 10),
+            // 3. 备选方案：手动复制到外部 AI 校验（折叠收纳）
+            _buildManualBackupSection(summaryText, entries),
 
-            // 4. 自动解析按钮
-            OutlinedButton.icon(
-              onPressed: entries.isEmpty ? null : () => _runAutoCorrection(entries),
-              icon: const Text('✨', style: TextStyle(fontSize: 16)),
-              label: const Text('智能解析评估结果'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: AppColors.primary,
-                side: const BorderSide(color: AppColors.primary, width: 1.2),
-                minimumSize: const Size.fromHeight(44),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              ),
-            ),
-
-            // 5. 结构化纠偏与自主勾选列表
+            // 4. 结构化纠偏与自主勾选列表
             if (_correctionResult != null) ...[
               const SizedBox(height: 20),
               _buildCorrectionResultView(_correctionResult!),
@@ -360,6 +426,89 @@ class _DailyVerifyPageState extends State<DailyVerifyPage> {
       ),
     );
   }
+
+  /// 备用手动校验区域（默认折叠，提供给未配置 API Key 或想用网页端大模型的用户）
+  Widget _buildManualBackupSection(String summaryText, List<DayEntry> entries) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(12),
+      clipBehavior: Clip.antiAlias,
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.black.withValues(alpha: 0.08)),
+        ),
+        child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          initiallyExpanded: _isManualExpanded,
+          onExpansionChanged: (v) => setState(() => _isManualExpanded = v),
+          tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+          leading: const Icon(Icons.alt_route_rounded, size: 20, color: AppColors.textSub),
+          title: const Text(
+            '备用方案：复制到外部大模型手动校验',
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: AppColors.text),
+          ),
+          subtitle: const Text(
+            '未配置 API Key 或想用 ChatGPT/Claude 网页端时使用',
+            style: TextStyle(fontSize: 11, color: AppColors.textSub),
+          ),
+          childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+          children: [
+            const Divider(height: 1, thickness: 0.5, color: Color(0x15000000)),
+            const SizedBox(height: 12),
+            ElevatedButton.icon(
+              onPressed: entries.isEmpty ? null : () => _copyForAI(summaryText),
+              icon: const Icon(Icons.copy_rounded, size: 16),
+              label: const Text('复制校验提示词（去外部 AI 发送）'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.orange,
+                foregroundColor: Colors.white,
+                minimumSize: const Size.fromHeight(40),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                elevation: 0,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              decoration: BoxDecoration(
+                color: AppColors.bg,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.black.withValues(alpha: 0.08)),
+              ),
+              padding: const EdgeInsets.all(10),
+              child: TextField(
+                controller: _correctionCtrl,
+                maxLines: 4,
+                minLines: 2,
+                style: const TextStyle(fontSize: 12, height: 1.4, fontFamily: 'monospace'),
+                decoration: const InputDecoration(
+                  hintText: '将第三方 AI 评估后返回的答案全文粘贴在这里...\nApp 会自动解析结构，提取出偏差项并让您自主勾选。',
+                  hintStyle: TextStyle(fontSize: 11, color: AppColors.textSub, height: 1.4),
+                  border: InputBorder.none,
+                  isDense: true,
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            OutlinedButton.icon(
+              onPressed: entries.isEmpty ? null : () => _runAutoCorrection(entries),
+              icon: const Text('📋', style: TextStyle(fontSize: 14)),
+              label: const Text('解析粘贴的评估结果'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.primary,
+                side: const BorderSide(color: AppColors.primary, width: 1.2),
+                minimumSize: const Size.fromHeight(40),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
 
   Widget _buildSectionHeader({
     required IconData icon,

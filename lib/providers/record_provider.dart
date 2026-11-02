@@ -408,12 +408,23 @@ class RecordProvider extends ChangeNotifier {
         continue;
       }
 
+      final isChecked = isEntryChecked(date, e);
       final p = planItems.where((x) => x.kind == e.kind && x.id == e.planItemId).toList();
       if (p.isEmpty) {
-        if (e.detached) kept.add(e); // 脱钩：计划里删了也永久保留
+        // 核心铁律：已打卡或已脱钩的条目，即使长期计划已删除该项，也永久保留在当日快照中！
+        // 用户已经确认打卡，就是今日发生的客观事实，绝不能因修改/删除计划而消失。
+        if (e.detached || isChecked) {
+          final key = '${e.kind}:${e.planItemId}';
+          if (!seenPlanKeys.containsKey(key)) {
+            seenPlanKeys[key] = kept.length;
+            kept.add(e);
+          }
+        }
       } else {
         final s = p.first;
-        final mapped = (!e.detached)
+        // 核心铁律：若今日已确认打卡，说明它是今日已完成的事实，就算长期计划变更也不覆盖该条目；
+        // 若用户想让计划修改在今日生效，应先取消打卡，然后重新打卡。
+        final mapped = (!e.detached && !isChecked)
             ? DayEntry(
                 id: e.id,
                 kind: e.kind,
@@ -487,6 +498,12 @@ class RecordProvider extends ChangeNotifier {
     }
     for (final p in planItems) {
       if (!kept.any((e) => e.isPlan && e.kind == p.kind && e.planItemId == p.id)) {
+        // 如果是正餐（早中晚），且当天该餐次已有已打卡的计划餐，说明该餐今天已经吃过了，不应追加新计划项造成同餐次重复
+        if (p.kind == 'meal' &&
+            p.slot != 'snack' &&
+            kept.any((e) => e.isPlan && e.kind == 'meal' && e.slot == p.slot && isEntryChecked(date, e))) {
+          continue;
+        }
         kept.add(p);
       }
     }
@@ -653,24 +670,32 @@ class RecordProvider extends ChangeNotifier {
   }
 
   bool isEntryChecked(String date, DayEntry e) {
-    // 业务铁律：加餐吃了才录入，录入即事实，天然恒为已打卡（不存在未打卡的加餐）
-    if (e.slot == 'snack') return true;
-    // 计划外临时运动录入即事实，天然恒为已打卡
+    // 临时加餐与临时运动：吃了/练了才录入，天然恒为已打卡事实
+    // 只要是计划条目（e.isPlan == true），无论是什么餐次（含计划加餐），均为计划类任务，必须由用户主动打卡，默认不打卡
+    if (!e.isPlan && e.slot == 'snack') return true;
     if (!e.isPlan && e.kind == 'exercise') return true;
     return store.checkRecords[date]?.containsKey(checkKeyOf(e)) ?? false;
   }
 
   /// 对任意快照条目进行打卡/取消打卡（支持计划条目与计划外正餐）
-  Future<bool> toggleEntryCheck(String date, DayEntry e) async {
+  Future<bool> toggleEntryCheck(String date, DayEntry e, {PlanData? plan}) async {
     // 临时加餐与临时运动无需切换打卡，始终为已完成状态（如有误用户直接删除）
-    if (e.slot == 'snack' || (!e.isPlan && e.kind == 'exercise')) {
+    // 计划条目（含计划加餐）与计划外正餐均支持正常切换打卡状态
+    if ((!e.isPlan && e.slot == 'snack') || (!e.isPlan && e.kind == 'exercise')) {
       return true;
     }
     final key = checkKeyOf(e);
     final colonIdx = key.indexOf(':');
     final type = colonIdx > 0 ? key.substring(0, colonIdx) : 'temp';
     final id = colonIdx > 0 ? key.substring(colonIdx + 1) : e.id;
-    return toggleCheck(date, type, id);
+    final nowChecked = await toggleCheck(date, type, id);
+
+    // 核心联动：若用户取消打卡，并且传入了最新计划，立即同步当日快照：
+    // 让长期计划中修改或删除的项目在取消打卡后立即生效（用户可重新打卡最新计划）
+    if (!nowChecked && plan != null && e.isPlan) {
+      await syncDayEntries(date, plan);
+    }
+    return nowChecked;
   }
 
   /// 迁移打卡状态（例如条目从计划外 temp: 升级为日常计划 meal: 时，平滑保留打卡标记）
