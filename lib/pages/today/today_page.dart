@@ -2,6 +2,7 @@
 /// 打卡、实际摄入调整（AI 估算）、临时加餐/运动录入
 library;
 
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -598,6 +599,11 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
           .showSnackBar(SnackBar(content: Text('请填写${_isEx ? '运动内容' : '食物内容'}，如「黄焖鸡米饭一份」')));
       return null;
     }
+    // 若为运动且尚未拆解/未填消耗，自动执行 AI 拆解与测算
+    if (_isEx && (_calCtrl.text.trim().isEmpty || _breakdownItems == null)) {
+      await _aiEstimate();
+      if (!mounted) return null;
+    }
     final calText = _calCtrl.text.trim();
     int? cal;
     if (calText.isNotEmpty) {
@@ -991,31 +997,86 @@ class _ExerciseSheetState extends State<_ExerciseSheet> {
   final TextEditingController _descCtrl = TextEditingController();
   final TextEditingController _nameCtrl = TextEditingController();
   final TextEditingController _calCtrl = TextEditingController();
+  final FocusNode _descFocusNode = FocusNode();
+
+  Timer? _debounceTimer;
+  String _lastEstimatedDesc = '';
   bool _loading = false;
+  String? _aiDetail;
+  List<FoodBreakdownItem>? _breakdownItems;
+
+  @override
+  void initState() {
+    super.initState();
+    _descCtrl.addListener(_onDescChanged);
+    _descFocusNode.addListener(_onFocusChanged);
+  }
 
   @override
   void dispose() {
+    _debounceTimer?.cancel();
+    _descCtrl.removeListener(_onDescChanged);
+    _descFocusNode.removeListener(_onFocusChanged);
     _descCtrl.dispose();
     _nameCtrl.dispose();
     _calCtrl.dispose();
+    _descFocusNode.dispose();
     super.dispose();
   }
 
-  Future<void> _aiEstimate() async {
+  void _onDescChanged() {
+    final text = _descCtrl.text.trim();
+    if (text.isEmpty) {
+      if (_breakdownItems != null || _aiDetail != null || _lastEstimatedDesc.isNotEmpty) {
+        setState(() {
+          _breakdownItems = null;
+          _aiDetail = null;
+          _lastEstimatedDesc = '';
+        });
+      }
+      return;
+    }
+    if (text == _lastEstimatedDesc) return;
+    _debounceTimer?.cancel();
+    _debounceTimer = Timer(const Duration(milliseconds: 700), () {
+      if (!mounted) return;
+      _triggerAiEstimate(auto: true);
+    });
+  }
+
+  void _onFocusChanged() {
+    if (!_descFocusNode.hasFocus) {
+      final text = _descCtrl.text.trim();
+      if (text.isNotEmpty && text != _lastEstimatedDesc && !_loading) {
+        _debounceTimer?.cancel();
+        _triggerAiEstimate(auto: true);
+      }
+    }
+  }
+
+  Future<void> _triggerAiEstimate({bool auto = false}) async {
     final desc = _descCtrl.text.trim();
     if (desc.isEmpty) return;
-    // 未配置 AI → 先弹配置层，配好后再继续估算
-    final ok = await ensureAiConfigured(
-      context,
-      message: 'AI 估算运动消耗需要你自己的 API Key（DeepSeek 等），配置后立即继续。',
-    );
-    if (!ok || !mounted) return;
+    if (desc == _lastEstimatedDesc && _breakdownItems != null) return;
+
     final settings = context.read<SettingsProvider>().settings;
+    if (auto && settings.ai.apiKey.isEmpty) {
+      // 自动静默触发时不强行弹配置层打扰输入
+      return;
+    }
+
+    if (!auto) {
+      final ok = await ensureAiConfigured(
+        context,
+        message: 'AI 拆解运动与测算消耗需要你自己的 API Key（DeepSeek 等），配置后立即继续。',
+      );
+      if (!ok || !mounted) return;
+    }
+
     final usage = context.read<UsageProvider>();
     final ob = context.read<OnboardingProvider>();
     setState(() => _loading = true);
     try {
-      // F10：按当天生效体重（记录链）+ 个人资料估算
       final p = ob.state.profile;
       final wd = weightForDate(context.read<RecordProvider>().store, todayStr());
       final r = await AiService.instance.estimateBurn(
@@ -1028,24 +1089,45 @@ class _ExerciseSheetState extends State<_ExerciseSheet> {
         onUsage: usage.addUsage,
       );
       if (!mounted) return;
+      final name = (r['name'] as String?)?.trim() ?? '';
+      final cal = r['calories'];
+      final detail = r['detail'] as String?;
+      final items = r['items'] as List<FoodBreakdownItem>?;
+      final parsedItems = (items != null && items.isNotEmpty)
+          ? items
+          : AiService.parseBreakdownFromText(detail);
+
       setState(() {
-        _nameCtrl.text = r['name'] as String;
-        _calCtrl.text = '${r['calories']}';
+        _lastEstimatedDesc = desc;
+        _nameCtrl.text = name.isNotEmpty ? name : desc;
+        _calCtrl.text = cal != null ? '$cal' : '';
+        _aiDetail = detail;
+        _breakdownItems = parsedItems;
       });
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))));
+      if (!auto) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
+        );
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
   Future<void> _save() async {
-    final name = _nameCtrl.text.trim();
+    final desc = _descCtrl.text.trim();
+    // 录入时若输入了一句话描述但尚未拆解，保存时自动先触发 AI 拆解与估算
+    if (desc.isNotEmpty && (_calCtrl.text.trim().isEmpty || _nameCtrl.text.trim().isEmpty || _breakdownItems == null)) {
+      await _triggerAiEstimate(auto: false);
+      if (!mounted) return;
+    }
+
+    final name = _nameCtrl.text.trim().isNotEmpty ? _nameCtrl.text.trim() : desc;
     final cal = int.tryParse(_calCtrl.text.trim());
     if (name.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('请输入运动名称')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('请输入运动名称或描述')));
       return;
     }
     if (cal == null || cal < 0 || cal > 5000) {
@@ -1054,8 +1136,16 @@ class _ExerciseSheetState extends State<_ExerciseSheet> {
       return;
     }
     final records = context.read<RecordProvider>();
-    await records.addDayEntry(todayStr(),
-        kind: 'exercise', content: name, calories: cal, source: 'manual');
+    final isAi = (_breakdownItems != null && _breakdownItems!.isNotEmpty) || _aiDetail != null;
+    await records.addDayEntry(
+      todayStr(),
+      kind: 'exercise',
+      content: name,
+      calories: cal,
+      source: isAi ? 'ai' : 'manual',
+      detail: _aiDetail,
+      items: _breakdownItems,
+    );
     if (mounted) Navigator.pop(context);
   }
 
@@ -1073,7 +1163,14 @@ class _ExerciseSheetState extends State<_ExerciseSheet> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text('＋ 今日运动', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: const [
+                    Text('＋ 今日运动', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+                    SizedBox(width: 8),
+                    Tag('AI 自动拆解', color: 'orange'),
+                  ],
+                ),
                 IconButton(
                   onPressed: () => Navigator.pop(context),
                   icon: const Icon(Icons.close, size: 20, color: AppColors.textSub),
@@ -1083,8 +1180,11 @@ class _ExerciseSheetState extends State<_ExerciseSheet> {
             const SizedBox(height: 8),
             TextField(
               controller: _descCtrl,
+              focusNode: _descFocusNode,
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => _triggerAiEstimate(),
               decoration: const InputDecoration(
-                hintText: '一句话描述：如「慢跑 40 分钟」',
+                hintText: '描述运动（输入后自动拆解）：如「慢跑30分钟，拉伸10分钟」',
                 filled: true,
                 fillColor: AppColors.bg,
                 border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(8)), borderSide: BorderSide.none),
@@ -1092,24 +1192,58 @@ class _ExerciseSheetState extends State<_ExerciseSheet> {
                 contentPadding: EdgeInsets.all(10),
               ),
             ),
-            const SizedBox(height: 8),
+            if (_loading) ...[
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF7ED),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFFFED7AA)),
+                ),
+                child: const Row(
+                  children: [
+                    SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.orange)),
+                    SizedBox(width: 8),
+                    Text('✨ 正在自动拆解运动项目与测算消耗...',
+                        style: TextStyle(fontSize: 12, color: AppColors.orange, fontWeight: FontWeight.w500)),
+                  ],
+                ),
+              ),
+            ],
+            if (!_loading && _breakdownItems != null && _breakdownItems!.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  const Icon(Icons.fitness_center_rounded, size: 14, color: AppColors.orange),
+                  const SizedBox(width: 4),
+                  const Text(
+                    '运动项目与消耗拆解',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.text),
+                  ),
+                  const Spacer(),
+                  if (_aiDetail != null && _aiDetail!.isNotEmpty)
+                    Flexible(
+                      child: Text(
+                        _aiDetail!,
+                        style: const TextStyle(fontSize: 10, color: AppColors.textSub),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              ExerciseBreakdownTable(
+                items: _breakdownItems!,
+                compact: true,
+                totalCalories: int.tryParse(_calCtrl.text.trim()),
+              ),
+            ],
+            const SizedBox(height: 10),
             Row(
               children: [
                 Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _loading ? null : _aiEstimate,
-                    icon: _loading
-                        ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Text('✨'),
-                    label: const Text('AI 算'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.orange,
-                      side: const BorderSide(color: AppColors.orange),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
+                  flex: 4,
                   child: TextField(
                     controller: _nameCtrl,
                     decoration: const InputDecoration(
@@ -1122,25 +1256,46 @@ class _ExerciseSheetState extends State<_ExerciseSheet> {
                     ),
                   ),
                 ),
+                const SizedBox(width: 8),
+                Expanded(
+                  flex: 3,
+                  child: TextField(
+                    controller: _calCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      hintText: '消耗 kcal',
+                      filled: true,
+                      fillColor: AppColors.bg,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(8)), borderSide: BorderSide.none),
+                      isDense: true,
+                      contentPadding: EdgeInsets.all(10),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: _loading ? null : () => _triggerAiEstimate(),
+                  icon: _loading
+                      ? const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Text('✨', style: TextStyle(fontSize: 12)),
+                  label: Text(_breakdownItems != null ? '重测' : 'AI拆解', style: const TextStyle(fontSize: 12)),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.orange,
+                    side: const BorderSide(color: AppColors.orange),
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    minimumSize: const Size(60, 40),
+                  ),
+                ),
               ],
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _calCtrl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                hintText: '消耗 kcal',
-                filled: true,
-                fillColor: AppColors.bg,
-                border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(8)), borderSide: BorderSide.none),
-                isDense: true,
-                contentPadding: EdgeInsets.all(10),
-              ),
             ),
             const SizedBox(height: 14),
             ElevatedButton(
-              onPressed: _save,
-              style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary, foregroundColor: Colors.white, minimumSize: const Size.fromHeight(44)),
+              onPressed: _loading ? null : _save,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+                minimumSize: const Size.fromHeight(44),
+              ),
               child: const Text('记录（计入今日消耗）'),
             ),
           ],

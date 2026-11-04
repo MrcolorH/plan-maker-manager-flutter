@@ -2,6 +2,7 @@
 /// 打卡天数 + 本周缺口图 + 月历 + 14 天趋势 + 月回顾 + 日详情/补录
 library;
 
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -23,6 +24,7 @@ import '../../utils/calorie_utils.dart';
 import '../../utils/date_utils.dart';
 import '../../utils/plan_utils.dart';
 import '../../widgets/ai_config_sheet.dart';
+import '../../widgets/exercise_breakdown_table.dart';
 import '../../widgets/meal_card.dart';
 import '../today/daily_verify_page.dart';
 import 'weekly_report_page.dart';
@@ -649,12 +651,10 @@ class DayDetailSheet extends StatefulWidget {
 class _DayDetailSheetState extends State<DayDetailSheet> {
   static const int _baseIndex = 5000;
   late PageController _pageController;
-  late int _currentIndex;
 
   @override
   void initState() {
     super.initState();
-    _currentIndex = _baseIndex;
     _pageController = PageController(initialPage: _baseIndex);
   }
 
@@ -740,9 +740,6 @@ class _DayDetailSheetState extends State<DayDetailSheet> {
       builder: (ctx, _) {
         return PageView.builder(
           controller: _pageController,
-          onPageChanged: (index) {
-            setState(() => _currentIndex = index);
-          },
           itemBuilder: (pageCtx, index) {
             final date = _dateForIndex(index);
             return _buildDayPage(pageCtx, date);
@@ -1341,9 +1338,14 @@ class _RecordSheetState extends State<_RecordSheet> {
   final TextEditingController _descCtrl = TextEditingController();
   final TextEditingController _nameCtrl = TextEditingController();
   final TextEditingController _calCtrl = TextEditingController();
+  final FocusNode _descFocusNode = FocusNode();
+
+  Timer? _debounceTimer;
+  String _lastEstimatedDesc = '';
   bool _loading = false;
   bool _aiUsed = false;
   String? _aiDetail;
+  List<FoodBreakdownItem>? _breakdownItems;
 
   PresetFood? _selectedPreset;
   double _portion = 1.0;
@@ -1355,11 +1357,57 @@ class _RecordSheetState extends State<_RecordSheet> {
   bool get _isSnack => widget.type == 'snack';
 
   @override
+  void initState() {
+    super.initState();
+    if (!_isSnack) {
+      _descCtrl.addListener(_onDescChanged);
+      _descFocusNode.addListener(_onFocusChanged);
+    }
+  }
+
+  @override
   void dispose() {
+    _debounceTimer?.cancel();
+    if (!_isSnack) {
+      _descCtrl.removeListener(_onDescChanged);
+      _descFocusNode.removeListener(_onFocusChanged);
+    }
     _descCtrl.dispose();
     _nameCtrl.dispose();
     _calCtrl.dispose();
+    _descFocusNode.dispose();
     super.dispose();
+  }
+
+  void _onDescChanged() {
+    if (_isSnack) return;
+    final text = _descCtrl.text.trim();
+    if (text.isEmpty) {
+      if (_breakdownItems != null || _aiDetail != null || _lastEstimatedDesc.isNotEmpty) {
+        setState(() {
+          _breakdownItems = null;
+          _aiDetail = null;
+          _lastEstimatedDesc = '';
+        });
+      }
+      return;
+    }
+    if (text == _lastEstimatedDesc) return;
+    _debounceTimer?.cancel();
+    _debounceTimer = Timer(const Duration(milliseconds: 700), () {
+      if (!mounted) return;
+      _aiEstimate(auto: true);
+    });
+  }
+
+  void _onFocusChanged() {
+    if (!_isSnack && !_descFocusNode.hasFocus) {
+      final text = _descCtrl.text.trim();
+      if (text.isNotEmpty && text != _lastEstimatedDesc && !_loading) {
+        _debounceTimer?.cancel();
+        _aiEstimate(auto: true);
+      }
+    }
   }
 
   void _selectPreset(PresetFood p) {
@@ -1373,6 +1421,7 @@ class _RecordSheetState extends State<_RecordSheet> {
       _curFat = p.fat;
       _aiUsed = false;
       _aiDetail = '常用方案：${p.name}（${p.calories} kcal / ${p.unit}）';
+      _breakdownItems = null;
     });
   }
 
@@ -1391,25 +1440,33 @@ class _RecordSheetState extends State<_RecordSheet> {
     });
   }
 
-  Future<void> _aiEstimate() async {
+  Future<void> _aiEstimate({bool auto = false}) async {
     final desc = _descCtrl.text.trim();
     if (desc.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(_isSnack ? '请先描述吃了什么，如「一杯大杯珍珠奶茶」' : '请先描述做了什么运动，如「慢跑 40 分钟」')));
+      if (!auto) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(_isSnack ? '请先描述吃了什么，如「一杯大杯珍珠奶茶」' : '请先描述做了什么运动，如「慢跑 40 分钟」')));
+      }
       return;
     }
-    // 未配置 AI → 先弹配置层，配好后再继续估算
-    final ok = await ensureAiConfigured(
-      context,
-      message:
-          'AI 估算${_isSnack ? '热量' : '运动消耗'}需要你自己的 API Key（DeepSeek 等），配置后立即继续。',
-    );
-    if (!ok || !mounted) return;
+    if (desc == _lastEstimatedDesc && _breakdownItems != null) return;
+
+    final settings = context.read<SettingsProvider>().settings;
+    if (auto && settings.ai.apiKey.isEmpty) return;
+
+    if (!auto) {
+      final ok = await ensureAiConfigured(
+        context,
+        message:
+            'AI 估算${_isSnack ? '热量' : '运动消耗'}需要你自己的 API Key（DeepSeek 等），配置后立即继续。',
+      );
+      if (!ok || !mounted) return;
+    }
     setState(() => _loading = true);
     try {
-      final settings = context.read<SettingsProvider>().settings;
       final usage = context.read<UsageProvider>();
       String? detail;
+      List<FoodBreakdownItem>? items;
       if (_isSnack) {
         final r = await AiService.instance.queryCalorie(settings.ai, desc, onUsage: usage.addUsage);
         if (!mounted) return;
@@ -1424,6 +1481,7 @@ class _RecordSheetState extends State<_RecordSheet> {
         detail = (dt != null && dt.isNotEmpty)
             ? 'AI 拆解：$dt'
             : 'AI 估算 · 置信度 ${(conf * 100).round()}%${unit.isNotEmpty ? ' · $unit' : ''}';
+        items = AiService.parseBreakdownFromText(dt);
       } else {
         // F10：运动消耗结合个人资料 —— 补录日生效体重（记录链）优先，profile 兜底；信息完整才传性别/年龄/身高
         final ob = context.read<OnboardingProvider>();
@@ -1443,23 +1501,38 @@ class _RecordSheetState extends State<_RecordSheet> {
         _calCtrl.text = '${r['calories']}';
         final d = r['detail'] as String?;
         if (d != null && d.isNotEmpty) detail = 'AI 拆解：$d';
+        final rawItems = r['items'] as List<FoodBreakdownItem>?;
+        items = (rawItems != null && rawItems.isNotEmpty)
+            ? rawItems
+            : AiService.parseBreakdownFromText(d);
       }
       setState(() {
+        _lastEstimatedDesc = desc;
         _selectedPreset = null;
         _aiUsed = true;
         _aiDetail = detail;
+        _breakdownItems = items;
       });
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))));
+      if (!auto) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))));
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
   Future<void> _save() async {
-    final name = _nameCtrl.text.trim();
+    final desc = _descCtrl.text.trim();
+    // 补录运动时若填了描述但尚未拆解/热量为空，自动先触发拆解
+    if (!_isSnack && desc.isNotEmpty && (_calCtrl.text.trim().isEmpty || _nameCtrl.text.trim().isEmpty || _breakdownItems == null)) {
+      await _aiEstimate(auto: false);
+      if (!mounted) return;
+    }
+
+    final name = _nameCtrl.text.trim().isNotEmpty ? _nameCtrl.text.trim() : desc;
     final cal = int.tryParse(_calCtrl.text.trim());
     final minCal = _isSnack ? -2000 : 0;
     if (name.isEmpty || cal == null || cal < minCal || cal > 5000) {
@@ -1469,27 +1542,32 @@ class _RecordSheetState extends State<_RecordSheet> {
       return;
     }
     final isPreset = _selectedPreset != null;
-    await context.read<RecordProvider>().addDayEntry(
-          widget.date,
-          kind: _isSnack ? 'meal' : 'exercise',
-          slot: _isSnack ? 'snack' : '',
-          content: name,
-          calories: cal,
-          protein: _curProtein,
-          carbs: _curCarbs,
-          fat: _curFat,
-          source: isPreset ? 'preset' : (_aiUsed ? 'ai' : 'manual'),
-        );
+    final isAi = _aiUsed || (_breakdownItems != null && _breakdownItems!.isNotEmpty) || _aiDetail != null;
+    final records = context.read<RecordProvider>();
+    final presetProv = context.read<PresetProvider>();
+    await records.addDayEntry(
+      widget.date,
+      kind: _isSnack ? 'meal' : 'exercise',
+      slot: _isSnack ? 'snack' : '',
+      content: name,
+      calories: cal,
+      protein: _curProtein,
+      carbs: _curCarbs,
+      fat: _curFat,
+      source: isPreset ? 'preset' : (isAi ? 'ai' : 'manual'),
+      detail: _aiDetail,
+      items: _breakdownItems,
+    );
     if (isPreset) {
-      await context.read<PresetProvider>().recordUsed(_selectedPreset!.id);
+      await presetProv.recordUsed(_selectedPreset!.id);
     } else if (_saveAsPreset && _isSnack) {
-      await context.read<PresetProvider>().savePreset(
-            name: name,
-            calories: cal,
-            protein: _curProtein,
-            carbs: _curCarbs,
-            fat: _curFat,
-          );
+      await presetProv.savePreset(
+        name: name,
+        calories: cal,
+        protein: _curProtein,
+        carbs: _curCarbs,
+        fat: _curFat,
+      );
     }
     if (mounted) {
       Navigator.pop(context);
@@ -1650,9 +1728,12 @@ class _RecordSheetState extends State<_RecordSheet> {
 
             TextField(
               controller: _descCtrl,
+              focusNode: _descFocusNode,
               maxLines: _isSnack ? 2 : 1,
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => _aiEstimate(auto: false),
               decoration: InputDecoration(
-                hintText: _isSnack ? '一句话描述：如「一杯大杯珍珠奶茶全糖」' : '一句话描述：如「慢跑 40 分钟」',
+                hintText: _isSnack ? '一句话描述：如「一杯大杯珍珠奶茶全糖」' : '描述运动（输入后自动拆解）：如「慢跑 40 分钟」',
                 filled: true,
                 fillColor: AppColors.bg,
                 border: const OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(8)), borderSide: BorderSide.none),
@@ -1660,6 +1741,53 @@ class _RecordSheetState extends State<_RecordSheet> {
                 contentPadding: const EdgeInsets.all(10),
               ),
             ),
+            if (!_isSnack && _loading) ...[
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF7ED),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: const Color(0xFFFED7AA)),
+                ),
+                child: const Row(
+                  children: [
+                    SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.orange)),
+                    SizedBox(width: 8),
+                    Text('✨ 正在自动拆解运动项目与测算消耗...',
+                        style: TextStyle(fontSize: 12, color: AppColors.orange, fontWeight: FontWeight.w500)),
+                  ],
+                ),
+              ),
+            ],
+            if (!_isSnack && !_loading && _breakdownItems != null && _breakdownItems!.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  const Icon(Icons.fitness_center_rounded, size: 14, color: AppColors.orange),
+                  const SizedBox(width: 4),
+                  const Text(
+                    '运动项目与消耗拆解',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.text),
+                  ),
+                  const Spacer(),
+                  if (_aiDetail != null && _aiDetail!.isNotEmpty)
+                    Flexible(
+                      child: Text(
+                        _aiDetail!,
+                        style: const TextStyle(fontSize: 10, color: AppColors.textSub),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              ExerciseBreakdownTable(
+                items: _breakdownItems!,
+                compact: true,
+                totalCalories: int.tryParse(_calCtrl.text.trim()),
+              ),
+            ],
             const SizedBox(height: 8),
             Row(
               children: [

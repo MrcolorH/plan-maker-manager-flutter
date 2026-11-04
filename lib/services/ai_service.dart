@@ -565,6 +565,15 @@ class AiService {
   AiService._();
   static final AiService instance = AiService._();
 
+  /// 测试专用的 Mock 回调
+  Future<String> Function(
+    AiConfig config,
+    List<Map<String, String>> messages, {
+    bool enableThinking,
+    int timeoutMs,
+    void Function(Map<String, dynamic>)? onUsage,
+  })? mockChatHandler;
+
   /// 全局单例 Dio：底层 HttpClient 复用连接池（keep-alive），
   /// 避免每次调用重新 DNS + TCP + TLS 握手（移动网络下可省几百毫秒）
   Dio? _dio;
@@ -581,6 +590,15 @@ class AiService {
   /// 通用 chat 调用：根据 provider 自动分流 OpenAI 兼容 或 Google Gemini 原生 REST
   Future<String> chat(AiConfig config, List<Map<String, String>> messages,
       {int timeoutMs = 60000, bool enableThinking = false, void Function(Map<String, dynamic> usage)? onUsage}) async {
+    if (mockChatHandler != null) {
+      return mockChatHandler!(
+        config,
+        messages,
+        enableThinking: enableThinking,
+        timeoutMs: timeoutMs,
+        onUsage: onUsage,
+      );
+    }
     if (config.apiKey.isEmpty || config.endpoint.isEmpty) {
       throw Exception('未配置 AI：请到「设置 → AI 服务」填写 API Key');
     }

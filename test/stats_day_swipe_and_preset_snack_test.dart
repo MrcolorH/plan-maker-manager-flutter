@@ -7,8 +7,6 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:jianfei_dazi/models/plan_data.dart';
-import 'package:jianfei_dazi/models/preset_food.dart';
-import 'package:jianfei_dazi/models/records.dart';
 import 'package:jianfei_dazi/models/settings.dart';
 import 'package:jianfei_dazi/pages/stats/stats_page.dart';
 import 'package:jianfei_dazi/providers/onboarding_provider.dart';
