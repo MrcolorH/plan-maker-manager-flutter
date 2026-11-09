@@ -11,20 +11,9 @@ import 'package:jianfei_dazi/providers/plan_provider.dart';
 import 'package:jianfei_dazi/providers/record_provider.dart';
 import 'package:jianfei_dazi/providers/settings_provider.dart';
 import 'package:jianfei_dazi/providers/usage_provider.dart';
-import 'package:jianfei_dazi/services/reminder_service.dart';
 import 'package:jianfei_dazi/services/storage_service.dart';
 import 'package:jianfei_dazi/utils/date_utils.dart';
 import 'package:jianfei_dazi/widgets/plan_item_edit.dart';
-
-class _FakeReminderService extends ReminderService {
-  _FakeReminderService() : super.forTesting();
-
-  @override
-  Future<void> fullReschedule(PlanData plan, AppSettings settings) async {}
-
-  @override
-  Future<void> ensureScheduled(PlanData plan, AppSettings settings) async {}
-}
 
 Widget _wrapWithProviders({
   required Widget child,
@@ -50,7 +39,6 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late StorageService storage;
-  late _FakeReminderService reminder;
   late SettingsProvider settingsProv;
   late RecordProvider recordProv;
   late PlanProvider planProv;
@@ -61,10 +49,9 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     await StorageService.instance.init();
     storage = StorageService.instance;
-    reminder = _FakeReminderService();
-    settingsProv = SettingsProvider(storage, reminder);
+    settingsProv = SettingsProvider(storage);
     recordProv = RecordProvider(storage);
-    planProv = PlanProvider(storage, reminder, settingsProv, recordProv);
+    planProv = PlanProvider(storage, settingsProv, recordProv);
     onboardingProv = OnboardingProvider(storage, planProv, settingsProv, recordProv);
     usageProv = UsageProvider(storage);
   });

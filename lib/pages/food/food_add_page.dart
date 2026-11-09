@@ -19,6 +19,7 @@ import '../../services/ai_service.dart';
 import '../../theme/app_theme.dart';
 import '../../utils/date_utils.dart';
 import '../../widgets/ai_config_sheet.dart';
+import 'food_nutrition_scan_page.dart';
 
 class FoodAddPage extends StatefulWidget {
   const FoodAddPage({super.key});
@@ -396,7 +397,10 @@ class _FoodAddPageState extends State<FoodAddPage> {
         _resDetail = (detailText != null && detailText.isNotEmpty)
             ? 'AI 拆解：$detailText'
             : '置信度 ${(conf * 100).round()}%';
-        _resItems = AiService.parseBreakdownFromText(detailText);
+        final rawItems = r['items'] as List<FoodBreakdownItem>?;
+        _resItems = (rawItems != null && rawItems.isNotEmpty)
+            ? rawItems
+            : AiService.parseBreakdownFromText(detailText);
         _isMatchedFromDb = false;
       });
       // 成功自动沉淀为 AI 缓存
@@ -505,11 +509,83 @@ class _FoodAddPageState extends State<FoodAddPage> {
     final presets = context.watch<PresetProvider>().presets;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('今日加餐')),
+      appBar: AppBar(
+        title: const Text('今日加餐'),
+        actions: [
+          IconButton(
+            tooltip: '拍照识别配料与成分表',
+            icon: const Icon(Icons.document_scanner_outlined),
+            onPressed: () {
+              Navigator.of(context).push(
+                AppRoutes.fade<void>(const FoodNutritionScanPage(initialSlot: 'snack')),
+              );
+            },
+          ),
+        ],
+      ),
       backgroundColor: AppColors.bg,
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
         children: [
+          // ---------- 袋装食品拍照/图文识别换算快捷入口 ----------
+          Container(
+            margin: const EdgeInsets.only(bottom: 14),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFFF0FDF4), Color(0xFFDCFCE7)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFBBF7D0)),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: AppColors.primary,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.camera_alt, color: Colors.white, size: 20),
+                ),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '袋装食品 · 拍照成分换算',
+                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF14532D)),
+                      ),
+                      SizedBox(height: 2),
+                      Text(
+                        '拍营养成分表/配料表，手输食用克数一键精准计算',
+                        style: TextStyle(fontSize: 11, color: Color(0xFF166534)),
+                      ),
+                    ],
+                  ),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    elevation: 0,
+                  ),
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      AppRoutes.fade<void>(const FoodNutritionScanPage(initialSlot: 'snack')),
+                    );
+                  },
+                  child: const Text('去拍照', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
+          ),
           // ---------- 常用预设方案快捷条 ----------
           if (presets.isNotEmpty) ...[
             Row(

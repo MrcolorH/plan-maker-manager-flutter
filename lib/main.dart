@@ -15,15 +15,15 @@ import 'providers/settings_provider.dart';
 import 'providers/theme_provider.dart';
 import 'providers/usage_provider.dart';
 import 'services/auto_backup_service.dart';
-import 'services/reminder_service.dart';
 import 'services/storage_service.dart';
+import 'services/sync_service.dart';
 import 'theme/app_theme.dart';
 import 'utils/calorie_utils.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await StorageService.instance.init();
-  await ReminderService.instance.init();
+  await SyncService().init();
   runApp(const JianfeiDaziApp());
 }
 
@@ -34,7 +34,7 @@ class JianfeiDaziApp extends StatefulWidget {
   State<JianfeiDaziApp> createState() => _JianfeiDaziAppState();
 }
 
-class _JianfeiDaziAppState extends State<JianfeiDaziApp> {
+class _JianfeiDaziAppState extends State<JianfeiDaziApp> with WidgetsBindingObserver {
   late final AppProvider appProvider;
   late final UsageProvider usageProvider;
   late final SettingsProvider settingsProvider;
@@ -48,8 +48,8 @@ class _JianfeiDaziAppState extends State<JianfeiDaziApp> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     final storage = StorageService.instance;
-    final reminder = ReminderService.instance;
     appProvider = AppProvider();
     usageProvider = UsageProvider(storage);
     recordProvider = RecordProvider(storage);
@@ -57,12 +57,10 @@ class _JianfeiDaziAppState extends State<JianfeiDaziApp> {
     themeProvider = ThemeProvider(storage);
     settingsProvider = SettingsProvider(
       storage,
-      reminder,
-      getPlan: () => planProvider.plan,
       // F10：基础消耗口径变化前固化历史基准（recordProvider.ensureBaseline 内部幂等 + 有历史才固化）
       onBurnChange: () => recordProvider.ensureBaseline(baseBurn(settingsProvider.settings)),
     );
-    planProvider = PlanProvider(storage, reminder, settingsProvider, recordProvider);
+    planProvider = PlanProvider(storage, settingsProvider, recordProvider);
     onboardingProvider = OnboardingProvider(storage, planProvider, settingsProvider, recordProvider);
     // 本地自动备份：单文件滚动覆盖，数据变更防抖写入 + 退后台立即写入
     autoBackup = AutoBackupService(
@@ -72,8 +70,24 @@ class _JianfeiDaziAppState extends State<JianfeiDaziApp> {
       onboarding: onboardingProvider,
       usage: usageProvider,
     )..attach();
-    // 启动时兜底重算提醒调度（重启后系统级调度自动恢复，这里补齐当天/次日）
-    reminder.onLaunch(planProvider.plan, settingsProvider.settings);
+
+    // 启动后静默尝试拉取云端待录入收件箱 (来自 QQ 机器人等)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      SyncService().syncInboxToLocal(recordProvider);
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      SyncService().syncInboxToLocal(recordProvider);
+    }
   }
 
   @override

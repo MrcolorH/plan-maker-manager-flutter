@@ -1,4 +1,4 @@
-/// 计划状态层（对应旧版 plan.js）：reactive 单例 + 持久化 + 提醒联动 + 当日快照同步
+/// 计划状态层（对应旧版 plan.js）：reactive 单例 + 持久化 + 当日快照同步
 library;
 
 import 'dart:async';
@@ -7,7 +7,6 @@ import 'package:flutter/foundation.dart';
 
 import '../models/plan_data.dart';
 import '../models/records.dart';
-import '../services/reminder_service.dart';
 import '../services/storage_service.dart';
 import '../utils/date_utils.dart';
 import '../utils/plan_utils.dart';
@@ -16,13 +15,12 @@ import 'settings_provider.dart';
 
 class PlanProvider extends ChangeNotifier {
   final StorageService _storage;
-  final ReminderService _reminder;
   final SettingsProvider _settings;
   final RecordProvider _records;
 
   PlanData plan;
 
-  PlanProvider(this._storage, this._reminder, this._settings, this._records)
+  PlanProvider(this._storage, this._settings, this._records)
       : plan = PlanData.empty() {
     _load();
     // F11：启动即确保旧数据已迁移为快照、今天快照与计划一致
@@ -85,7 +83,6 @@ class PlanProvider extends ChangeNotifier {
     notifyListeners();
     await _persist();
     await _settings.applyMeta(np.meta);
-    await _reminder.fullReschedule(plan, _settings.settings);
     await _syncToday();
   }
 
@@ -174,7 +171,6 @@ class PlanProvider extends ChangeNotifier {
     }
     notifyListeners();
     await _persist();
-    await _reminder.fullReschedule(plan, _settings.settings);
   }
 
   /// 当日快照修改反向同步回长期计划模板（用户勾选「同步更新回长期计划」）
@@ -211,7 +207,6 @@ class PlanProvider extends ChangeNotifier {
     plan.meals[i] = updated;
     notifyListeners();
     await _persist();
-    await _reminder.fullReschedule(plan, _settings.settings);
   }
 
   /// 整项替换（导入预览/详情页「编辑」落盘用）：按 id 定位原位替换；
@@ -232,7 +227,6 @@ class PlanProvider extends ChangeNotifier {
     }
     notifyListeners();
     await _persist();
-    await _reminder.fullReschedule(plan, _settings.settings);
     await _syncToday();
   }
 
@@ -245,7 +239,6 @@ class PlanProvider extends ChangeNotifier {
     }
     notifyListeners();
     await _persist();
-    await _reminder.fullReschedule(plan, _settings.settings);
     await _syncToday();
   }
 
@@ -259,7 +252,6 @@ class PlanProvider extends ChangeNotifier {
     }
     notifyListeners();
     await _persist();
-    await _reminder.fullReschedule(plan, _settings.settings);
     await _syncToday();
   }
 
@@ -269,7 +261,6 @@ class PlanProvider extends ChangeNotifier {
     if (plan.exercises.isEmpty) plan.meta.startedAt = '';
     notifyListeners();
     await _persist();
-    await _reminder.fullReschedule(plan, _settings.settings);
     await _syncToday();
   }
 
@@ -278,7 +269,6 @@ class PlanProvider extends ChangeNotifier {
     if (plan.meals.isEmpty) plan.meta.startedAt = '';
     notifyListeners();
     await _persist();
-    await _reminder.fullReschedule(plan, _settings.settings);
     await _syncToday();
   }
 
@@ -287,7 +277,6 @@ class PlanProvider extends ChangeNotifier {
     plan = PlanData.empty();
     notifyListeners();
     await _persist();
-    await _reminder.fullReschedule(plan, _settings.settings);
     await _syncToday();
   }
 
@@ -302,7 +291,6 @@ class PlanProvider extends ChangeNotifier {
     );
     notifyListeners();
     await _persist();
-    await _reminder.fullReschedule(plan, _settings.settings);
     await _syncToday();
   }
 
@@ -439,7 +427,6 @@ class PlanProvider extends ChangeNotifier {
 
     notifyListeners();
     await _persist();
-    await _reminder.fullReschedule(plan, _settings.settings);
     await _syncToday();
     return newMeal;
   }

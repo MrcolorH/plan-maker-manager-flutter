@@ -1,5 +1,5 @@
 /// 计划项详情页（对应 item/detail.vue）
-/// 餐食：食材清单 / 做法步骤；运动：训练环节；提醒开关；删除该项
+/// 餐食：食材清单 / 做法步骤；运动：训练环节；删除该项
 library;
 
 import 'package:flutter/material.dart';
@@ -112,7 +112,6 @@ class ItemDetailPage extends StatelessWidget {
           ],
         ),
       ),
-      _reminderRow(context, 'meal', m.id, m.reminder),
       if (m.details.isNotEmpty) ...[
         const SectionTitle('食材清单'),
         AppCard(
@@ -200,7 +199,6 @@ class ItemDetailPage extends StatelessWidget {
           ],
         ),
       ),
-      _reminderRow(context, 'exercise', e.id, e.reminder),
       if (e.content.isNotEmpty) ...[
         const SectionTitle('训练内容'),
         AppCard(
@@ -272,24 +270,6 @@ class ItemDetailPage extends StatelessWidget {
       );
     }
     return row;
-  }
-
-  Widget _reminderRow(BuildContext context, String type, String id, bool reminder) {
-    return AppCard(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-      child: Row(
-        children: [
-          const Text('⏰', style: TextStyle(fontSize: 16)),
-          const SizedBox(width: 10),
-          const Expanded(child: Text('到点提醒', style: TextStyle(fontSize: 14))),
-          Switch(
-            value: reminder,
-            activeThumbColor: AppColors.primary,
-            onChanged: (v) => context.read<PlanProvider>().updateItem(type, id, {'reminder': v}),
-          ),
-        ],
-      ),
-    );
   }
 
   Widget _deleteBtn(BuildContext context, String type, String id) {

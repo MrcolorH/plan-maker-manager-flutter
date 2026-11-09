@@ -1,5 +1,5 @@
 /// 设置页（对应 tabs/settings.vue）
-/// 热量 / 到点提醒 / AI 服务 / 数据与计划 / 帮助 / 关于
+/// 热量 / AI 服务 / 数据与备份 / 帮助 / 关于
 library;
 
 import 'package:flutter/material.dart';
@@ -15,16 +15,18 @@ import '../../providers/record_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/usage_provider.dart';
 import '../../providers/theme_provider.dart';
+import '../../services/app_update_service.dart';
 import '../../services/auto_backup_service.dart';
 import '../../services/backup_service.dart';
-import '../../services/reminder_service.dart';
 import '../../theme/app_theme.dart';
 import '../../utils/calorie_utils.dart';
 import '../../utils/date_utils.dart';
+import '../../widgets/update_dialog.dart';
 import '../guide/guide_page.dart';
 import '../onboarding/onboarding_page.dart';
 import 'ai_config_page.dart';
 import 'backup_page.dart';
+import 'cloud_sync_page.dart';
 import 'theme_settings_page.dart';
 
 class SettingsPage extends StatelessWidget {
@@ -75,13 +77,6 @@ class SettingsPage extends StatelessWidget {
               ),
             ),
             _Row('体重记录', _weightSummary(records), onTap: () => _openWeightDialog(context)),
-            const _GroupLabel('到点提醒'),
-            _SwitchRow('提醒开关', settings.reminderEnabled, (v) {
-              context.read<SettingsProvider>().update({'reminderEnabled': v});
-            }),
-            _Row('提前提醒', '${settings.reminderAdvance} 分钟',
-                onTap: () => _openAdvanceDialog(context)),
-            _Row('通知权限', null, onTap: () => _checkPermission(context)),
             const _GroupLabel('AI 服务'),
             _Row(
                 'AI 服务',
@@ -90,29 +85,38 @@ class SettingsPage extends StatelessWidget {
                     : '未配置',
                 onTap: () => Navigator.of(context).push(
                     AppRoutes.fade<void>(const AiConfigPage()))),
-            const _GroupLabel('数据与计划'),
+            const _GroupLabel('数据与备份'),
             _SwitchRow(
               '自动备份',
               settings.autoBackupEnabled,
               (v) => context.read<SettingsProvider>().update({'autoBackupEnabled': v}),
               subtitle: settings.autoBackupEnabled
-                  ? '数据变更/退出时自动保存到系统 Download 目录（单文件覆盖，含 AI 配置）'
-                  : '已关闭：开启后自动保存到系统 Download 目录的 zhiqing-backup-auto.txt（单文件覆盖）',
+                  ? '数据变更或退出时自动备份到 Download 目录'
+                  : '已关闭：开启后自动备份到系统 Download 目录',
             ),
-            _Row('导出备份', '分享 .txt 文件', onTap: () => _openBackup(context, 'export')),
-            _Row('导入备份', '增量合并 / 覆盖', onTap: () => _openBackup(context, 'import')),
-            _Row('清空餐食计划', null, onTap: () => _confirmClear(context, 'meal')),
-            _Row('清空运动计划', null, onTap: () => _confirmClear(context, 'exercise')),
-            _Row('清空全部数据', null, danger: true, onTap: () => _confirmClearAll(context)),
+            _Row('导出备份', '分享 / 保存 .txt 文件', onTap: () => _openBackup(context, 'export')),
+            _Row('导入备份', '增量合并 / 覆盖恢复', onTap: () => _openBackup(context, 'import')),
+            _Row(
+              '云端同步与 QQ 绑定',
+              '云端备份 · 机器人打卡收件箱',
+              onTap: () => Navigator.of(context).push(
+                AppRoutes.fade<void>(const CloudSyncPage()),
+              ),
+            ),
             const _GroupLabel('帮助'),
-            _Row('使用指引', '8 篇教程',                 onTap: () => Navigator.of(context).push(
+            _Row('使用指引', '7 篇教程',
+                onTap: () => Navigator.of(context).push(
                     AppRoutes.fade<void>(const GuidePage()))),
             _Row('重新体验首次引导', null, onTap: () {
               context.read<OnboardingProvider>().rerunOnboarding();
               Navigator.of(context).push(AppRoutes.fade<void>(const OnboardingPage()));
             }),
             const _GroupLabel('关于'),
-            const _Row('版本', '1.4.0'),
+            _Row(
+              '检查更新',
+              '当前版本 v${AppUpdateService.currentVersion}',
+              onTap: () => _checkAppUpdate(context),
+            ),
             const _Row('作者', '听风闻人语'),
             _Row('QQ', '1419046431', onTap: () => _copyQQ(context, '1419046431')),
             const SizedBox(height: 12),
@@ -200,66 +204,6 @@ class SettingsPage extends StatelessWidget {
     );
   }
 
-  void _openAdvanceDialog(BuildContext context) {
-    final sp = context.read<SettingsProvider>();
-    final settings = sp.settings;
-    final ctrl = TextEditingController(text: '${settings.reminderAdvance}');
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('提前提醒（分钟）', style: TextStyle(fontSize: 16)),
-        content: TextField(
-          controller: ctrl,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(hintText: '0-30 分钟'),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消', style: TextStyle(color: AppColors.textSub))),
-          TextButton(
-            onPressed: () {
-              final v = int.tryParse(ctrl.text.trim());
-              if (v != null && v >= 0 && v <= 30) {
-                sp.update({'reminderAdvance': v});
-              }
-              Navigator.pop(ctx);
-            },
-            child: const Text('确定', style: TextStyle(color: AppColors.primary)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _checkPermission(BuildContext context) async {
-    final granted = await ReminderService.instance.checkNotifPermission();
-    if (!context.mounted) return;
-    if (!granted) {
-      final ok = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('通知权限未开启', style: TextStyle(fontSize: 16)),
-          content: const Text('未授权时提醒无法显示，点击「去开启」申请通知权限。'),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消', style: TextStyle(color: AppColors.textSub))),
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('去开启', style: TextStyle(color: AppColors.primary)),
-            ),
-          ],
-        ),
-      );
-      if (ok == true) {
-        final r = await ReminderService.instance.requestNotifPermission();
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(r ? '通知权限已开启' : '未获得授权，提醒可能无法显示')));
-        }
-      }
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('通知权限已开启')));
-    }
-  }
-
   void _copyQQ(BuildContext context, String qq) {
     Clipboard.setData(ClipboardData(text: qq));
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('已复制 QQ：$qq')));
@@ -271,70 +215,53 @@ class SettingsPage extends StatelessWidget {
     );
   }
 
-  void _confirmClear(BuildContext context, String type) {
+  Future<void> _checkAppUpdate(BuildContext context) async {
     showDialog<void>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        content: Text(type == 'meal' ? '清空全部餐食计划？打卡记录会保留。' : '清空全部运动计划？打卡记录会保留。'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消', style: TextStyle(color: AppColors.textSub))),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(ctx);
-              if (type == 'meal') {
-                context.read<PlanProvider>().clearMeals();
-              } else {
-                context.read<PlanProvider>().clearExercises();
-              }
-            },
-            child: const Text('清空', style: TextStyle(color: AppColors.danger)),
+      barrierDismissible: false,
+      builder: (ctx) => const Center(
+        child: Card(
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: 24, vertical: 18),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                SizedBox(width: 14),
+                Text('正在检查 GitHub Release 更新...', style: TextStyle(fontSize: 14)),
+              ],
+            ),
           ),
-        ],
+        ),
       ),
     );
-  }
 
-  void _confirmClearAll(BuildContext context) {
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        content: const Text(
-            '⚠️ 清空全部数据（计划/记录/设置）前，会先把当前数据另存一份带时间戳的备份到 Download 目录，之后仍可从「导入备份」恢复。确定继续？'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消', style: TextStyle(color: AppColors.textSub))),
-          TextButton(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              // 异步前先取好 Provider 引用：await 期间页面可能被销毁，
-              // 不能在 async gap 之后再用 context 触碰 Provider
-              final planP = context.read<PlanProvider>();
-              final recordP = context.read<RecordProvider>();
-              final settingsP = context.read<SettingsProvider>();
-              final onboardingP = context.read<OnboardingProvider>();
-              final usageP = context.read<UsageProvider>();
-              // 清空前自动留底（带时间戳文件），失败不阻断清空
-              try {
-                await BackupService.instance.exportBackup(captureBackupData(
-                  plan: planP,
-                  record: recordP,
-                  settings: settingsP,
-                  onboarding: onboardingP,
-                  usage: usageP,
-                ));
-              } catch (_) {}
-              await planP.clearPlan();
-              await recordP.clearRecords();
-              await settingsP.clearAll();
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                    content: Text('已清空全部数据；清空前数据已自动备份到 Download 目录')));
-              }
-            },
-            child: const Text('全部清空', style: TextStyle(color: AppColors.danger)),
-          ),
-        ],
-      ),
-    );
+    try {
+      final info = await AppUpdateService.instance.checkUpdate();
+      if (!context.mounted) return;
+      Navigator.of(context).pop(); // 关闭加载弹窗
+      await UpdateDialog.show(context, info);
+    } catch (e) {
+      if (!context.mounted) return;
+      Navigator.of(context).pop(); // 关闭加载弹窗
+      showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('检查更新提示', style: TextStyle(fontSize: 16)),
+          content: Text('$e\n\n您也可以直接访问 GitHub Releases 页面下载安装。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('知道了'),
+            ),
+          ],
+        ),
+      );
+    }
   }
 }
 

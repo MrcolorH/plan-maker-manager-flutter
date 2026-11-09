@@ -49,3 +49,10 @@ app.*.map.json
 
 # APK binaries
 *.apk
+
+# Zhiqing local sync server
+server/node_modules/
+server/data/*.db
+server/data/*.db-wal
+server/data/*.db-shm
+server/.env

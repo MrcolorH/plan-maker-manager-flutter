@@ -21,6 +21,7 @@ import '../../providers/record_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../providers/usage_provider.dart';
 import '../../services/ai_service.dart';
+import '../../services/sync_service.dart';
 import '../../theme/app_theme.dart';
 import '../../utils/calorie_utils.dart';
 import '../../utils/date_utils.dart';
@@ -32,7 +33,9 @@ import '../../widgets/exercise_breakdown_table.dart';
 import '../../widgets/exercise_card.dart';
 import '../../widgets/food_breakdown_table.dart';
 import '../../widgets/meal_card.dart';
+import '../../widgets/meal_recommendation_sheet.dart';
 import '../food/food_add_page.dart';
+import '../food/food_nutrition_scan_page.dart';
 import '../item/item_detail_page.dart';
 import 'daily_verify_page.dart';
 import 'day_exercise_detail_page.dart';
@@ -93,11 +96,11 @@ class TodayPage extends StatelessWidget {
                 )
             : null,
         onAdjust: () => _openEditDialog(context, e),
-        onDelete: (e.isPlan || e.slot != 'snack')
+        onDelete: e.isPlan
             ? null
             : () => _confirmDelete(context, () {
                 context.read<RecordProvider>().removeDayEntry(today, e.id);
-              }, '删除这条加餐记录？'),
+              }, '删除这条${e.slot == 'snack' ? '加餐' : (kTypeCn[e.slot] ?? '餐食')}记录？'),
         onConvertToPlan: (!e.isPlan && e.content.isNotEmpty)
             ? () => _openConvertToPlan(context, e)
             : null,
@@ -145,7 +148,10 @@ class TodayPage extends StatelessWidget {
     return _scaffold(
       context,
       child: RefreshIndicator(
-        onRefresh: () async => context.read<AppProvider>().refreshToday(),
+        onRefresh: () async {
+          context.read<AppProvider>().refreshToday();
+          await SyncService().syncInboxToLocal(context.read<RecordProvider>());
+        },
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.only(bottom: 96),
@@ -190,9 +196,34 @@ class TodayPage extends StatelessWidget {
               plannedCarbs: summary.plannedCarbs,
               plannedFat: summary.plannedFat,
               onVerify: () => _openDailyVerify(context),
+              onRecommend: () => _openMealRecommendation(context),
             ),
             // 今日餐食
-            const SectionTitle('今日餐食'),
+            SectionTitle(
+              '今日餐食',
+              trailing: InkWell(
+                onTap: () => _openMealRecommendation(context),
+                borderRadius: BorderRadius.circular(12),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.auto_awesome_rounded, size: 14, color: context.primaryColor),
+                      const SizedBox(width: 4),
+                      Text(
+                        '推荐吃什么',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: context.primaryColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
             if (mealRows.isEmpty)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 16),
@@ -202,12 +233,30 @@ class TodayPage extends StatelessWidget {
               )
             else
               ...mealRows,
-            DashedAddButton('＋ 今日加餐（智能估算 / 常用方案，仅今天有效）',
-              onTap: () {
-                Navigator.of(context).push(
-                  AppRoutes.fade<void>(const FoodAddPage()),
-                );
-              },
+            Row(
+              children: [
+                Expanded(
+                  child: DashedAddButton(
+                    '＋ 今日加餐',
+                    onTap: () {
+                      Navigator.of(context).push(
+                        AppRoutes.fade<void>(const FoodAddPage()),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: DashedAddButton(
+                    '📸 拍成分表换算',
+                    onTap: () {
+                      Navigator.of(context).push(
+                        AppRoutes.fade<void>(const FoodNutritionScanPage(initialSlot: 'snack')),
+                      );
+                    },
+                  ),
+                ),
+              ],
             ),
             // 今日运动
             const SectionTitle('今日运动'),
@@ -265,6 +314,10 @@ class TodayPage extends StatelessWidget {
     Navigator.of(context).push(AppRoutes.fade<void>(
       DailyVerifyPage(date: todayStr()),
     ));
+  }
+
+  void _openMealRecommendation(BuildContext context) {
+    showMealRecommendationSheet(context);
   }
 
   void _openDayMealDetail(BuildContext context, DayEntry entry) {
@@ -923,13 +976,38 @@ class _EntryEditSheetState extends State<_EntryEditSheet> {
                       label: const Text('恢复计划', style: TextStyle(fontSize: 12)),
                       style: TextButton.styleFrom(foregroundColor: AppColors.textSub),
                     )
-                  else if (!_isPlan)
+                  else if (!_isPlan) ...[
+                    TextButton.icon(
+                      onPressed: () async {
+                        final confirm = await showDialog<bool>(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            title: Text('删除这条${_isEx ? '运动' : (kTypeCn[widget.entry.slot] ?? '餐食')}？'),
+                            content: Text('确认删除「${widget.entry.content}」？该热量将从今日数据中剔除。'),
+                            actions: [
+                              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+                              TextButton(
+                                onPressed: () => Navigator.pop(ctx, true),
+                                child: const Text('确认删除', style: TextStyle(color: AppColors.danger)),
+                              ),
+                            ],
+                          ),
+                        );
+                        if (confirm == true && mounted) {
+                          await context.read<RecordProvider>().removeDayEntry(widget.date, widget.entry.id);
+                          if (mounted) Navigator.pop(context);
+                        }
+                      },
+                      icon: const Icon(Icons.delete_outline, size: 15, color: AppColors.danger),
+                      label: const Text('删除此条', style: TextStyle(fontSize: 12, color: AppColors.danger)),
+                    ),
                     TextButton.icon(
                       onPressed: _convertToPlan,
                       icon: const Icon(Icons.event_repeat_rounded, size: 15),
                       label: const Text('设为日常计划', style: TextStyle(fontSize: 12)),
                       style: TextButton.styleFrom(foregroundColor: AppColors.primary),
-                    )
+                    ),
+                  ]
                   else
                     const SizedBox.shrink(),
                   TextButton.icon(

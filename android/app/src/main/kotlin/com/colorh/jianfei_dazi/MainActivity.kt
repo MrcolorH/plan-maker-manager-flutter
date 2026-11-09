@@ -3,6 +3,7 @@ package com.colorh.jianfei_dazi
 import android.Manifest
 import android.content.ContentUris
 import android.content.ContentValues
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -10,6 +11,7 @@ import android.os.Environment
 import android.provider.MediaStore
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -57,6 +59,15 @@ class MainActivity : FlutterActivity() {
                             return@setMethodCallHandler
                         }
                         result.success(readFromDownloads(name))
+                    }
+
+                    "installApk" -> {
+                        val filePath = call.argument<String>("filePath")
+                        if (filePath.isNullOrEmpty()) {
+                            result.error("ARG", "filePath 不能为空", null)
+                            return@setMethodCallHandler
+                        }
+                        installApk(File(filePath), result)
                     }
 
                     else -> result.notImplemented()
@@ -250,6 +261,36 @@ class MainActivity : FlutterActivity() {
             }
         } catch (e: Exception) {
             null
+        }
+    }
+
+    /**
+     * 调起系统 PackageInstaller 安装下载好的 APK 安装包。
+     * Android 7.0 (API 24) 及以上走 FileProvider 生成 content:// URI，避免 FileUriExposedException。
+     */
+    private fun installApk(file: File, result: MethodChannel.Result) {
+        if (!file.exists()) {
+            result.error("NOT_FOUND", "安装包文件不存在: ${file.absolutePath}", null)
+            return
+        }
+        try {
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+                val uri: Uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    FileProvider.getUriForFile(
+                        this@MainActivity,
+                        "${applicationContext.packageName}.fileprovider",
+                        file
+                    )
+                } else {
+                    Uri.fromFile(file)
+                }
+                setDataAndType(uri, "application/vnd.android.package-archive")
+            }
+            startActivity(intent)
+            result.success(true)
+        } catch (e: Exception) {
+            result.error("INSTALL_ERROR", e.message ?: "调起安装失败", null)
         }
     }
 }

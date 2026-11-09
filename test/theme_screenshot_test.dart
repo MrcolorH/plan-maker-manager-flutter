@@ -24,18 +24,9 @@ import 'package:jianfei_dazi/providers/record_provider.dart';
 import 'package:jianfei_dazi/providers/settings_provider.dart';
 import 'package:jianfei_dazi/providers/theme_provider.dart';
 import 'package:jianfei_dazi/providers/usage_provider.dart';
-import 'package:jianfei_dazi/services/reminder_service.dart';
 import 'package:jianfei_dazi/services/storage_service.dart';
 import 'package:jianfei_dazi/theme/app_theme.dart';
 import 'package:provider/provider.dart';
-
-class _FakeReminderService extends ReminderService {
-  _FakeReminderService() : super.forTesting();
-  @override
-  Future<void> fullReschedule(PlanData plan, AppSettings settings) async {}
-  @override
-  Future<void> ensureScheduled(PlanData plan, AppSettings settings) async {}
-}
 
 Future<ui.Image> _decodeLocalImage(String path) async {
   final bytes = await File(path).readAsBytes();
@@ -48,8 +39,8 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('渲染并导出二次元主题与设置页视觉验收截图', (tester) async {
-    const outputDir = '/Users/colorh/.gemini/antigravity/brain/fd5fadb2-7cd2-403a-b203-38dfe3f0612f';
-    const projectRoot = '/Users/colorh/Project/AICODING/plan-maker-manager-flutter';
+    final outputDir = Directory.systemTemp.createTempSync('theme_test').path;
+    final projectRoot = Directory.current.path;
 
     late ui.Image sakuraImg;
     late ui.Image starryImg;
@@ -135,15 +126,10 @@ void main() {
     }) {
       final appP = AppProvider();
       appP.setActiveTab(activeTab);
-      final reminder = _FakeReminderService();
       final recP = RecordProvider(storage);
       late final PlanProvider planP;
-      final setP = SettingsProvider(
-        storage,
-        reminder,
-        getPlan: () => planP.plan,
-      );
-      planP = PlanProvider(storage, reminder, setP, recP);
+      final setP = SettingsProvider(storage);
+      planP = PlanProvider(storage, setP, recP);
       final onbP = OnboardingProvider(storage, planP, setP, recP);
       onbP.state.done = true;
       final useP = UsageProvider(storage);
@@ -260,10 +246,11 @@ void main() {
         ),
       ),
     );
+    await tester.pump(const Duration(seconds: 2));
   });
 
   testWidgets('ImageCropPage 支持单指平移拖拽与缩放调节', (tester) async {
-    const projectRoot = '/Users/colorh/Project/AICODING/plan-maker-manager-flutter';
+    final projectRoot = Directory.current.path;
     final imageFile = File('$projectRoot/assets/themes/sakura_dream.jpg');
     late ui.Image testImg;
 

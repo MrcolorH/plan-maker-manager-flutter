@@ -20,6 +20,7 @@ class CalorieSummary extends StatelessWidget {
   final int plannedCarbs;
   final int plannedFat;
   final VoidCallback? onVerify;
+  final VoidCallback? onRecommend;
 
   const CalorieSummary({
     super.key,
@@ -35,6 +36,7 @@ class CalorieSummary extends StatelessWidget {
     this.plannedCarbs = 0,
     this.plannedFat = 0,
     this.onVerify,
+    this.onRecommend,
   });
 
   Color get _levelColor {
@@ -134,33 +136,72 @@ class CalorieSummary extends StatelessWidget {
               ],
             ),
           ],
-          if (onVerify != null) ...[
+          if (onRecommend != null || onVerify != null) ...[
             const SizedBox(height: 10),
             Container(height: 0.5, color: const Color(0xFFEFEFEA)),
             const SizedBox(height: 8),
-            InkWell(
-              onTap: onVerify,
-              borderRadius: BorderRadius.circular(8),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 2),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.fact_check_outlined, size: 14, color: context.primaryColor),
-                    const SizedBox(width: 4),
-                    Text(
-                      '今日校验（AI 识别与热量二次核验）',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                        color: context.primaryColor,
+            Row(
+              children: [
+                if (onRecommend != null)
+                  Expanded(
+                    child: InkWell(
+                      onTap: onRecommend,
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+                        decoration: BoxDecoration(
+                          color: context.primaryColor.withOpacity(0.08),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.auto_awesome_rounded, size: 14, color: context.primaryColor),
+                            const SizedBox(width: 4),
+                            Text(
+                              '推荐吃什么',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: context.primaryColor,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                    const SizedBox(width: 2),
-                    Icon(Icons.chevron_right_rounded, size: 16, color: context.primaryColor),
-                  ],
-                ),
-              ),
+                  ),
+                if (onRecommend != null && onVerify != null) const SizedBox(width: 8),
+                if (onVerify != null)
+                  Expanded(
+                    child: InkWell(
+                      onTap: onVerify,
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade100,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.fact_check_outlined, size: 14, color: AppColors.textSub),
+                            SizedBox(width: 4),
+                            Text(
+                              '今日校验',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                                color: AppColors.textSub,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ],
         ],

@@ -5,21 +5,17 @@ import 'package:flutter/foundation.dart';
 
 import '../models/plan_data.dart';
 import '../models/settings.dart';
-import '../services/reminder_service.dart';
 import '../services/storage_service.dart';
 
 class SettingsProvider extends ChangeNotifier {
   final StorageService _storage;
-  final ReminderService _reminder;
   AppSettings settings;
-  final PlanData Function()? _getPlan;
 
   /// F10 固化钩子：bmr/tdee 即将变化前回调（用于把当前基础消耗固化为历史基准，防历史缺口漂移）
   /// 由 main.dart 装配为 recordProvider.ensureBaseline(baseBurn(settings))
   final Future<void> Function()? _onBurnChange;
 
-  SettingsProvider(this._storage, this._reminder,
-      {this._getPlan, this._onBurnChange})
+  SettingsProvider(this._storage, {this._onBurnChange})
       : settings = AppSettings.defaults() {
     _load();
   }
@@ -56,10 +52,8 @@ class SettingsProvider extends ChangeNotifier {
     await _storage.writeMap(StorageService.kSettings, settings.toJson());
   }
 
-  /// 通用更新；涉及提醒配置时自动重调度；bmr/tdee 将变时先固化历史基准
+  /// 通用更新；bmr/tdee 将变时先固化历史基准
   Future<void> update(Map<String, dynamic> patch) async {
-    const remindKeys = ['reminderEnabled', 'reminderAdvance'];
-    final touchRemind = remindKeys.any((k) => patch.containsKey(k));
     await _freezeIfBurnChanging(patch);
     if (patch['tdee'] is num) settings.tdee = (patch['tdee'] as num).round();
     if (patch['bmr'] is num) settings.bmr = (patch['bmr'] as num).round();
@@ -73,10 +67,6 @@ class SettingsProvider extends ChangeNotifier {
     }
     notifyListeners();
     await _persist();
-    if (touchRemind) {
-      final plan = _getPlan?.call();
-      if (plan != null) await _reminder.fullReschedule(plan, settings);
-    }
   }
 
   /// 新增一条服务商配置档案并立即启用（上限 kMaxAiProfiles 条）。
@@ -144,8 +134,6 @@ class SettingsProvider extends ChangeNotifier {
     settings = AppSettings.defaults();
     notifyListeners();
     await _persist();
-    final plan = _getPlan?.call();
-    if (plan != null) await _reminder.fullReschedule(plan, settings);
   }
 
   /// 覆盖替换整个设置（历史备份「覆盖导入」使用；默认值深度合并补缺）
@@ -174,7 +162,5 @@ class SettingsProvider extends ChangeNotifier {
     settings = merged;
     notifyListeners();
     await _persist();
-    final plan = _getPlan?.call();
-    if (plan != null) await _reminder.fullReschedule(plan, settings);
   }
 }

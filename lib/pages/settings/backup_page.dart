@@ -390,7 +390,51 @@ class _BackupPageState extends State<BackupPage> {
       ),
       const SizedBox(height: 16),
       DangerButton(_busy ? '覆盖中…' : '覆盖导入（全量替换）', onPressed: _busy ? null : _replaceImport),
+      const SizedBox(height: 32),
+      Center(
+        child: TextButton.icon(
+          style: TextButton.styleFrom(foregroundColor: AppColors.danger),
+          icon: const Icon(Icons.delete_forever_outlined, size: 16),
+          label: const Text('清空全部数据并重置', style: TextStyle(fontSize: 13)),
+          onPressed: _busy ? null : _confirmClearAll,
+        ),
+      ),
     ];
+  }
+
+  void _confirmClearAll() {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        content: const Text(
+            '⚠️ 清空全部数据（计划/记录/设置）前，会先把当前数据另存一份带时间戳的备份到 Download 目录，之后仍可在此处重新恢复。确定继续？'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消', style: TextStyle(color: AppColors.textSub))),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              setState(() => _busy = true);
+              final planP = context.read<PlanProvider>();
+              final recordP = context.read<RecordProvider>();
+              final settingsP = context.read<SettingsProvider>();
+              try {
+                await BackupService.instance.exportBackup(_snapshot());
+              } catch (_) {}
+              await planP.clearPlan();
+              await recordP.clearRecords();
+              await settingsP.clearAll();
+              if (mounted) {
+                setState(() => _busy = false);
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                    content: Text('已清空全部数据；清空前数据已自动留底备份到 Download 目录')));
+                Navigator.pop(context);
+              }
+            },
+            child: const Text('全部清空', style: TextStyle(color: AppColors.danger)),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _row(String label, String value) {

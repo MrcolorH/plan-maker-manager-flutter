@@ -8,7 +8,9 @@ import 'package:provider/provider.dart';
 
 import '../providers/app_provider.dart';
 import '../providers/onboarding_provider.dart';
+import '../services/app_update_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/update_dialog.dart';
 import 'onboarding/onboarding_page.dart';
 import 'plan/plan_page.dart';
 import 'settings/settings_page.dart';
@@ -32,8 +34,24 @@ class _MainShellState extends State<MainShell> {
       final ob = context.read<OnboardingProvider>();
       if (ob.shouldOnboard()) {
         _openOnboarding();
+      } else {
+        _checkUpdateSilently();
       }
     });
+  }
+
+  Future<void> _checkUpdateSilently() async {
+    try {
+      await Future<void>.delayed(const Duration(seconds: 1));
+      if (!mounted) return;
+      final info = await AppUpdateService.instance.checkUpdate();
+      if (!mounted) return;
+      if (info.hasUpdate) {
+        await UpdateDialog.show(context, info);
+      }
+    } catch (_) {
+      // 启动静默检查失败（无网或无更新），不打扰用户
+    }
   }
 
   void _openOnboarding() {

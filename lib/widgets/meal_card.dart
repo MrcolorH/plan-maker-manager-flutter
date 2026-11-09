@@ -157,6 +157,13 @@ class MealCard extends StatelessWidget {
                   ] else if (isTempSnack) ...[
                     _iconBtn(Icons.close, AppColors.textSub, onDelete, 18),
                   ] else ...[
+                    if (onDelete != null) ...[
+                      Tooltip(
+                        message: '删除',
+                        child: _iconBtn(Icons.close, AppColors.textSub, onDelete, 18),
+                      ),
+                      const SizedBox(width: 4),
+                    ],
                     if (onConvertToPlan != null) ...[
                       Tooltip(
                         message: '设为日常计划',

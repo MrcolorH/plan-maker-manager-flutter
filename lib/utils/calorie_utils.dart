@@ -221,6 +221,13 @@ DailySummary _snapshotSummary(
     {UserProfile? profile}) {
   final rec = records.checkRecords[dateStr] ?? {};
   bool checked(DayEntry e) => rec.containsKey(entryCheckKey(e));
+  bool isCheckedEntry(DayEntry e) {
+    // 纯临时加餐（snack）：吃了才记录，天然已打卡（若有误由用户删除）
+    // 计划外正餐（如 AI 推荐采纳的早餐/午餐/晚餐，或自定义录入的正餐）：严格遵循打卡状态，取消勾选即从摄入数据中剔除
+    if (!e.isPlan && e.slot == 'snack') return true;
+    return checked(e);
+  }
+
   final planMeals = entries.where((e) => e.isPlan && e.kind == 'meal').toList();
   final planExs = entries.where((e) => e.isPlan && e.kind == 'exercise').toList();
   final extraSnacks = entries.where((e) => !e.isPlan && e.kind == 'meal').toList();
@@ -228,7 +235,7 @@ DailySummary _snapshotSummary(
 
   final plannedIntake = _sum(planMeals.map((e) => e.calories ?? 0));
   final mealIntake = _sum(planMeals.where(checked).map((e) => e.calories ?? 0));
-  final tempIntake = _sum(extraSnacks.map((e) => e.calories ?? 0)); // 加餐即计
+  final tempIntake = _sum(extraSnacks.where(isCheckedEntry).map((e) => e.calories ?? 0));
   final planBurn = _sum(planExs.where(checked).map((e) => e.calories ?? 0));
   final tempBurn = _sum(extraExs.map((e) => e.calories ?? 0)); // 加练即计
   const extraIntake = 0; // 旧 extraFoods 已并入快照
@@ -243,7 +250,7 @@ DailySummary _snapshotSummary(
   final taskCount = planEntries.length;
   final doneCount = planEntries.where(checked).length;
 
-  // 计算宏量元素（已打卡计划餐 + 临时加餐，支持损耗扣减）
+  // 计算宏量元素（已打卡计划餐 + 有效就餐记录，支持损耗扣减）
   int inP = 0;
   int inC = 0;
   int inF = 0;
@@ -252,7 +259,7 @@ DailySummary _snapshotSummary(
     inC += m.carbs ?? 0;
     inF += m.fat ?? 0;
   }
-  for (final s in extraSnacks) {
+  for (final s in extraSnacks.where(isCheckedEntry)) {
     inP += s.protein ?? 0;
     inC += s.carbs ?? 0;
     inF += s.fat ?? 0;
@@ -818,4 +825,108 @@ MonthData monthData(PlanData plan, RecordStore records, int year, int month) {
     ));
   }
   return MonthData(cells, lead);
+}
+
+/// 构建向 AI 申请饮食与运动推荐的结构化上下文文本
+String buildRecommendationContext({
+  required DailySummary summary,
+  required List<DayEntry> entries,
+  required DateTime now,
+  int targetDeficit = 400,
+  UserProfile? profile,
+  String mealPreference = 'cook', // 'cook' (自己做) | 'takeout' (外卖) | 'dine_out' (去店里吃) | 'all' (不限)
+  String availableIngredients = '', // 用户手头现有的食材（自己做时传入）
+  String targetStores = '', // 周围实体店铺（去店里吃时传入，如 KFC、麦当劳、黄焖鸡、面馆等）
+  String deliveryKeywords = '', // 点外卖时想在美团/饿了么搜索的品类或店铺
+}) {
+  final timeStr = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+  final intake = summary.intake.round();
+  final baseBurn = summary.baseBurn;
+  final exerciseBurn = summary.exerciseBurn.round();
+  final totalBurn = baseBurn + exerciseBurn;
+  final remainingBudget = totalBurn - intake - targetDeficit;
+
+  final sb = StringBuffer();
+  sb.writeln('【当前真实时间】：$timeStr');
+
+  // 用户指定的就餐倾向与现有食材/店铺/美团搜索
+  if (mealPreference == 'cook') {
+    sb.writeln('【用户指定就餐倾向】：🍳 自己做（自烹家常减脂餐）');
+    if (availableIngredients.trim().isNotEmpty) {
+      sb.writeln('【用户手头现有的食材】：${availableIngredients.trim()}');
+      sb.writeln('【重要定制指令】：必须优先充分利用用户现有的上述食材来设计搭配减脂餐！尽量涵盖已有的食材，给出现成食材的快手健康做法（控油控盐），避免用户需要额外采购复杂食材！');
+    } else {
+      sb.writeln('【重要定制指令】：推荐快手简单的自烹家常减脂餐方案，注重少油少盐易操作。');
+    }
+  } else if (mealPreference == 'takeout') {
+    sb.writeln('【用户指定就餐倾向】：🛵 点外卖（美团/外卖点单）');
+    if (deliveryKeywords.trim().isNotEmpty) {
+      sb.writeln('【用户在美团搜索/偏好的外卖品类与店铺】：${deliveryKeywords.trim()}');
+      sb.writeln('【重要定制指令】：请针对用户美团搜索的这些品类或店铺，为用户定制最佳高蛋白低热量外卖搭配，并写明避重油重酱的外卖神备注（如米饭分装、清汤底、不要淋明油、酱料单放）！');
+    } else {
+      sb.writeln('【重要定制指令】：推荐常见连锁/品类外卖的高分减脂单品与组合，并附带避油避酱的备注点单技巧（如米饭分装、不要浇汁淋油）。');
+    }
+  } else if (mealPreference == 'dine_out') {
+    sb.writeln('【用户指定就餐倾向】：🏬 去店里吃（周围实体餐饮店铺）');
+    if (targetStores.trim().isNotEmpty) {
+      sb.writeln('【用户周围/想要前往的具体实体店铺】：${targetStores.trim()}');
+      sb.writeln('【重要定制指令】：请针对用户周围这些具体的实体店铺（如肯德基、麦当劳、黄焖鸡米饭、牛肉面馆、沙县小吃等），直接提供在当前剩余预算内的「绝不踩坑减脂点单方案」！不仅要写明菜品，还要标明该实体店就餐具体的减脂吃法与防油控碳技巧（如：去皮吃、过水涮油、牛肉面少面多青菜、不喝浓汤、无糖可乐替代）！');
+    } else {
+      sb.writeln('【重要定制指令】：推荐周边常见实体快餐、面馆、黄焖鸡、便利店的就餐选菜搭配，并标明堂食点菜与避开隐藏热量的技巧。');
+    }
+  } else {
+    sb.writeln('【就餐倾向】：多场景全面推荐（兼顾自烹、外卖与快选）');
+  }
+
+  if (profile != null && (profile.weight != null || profile.gender != null)) {
+    final parts = <String>[];
+    if (profile.gender != null && profile.gender!.isNotEmpty) parts.add('性别：${profile.gender}');
+    if (profile.weight != null) parts.add('当前体重：${profile.weight}kg');
+    if (profile.height != null) parts.add('身高：${profile.height}cm');
+    if (parts.isNotEmpty) {
+      sb.writeln('【用户画像】：${parts.join('，')}');
+    }
+  }
+
+  sb.writeln('【热量收支现状】：');
+  sb.writeln('- 基础日常消耗（不含刻意运动）：$baseBurn kcal');
+  sb.writeln('- 今日已记录运动消耗：$exerciseBurn kcal');
+  sb.writeln('- 今日预估总消耗：$totalBurn kcal');
+  sb.writeln('- 今日已摄入热量：$intake kcal');
+  sb.writeln('- 当前已产生缺口：${summary.deficit.round()} kcal');
+  sb.writeln('- 每日保底目标缺口：至少 $targetDeficit kcal');
+  sb.writeln('- 今日剩余可用摄入总配额（已预留${targetDeficit}kcal缺口）：$remainingBudget kcal');
+
+  // 三大营养素状况
+  sb.writeln('【宏量营养素摄入状况】：');
+  sb.writeln('- 蛋白质：已摄入 ${summary.intakeProtein}g' +
+      (summary.plannedProtein > 0 ? ' / 目标 ${summary.plannedProtein}g（差额 ${summary.plannedProtein - summary.intakeProtein}g）' : ''));
+  sb.writeln('- 碳水：已摄入 ${summary.intakeCarbs}g' +
+      (summary.plannedCarbs > 0 ? ' / 目标 ${summary.plannedCarbs}g（差额 ${summary.plannedCarbs - summary.intakeCarbs}g）' : ''));
+  sb.writeln('- 脂肪：已摄入 ${summary.intakeFat}g' +
+      (summary.plannedFat > 0 ? ' / 目标 ${summary.plannedFat}g（差额 ${summary.plannedFat - summary.intakeFat}g）' : ''));
+
+  final mealDone = entries.where((e) => e.kind == 'meal' && e.content.isNotEmpty).toList();
+  final exDone = entries.where((e) => e.kind == 'exercise' && e.content.isNotEmpty).toList();
+
+  sb.writeln('【今日已吃食物清单】：');
+  if (mealDone.isEmpty) {
+    sb.writeln('- 暂无已记录的进食');
+  } else {
+    for (final m in mealDone) {
+      final slotName = m.slot.isNotEmpty ? '[${m.slot}] ' : '';
+      sb.writeln('- $slotName${m.content}（${m.calories ?? 0} kcal, P:${m.protein ?? 0}g C:${m.carbs ?? 0}g F:${m.fat ?? 0}g）');
+    }
+  }
+
+  sb.writeln('【今日已做运动清单】：');
+  if (exDone.isEmpty) {
+    sb.writeln('- 暂无已记录的运动');
+  } else {
+    for (final e in exDone) {
+      sb.writeln('- ${e.content}（消耗约 ${e.calories ?? 0} kcal）');
+    }
+  }
+
+  return sb.toString();
 }

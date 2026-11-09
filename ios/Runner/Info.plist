@@ -47,6 +47,12 @@
 			</array>
 		</dict>
 	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>知轻需要访问相机，用于拍摄包装食品的配料表与营养成分表。</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>知轻需要访问相册，用于选取已拍摄的食品包装营养成分照片。</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>知轻需要访问您的位置信息，以便在推荐饮食时检索周围真实的餐饮店铺与餐厅。</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

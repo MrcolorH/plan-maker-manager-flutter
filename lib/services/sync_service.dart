@@ -1,0 +1,295 @@
+import 'dart:convert';
+import 'package:dio/dio.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../models/records.dart';
+import '../providers/record_provider.dart';
+
+/// 云端账号与收件箱同步服务 (单例)
+class SyncService {
+  static final SyncService _instance = SyncService._internal();
+  factory SyncService() => _instance;
+  SyncService._internal();
+
+  static const String _keyServerUrl = 'cloud_sync_server_url';
+  static const String _keyToken = 'cloud_sync_token';
+  static const String _keyUsername = 'cloud_sync_username';
+  static const String _keyLastSyncAt = 'cloud_sync_last_at';
+
+  // 默认指向正式域名 (待解析生效后即连)，开发期可切换为本地 http://10.0.2.2:3000 或内网IP
+  static const String defaultServerUrl = 'https://api.zhiqing.fun';
+
+  final Dio _dio = Dio(
+    BaseOptions(
+      connectTimeout: const Duration(seconds: 15),
+      receiveTimeout: const Duration(seconds: 15),
+    ),
+  );
+
+  String? _token;
+  String? _username;
+  String _serverUrl = defaultServerUrl;
+  int _lastSyncAt = 0;
+
+  bool get isLoggedIn => _token != null && _token!.isNotEmpty;
+  String? get currentUsername => _username;
+  String get serverUrl => _serverUrl;
+  int get lastSyncAt => _lastSyncAt;
+
+  Future<void> init() async {
+    final prefs = await SharedPreferences.getInstance();
+    _serverUrl = prefs.getString(_keyServerUrl) ?? defaultServerUrl;
+    _token = prefs.getString(_keyToken);
+    _username = prefs.getString(_keyUsername);
+    _lastSyncAt = prefs.getInt(_keyLastSyncAt) ?? 0;
+  }
+
+  Future<void> setServerUrl(String url) async {
+    _serverUrl = url.trim().replaceAll(RegExp(r'/+$'), '');
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyServerUrl, _serverUrl);
+  }
+
+  /// 账号注册 (需有效邀请码)
+  Future<Map<String, dynamic>> register({
+    required String username,
+    required String password,
+    required String inviteCode,
+  }) async {
+    try {
+      final res = await _dio.post(
+        '$_serverUrl/api/v1/auth/register',
+        data: {
+          'username': username,
+          'password': password,
+          'inviteCode': inviteCode,
+        },
+      );
+      if (res.statusCode == 200 && res.data is Map) {
+        final data = res.data as Map;
+        await _saveAuth(data['token'] as String, username);
+        return {'success': true};
+      }
+      return {'success': false, 'message': '注册失败'};
+    } on DioException catch (e) {
+      return _handleDioError(e);
+    }
+  }
+
+  /// 账号登录
+  Future<Map<String, dynamic>> login({
+    required String username,
+    required String password,
+  }) async {
+    try {
+      final res = await _dio.post(
+        '$_serverUrl/api/v1/auth/login',
+        data: {
+          'username': username,
+          'password': password,
+        },
+      );
+      if (res.statusCode == 200 && res.data is Map) {
+        final data = res.data as Map;
+        await _saveAuth(data['token'] as String, username);
+        return {'success': true};
+      }
+      return {'success': false, 'message': '登录失败'};
+    } on DioException catch (e) {
+      return _handleDioError(e);
+    }
+  }
+
+  /// 退出登录
+  Future<void> logout() async {
+    _token = null;
+    _username = null;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_keyToken);
+    await prefs.remove(_keyUsername);
+  }
+
+  /// 获取 6 位 QQ 绑定配对码 (5分钟有效)
+  Future<Map<String, dynamic>> getQqBindCode() async {
+    if (!isLoggedIn) return {'success': false, 'message': '请先登录知轻云端账号'};
+    try {
+      final res = await _dio.post(
+        '$_serverUrl/api/v1/account/qq-bind-code',
+        options: _authOptions(),
+      );
+      if (res.statusCode == 200 && res.data is Map) {
+        final data = res.data as Map;
+        return {
+          'success': true,
+          'code': data['code'],
+          'expiresIn': data['expiresIn'],
+          'tip': data['tip']
+        };
+      }
+      return {'success': false, 'message': '生成绑定码失败'};
+    } on DioException catch (e) {
+      return _handleDioError(e);
+    }
+  }
+
+  /// 拉取收件箱并自动注入本地打卡事实源 (核心无感同步方法)
+  Future<int> syncInboxToLocal(RecordProvider recordProvider) async {
+    if (!isLoggedIn) return 0;
+    try {
+      final res = await _dio.get(
+        '$_serverUrl/api/v1/inbox/pending',
+        options: _authOptions(),
+      );
+
+      if (res.statusCode != 200 || res.data is! Map) return 0;
+      final entriesData = (res.data as Map)['entries'] as List?;
+      if (entriesData == null || entriesData.isEmpty) return 0;
+
+      final ackIds = <String>[];
+
+      for (final raw in entriesData) {
+        if (raw is! Map) continue;
+        final item = Map<String, dynamic>.from(raw);
+        final id = item['id'] as String;
+        final date = item['date'] as String;
+        final content = item['content'] as String? ?? '餐品打卡';
+        final calories = item['calories'] as int? ?? 0;
+        final protein = item['protein'] as int?;
+        final carbs = item['carbs'] as int?;
+        final fat = item['fat'] as int?;
+        final slot = item['slot'] as String? ?? 'lunch';
+        final detail = item['detail'] as String?;
+
+        List<FoodBreakdownItem>? breakdownItems;
+        if (item['items'] is List) {
+          breakdownItems = (item['items'] as List)
+              .map((e) => e is Map ? FoodBreakdownItem.fromJson(Map<String, dynamic>.from(e)) : null)
+              .whereType<FoodBreakdownItem>()
+              .toList();
+        }
+
+        // 调用本地 RecordProvider 原生录入为事实源并自动打卡
+        await recordProvider.addDayEntry(
+          date,
+          kind: 'meal',
+          slot: slot,
+          content: content,
+          calories: calories,
+          protein: protein,
+          carbs: carbs,
+          fat: fat,
+          detail: detail,
+          items: breakdownItems,
+          source: 'qq_bot',
+          autoCheck: true,
+        );
+
+        ackIds.add(id);
+      }
+
+      // 批量向服务端确认已消费
+      if (ackIds.isNotEmpty) {
+        await _dio.post(
+          '$_serverUrl/api/v1/inbox/ack',
+          data: {'ids': ackIds},
+          options: _authOptions(),
+        );
+      }
+
+      _lastSyncAt = DateTime.now().millisecondsSinceEpoch;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(_keyLastSyncAt, _lastSyncAt);
+
+      return ackIds.length;
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 401) {
+        await logout();
+      }
+      return 0;
+    } catch (_) {
+      // 网络或服务器异常静默跳过，绝不阻断 App 运行
+      return 0;
+    }
+  }
+
+  /// 上传全量快照备份至云端 (服务端会自动归档历史版本)
+  Future<Map<String, dynamic>> uploadSnapshot({
+    required Map<String, dynamic> payload,
+    String? deviceName,
+    String? reason,
+  }) async {
+    if (!isLoggedIn) return {'success': false, 'message': '请先登录云端账号'};
+    try {
+      final res = await _dio.put(
+        '$_serverUrl/api/v1/sync/snapshot',
+        data: {
+          'payload': payload,
+          'deviceName': deviceName ?? '知轻手机客户端',
+          'clientUpdatedAt': DateTime.now().millisecondsSinceEpoch ~/ 1000,
+          'reason': reason ?? 'manual_backup',
+        },
+        options: _authOptions(),
+      );
+      if (res.statusCode == 200) {
+        return {'success': true, 'message': (res.data as Map)['message'] ?? '云端备份成功'};
+      }
+      return {'success': false, 'message': '备份失败'};
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 401) await logout();
+      return _handleDioError(e);
+    } catch (e) {
+      return {'success': false, 'message': '备份异常: $e'};
+    }
+  }
+
+  /// 从云端拉取全量快照数据
+  Future<Map<String, dynamic>> fetchSnapshot() async {
+    if (!isLoggedIn) return {'success': false, 'message': '请先登录云端账号'};
+    try {
+      final res = await _dio.get(
+        '$_serverUrl/api/v1/sync/snapshot',
+        options: _authOptions(),
+      );
+      if (res.statusCode == 200 && res.data is Map) {
+        final data = res.data as Map;
+        return {
+          'success': true,
+          'payload': data['payload'],
+          'serverUpdatedAt': data['serverUpdatedAt'],
+          'deviceName': data['deviceName'],
+        };
+      }
+      return {'success': false, 'message': '未获取到云端快照'};
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 401) await logout();
+      return _handleDioError(e);
+    } catch (e) {
+      return {'success': false, 'message': '获取快照异常: $e'};
+    }
+  }
+
+  Options _authOptions() {
+    return Options(
+      headers: {
+        'Authorization': 'Bearer $_token',
+      },
+    );
+  }
+
+  Future<void> _saveAuth(String token, String username) async {
+    _token = token;
+    _username = username;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyToken, token);
+    await prefs.setString(_keyUsername, username);
+  }
+
+  Map<String, dynamic> _handleDioError(DioException e) {
+    if (e.response?.data is Map) {
+      final errObj = (e.response!.data as Map)['error'];
+      if (errObj is Map && errObj['message'] != null) {
+        return {'success': false, 'message': errObj['message'].toString()};
+      }
+    }
+    return {'success': false, 'message': '网络连接失败，请检查服务地址或网络状态'};
+  }
+}

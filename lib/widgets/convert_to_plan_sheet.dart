@@ -37,7 +37,6 @@ class ConvertToPlanSheet extends StatefulWidget {
 class _ConvertToPlanSheetState extends State<ConvertToPlanSheet> {
   late final TextEditingController _timeCtrl;
   late final Set<int> _selectedDays;
-  bool _reminder = true;
   bool _saving = false;
 
   @override
@@ -196,7 +195,6 @@ class _ConvertToPlanSheetState extends State<ConvertToPlanSheet> {
         carbs: oldEntry.carbs,
         fat: oldEntry.fat,
         days: daysList,
-        reminder: _reminder,
         note: oldEntry.note,
         sourceSnapshotDate: widget.date,
         sourceSnapshotEntryId: oldEntry.id,
@@ -329,18 +327,6 @@ class _ConvertToPlanSheetState extends State<ConvertToPlanSheet> {
               for (var i = 1; i <= 7; i++)
                 _dayCircle(i, _selectedDays.contains(i)),
             ],
-          ),
-          const SizedBox(height: 16),
-
-          // 提醒开关
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('开启用餐提醒', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-            subtitle: const Text('到点本地闹钟提醒（无需网络）', style: TextStyle(fontSize: 12, color: AppColors.textSub)),
-            value: _reminder,
-            activeThumbColor: AppColors.primary,
-            activeTrackColor: AppColors.primaryDisabled,
-            onChanged: (val) => setState(() => _reminder = val),
           ),
           const SizedBox(height: 18),
 

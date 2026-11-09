@@ -14,18 +14,9 @@ import 'package:jianfei_dazi/providers/plan_provider.dart';
 import 'package:jianfei_dazi/providers/preset_provider.dart';
 import 'package:jianfei_dazi/providers/record_provider.dart';
 import 'package:jianfei_dazi/providers/settings_provider.dart';
-import 'package:jianfei_dazi/services/reminder_service.dart';
 import 'package:jianfei_dazi/services/storage_service.dart';
 import 'package:jianfei_dazi/theme/app_theme.dart';
 import 'package:jianfei_dazi/utils/date_utils.dart';
-
-class _FakeReminderService extends ReminderService {
-  _FakeReminderService() : super.forTesting();
-  @override
-  Future<void> fullReschedule(PlanData plan, AppSettings settings) async {}
-  @override
-  Future<void> ensureScheduled(PlanData plan, AppSettings settings) async {}
-}
 
 Widget _buildTestApp({
   required Widget child,
@@ -34,15 +25,10 @@ Widget _buildTestApp({
   PresetProvider? presetProvider,
   RecordProvider? recordProvider,
 }) {
-  final reminder = _FakeReminderService();
   final recP = recordProvider ?? RecordProvider(storage);
   late final PlanProvider planP;
-  final setP = SettingsProvider(
-    storage,
-    reminder,
-    getPlan: () => planP.plan,
-  );
-  planP = PlanProvider(storage, reminder, setP, recP);
+  final setP = SettingsProvider(storage);
+  planP = PlanProvider(storage, setP, recP);
   if (plan != null) {
     planP.plan = plan;
   }

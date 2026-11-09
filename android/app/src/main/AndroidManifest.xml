@@ -3,11 +3,17 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Android 9 及以下：备份导出到公共 Download 目录需要写存储权限（Android 10+ 走 MediaStore，无需权限） -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+    <!-- 地理位置权限（用于去店里吃时获取周边真实餐饮实体店） -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- 应用内在线更新自动安装权限 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:label="知轻"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="true">
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -35,6 +41,17 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- FileProvider：供系统 PackageInstaller 安装已下载的更新 APK -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

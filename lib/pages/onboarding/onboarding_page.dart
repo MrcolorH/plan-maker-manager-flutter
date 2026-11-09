@@ -767,7 +767,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
           const Text('还没录入计划，可以先点「完成」进 App，之后随时在「计划」页导入',
               textAlign: TextAlign.center, style: TextStyle(fontSize: 12, color: AppColors.textSub)),
         const SizedBox(height: 16),
-        const Text('完成即开启到点提醒：餐食/运动到时间自动通知（可在设置中关闭）',
+        const Text('点击「完成」即可进入主页，开启轻松减脂之旅',
             textAlign: TextAlign.center, style: TextStyle(fontSize: 12, color: AppColors.textSub)),
       ],
     );

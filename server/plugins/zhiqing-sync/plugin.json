@@ -1,0 +1,13 @@
+{
+  "id": "zhiqing_sync",
+  "name": "知轻健康同步插件",
+  "version": "1.0.0",
+  "description": "提供 /bind 指令，将当前 QQ 号与本地知轻云端账号快速绑定配对",
+  "author": "知轻",
+  "commands": ["bind", "绑定"],
+  "entry": "bind.py",
+  "daemonEntry": "daemon.sh",
+  "type": "script",
+  "isEnabled": true,
+  "iconName": "heart.text.square"
+}

@@ -13,7 +13,7 @@ const String kFormatBrief = '''【JSON 顶层结构】
 【meals 餐食项】
 - type：breakfast / lunch / dinner / snack（早/午/晚/加餐）
 - name：名称（必填）
-- time：提醒时间 HH:mm 24小时制（必填，如 "12:00"）
+- time：计划时间 HH:mm 24小时制（必填，如 "12:00"）
 - calories：热量 kcal；自由餐填 null（不计入，打卡后补录实际热量）
 - days：每周几执行，1=周一 … 7=周日；不填=每天
 - dates：具体执行日期数组，如 ["2026-09-05","2026-09-19"]；填写后仅在这些日期生效，days/日期范围忽略（适合"某天吃什么"或"第1、3周周六"这类轮换安排）

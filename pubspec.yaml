@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.4.0+1
+version: 1.5.0+1
 
 environment:
   sdk: ^3.12.0
@@ -39,10 +39,6 @@ dependencies:
   provider: ^6.1.2
   # 本地存储（对应 uni storage）
   shared_preferences: ^2.3.3
-  # 定时通知（替代 plus.push，支持重启自恢复）
-  flutter_local_notifications: ^18.0.1
-  # 通知调度时区支持
-  timezone: ^0.10.0
   # HTTP（AI 请求）
   dio: ^5.7.0
   # 文件选择（备份导入）
@@ -51,6 +47,8 @@ dependencies:
   share_plus: ^10.1.2
   # 应用文件目录（备份读写）
   path_provider: ^2.1.5
+  geolocator: ^14.0.2
+  image_picker: ^1.2.4
 
 dev_dependencies:
   flutter_test:

@@ -15,7 +15,6 @@ import 'package:jianfei_dazi/providers/record_provider.dart';
 import 'package:jianfei_dazi/providers/settings_provider.dart';
 import 'package:jianfei_dazi/providers/usage_provider.dart';
 import 'package:jianfei_dazi/services/ai_service.dart';
-import 'package:jianfei_dazi/services/reminder_service.dart';
 import 'package:jianfei_dazi/services/storage_service.dart';
 import 'package:jianfei_dazi/theme/app_theme.dart';
 import 'package:jianfei_dazi/utils/date_utils.dart';
@@ -53,7 +52,6 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late StorageService storage;
-  late ReminderService reminder;
   late RecordProvider recP;
   late SettingsProvider setP;
   late PlanProvider planP;
@@ -66,14 +64,9 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     storage = StorageService.instance;
     await storage.init();
-    reminder = ReminderService.instance;
     recP = RecordProvider(storage);
-    setP = SettingsProvider(
-      storage,
-      reminder,
-      getPlan: () => planP.plan,
-    );
-    planP = PlanProvider(storage, reminder, setP, recP);
+    setP = SettingsProvider(storage);
+    planP = PlanProvider(storage, setP, recP);
     onbP = OnboardingProvider(storage, planP, setP, recP);
     onbP.state.done = true;
     presetP = PresetProvider();

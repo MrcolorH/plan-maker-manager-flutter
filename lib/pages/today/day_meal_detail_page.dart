@@ -160,6 +160,36 @@ class _DayMealDetailPageState extends State<DayMealDetailPage> {
     );
   }
 
+  /// 删除非计划就餐记录
+  Future<void> _deleteEntry(DayEntry curEntry) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除就餐记录？'),
+        content: Text('确认删除「${curEntry.content}」？该餐食的热量将从今日摄入中剔除。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消', style: TextStyle(color: AppColors.textSub)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('确认删除', style: TextStyle(color: AppColors.danger)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true || !mounted) return;
+
+    await context.read<RecordProvider>().removeDayEntry(widget.date, curEntry.id);
+    if (!mounted) return;
+    Navigator.pop(context);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('已删除「${curEntry.content}」并剔除热量')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final records = context.watch<RecordProvider>();
@@ -187,6 +217,12 @@ class _DayMealDetailPageState extends State<DayMealDetailPage> {
         backgroundColor: Colors.white,
         elevation: 0,
         actions: [
+          if (!curEntry.isPlan)
+            IconButton(
+              icon: const Icon(Icons.delete_outline, color: AppColors.danger, size: 21),
+              tooltip: '删除此记录',
+              onPressed: () => _deleteEntry(curEntry),
+            ),
           if (widget.onOpenEdit != null)
             TextButton.icon(
               onPressed: () {
@@ -494,6 +530,23 @@ class _DayMealDetailPageState extends State<DayMealDetailPage> {
               ],
             ],
           ),
+          if (!curEntry.isPlan) ...[
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () => _deleteEntry(curEntry),
+                icon: const Icon(Icons.delete_outline_rounded, size: 18),
+                label: const Text('删除这条就餐记录'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.danger,
+                  side: const BorderSide(color: Color(0xFFFFCDD2)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
