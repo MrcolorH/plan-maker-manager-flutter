@@ -6,6 +6,7 @@ import authRoutes from './routes/auth.js';
 import bindingRoutes from './routes/binding.js';
 import inboxRoutes from './routes/inbox.js';
 import syncRoutes from './routes/sync.js';
+import updateRoutes from './routes/update.js';
 
 const fastify = Fastify({
   logger: {
@@ -57,6 +58,7 @@ await fastify.register(authRoutes);
 await fastify.register(bindingRoutes);
 await fastify.register(inboxRoutes);
 await fastify.register(syncRoutes);
+await fastify.register(updateRoutes);
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const HOST = process.env.HOST || '0.0.0.0';

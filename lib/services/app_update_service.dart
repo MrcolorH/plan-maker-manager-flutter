@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
+import 'sync_service.dart';
 
 /// 更新信息实体
 class AppUpdateInfo {
@@ -112,12 +113,41 @@ class AppUpdateService {
       );
     } on DioException catch (e) {
       if (e.response?.statusCode == 404) {
-        throw Exception('未找到 GitHub Release 发布版本（可能是仓库无发布或为私有仓库）');
+        // 尝试从知轻云端服务中继接口获取更新（解决 GitHub 私有仓库 404 问题）
+        try {
+          return await _checkUpdateFromCloudServer();
+        } catch (_) {}
+        throw Exception('未找到版本发布信息（若仓库为私有，请在 GitHub 设置中设为公开 Public）');
       }
       throw Exception('网络连接超时或无法访问 GitHub: ${e.message ?? e.type.name}');
     } catch (e) {
+      try {
+        return await _checkUpdateFromCloudServer();
+      } catch (_) {}
       throw Exception('检查更新失败: $e');
     }
+  }
+
+  /// 从知轻云端服务中继接口获取最新版本信息 (当 GitHub 为私有仓库或网络受阻时的智能兜底)
+  Future<AppUpdateInfo> _checkUpdateFromCloudServer() async {
+    final serverUrl = SyncService().serverUrl;
+    final res = await _dio.get<Map<String, dynamic>>('$serverUrl/api/v1/app/latest');
+    final data = res.data;
+    if (data == null) throw Exception('服务端未返回版本数据');
+    final latestVer = (data['version'] as String? ?? '').trim();
+    final isNewer = compareVersions(latestVer, currentVersion) > 0;
+    return AppUpdateInfo(
+      currentVersion: currentVersion,
+      latestVersion: latestVer.isNotEmpty ? latestVer : currentVersion,
+      hasUpdate: isNewer,
+      title: data['title'] as String? ?? '发现新版本',
+      notes: data['notes'] as String? ?? '暂无详细更新说明',
+      publishedAt: data['publishedAt'] as String? ?? '',
+      apkUrl: data['apkUrl'] as String?,
+      apkName: data['apkName'] as String?,
+      apkSize: data['apkSize'] as int?,
+      htmlUrl: data['htmlUrl'] as String? ?? 'https://github.com/MrcolorH/plan-maker-manager-flutter/releases',
+    );
   }
 
   /// 比较两个版本号（形如 1.4.1 vs 1.4.0）
