@@ -840,11 +840,12 @@ String cleanFoodBreakdownName(String name) {
   detail = detail.replaceAll(RegExp(r'^[，,；;\s]+|[，,；;\s]+$'), '').trim();
 
   // 匹配 detail 末尾或其中的合计表达，如：
-  // "合计161", "合计 161", "合计约161", "合计：161", "总计 161", "共计161", "共约 161", "＝161", "= 161", "合计 873"
+  // "总热量预估：约 605 kcal", "预估总热量：约 498 kcal", "合计161", "合计 161", "总计 161", "共计161"
   final sumRegex = RegExp(
-    r'(?:合计|总计|共计|共约|合计约|总计约|小计|＝|=)\s*[:：]?\s*≈?\s*(-?\d+)\s*(?:kcal|大卡)?',
+    r'(?:总热量预估|预估总热量|整餐总热量|总热量合计|总热量|合计|总计|共计|共约|合计约|总计约|小计|＝|=)\s*[:：]?\s*≈?\s*约?\s*(-?\d+)\s*(?:kcal|大卡|卡路里|千卡)?',
     caseSensitive: false,
   );
+
 
   final matches = sumRegex.allMatches(detail).toList();
   if (matches.isNotEmpty) {
@@ -1231,19 +1232,53 @@ class AiService {
         final lines = block.split(RegExp(r'[\r\n]+')).map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
         if (lines.isEmpty) continue;
         final rawName = lines.first;
-        final name = cleanFoodBreakdownName(rawName);
+
+        // 优先检查管道符格式: "白米饭：预估 180g | 预估热量 210kcal | ..."
+        if (rawName.contains('|') || rawName.contains('｜')) {
+          final parts = rawName.split(RegExp(r'[|｜]'));
+          final namePart = parts[0].trim();
+          String n = '';
+          String p = '';
+          if (namePart.contains('：') || namePart.contains(':')) {
+            final np = namePart.split(RegExp(r'[:：]'));
+            n = cleanFoodBreakdownName(np[0]);
+            p = np.sublist(1).join(':').replaceFirst(RegExp(r'^(?:预估|约)?\s*'), '').trim();
+          } else {
+            n = cleanFoodBreakdownName(namePart);
+          }
+          int c = 0;
+          for (var pIdx = 1; pIdx < parts.length; pIdx++) {
+            final part = parts[pIdx].trim();
+            final mC = RegExp(r'(?:预估热量|热量|能量)\s*[:：约约为\s]*(-?\d+)\s*(?:kcal|大卡|卡路里|千卡)?|(-?\d+)\s*(?:kcal|大卡|卡路里|千卡)', caseSensitive: false).firstMatch(part);
+            if (mC != null) {
+              final val = int.tryParse(mC.group(1) ?? mC.group(2) ?? '') ?? 0;
+              if (val > 0) c = val;
+            }
+            if (p.isEmpty) {
+              final mPort = RegExp(r'(?:预估克数|克数|重量|份量)\s*[:：约约为\s]*([\d\.\/]+[^\s\|｜]+)').firstMatch(part);
+              if (mPort != null) p = mPort.group(1)?.trim() ?? '';
+            }
+          }
+          if (c > 0 && isValidFoodBreakdownName(n)) {
+            blockResults.add(FoodBreakdownItem(name: n, portion: p, calories: c));
+            continue;
+          }
+        }
+
+        final name = cleanFoodBreakdownName(rawName.replaceFirst(RegExp(r'[:：]$'), ''));
         if (!isValidFoodBreakdownName(name)) continue;
 
         // 在该块中提取热量与重量
-        final calMatch = RegExp(r'(?:预估热量|热量|能量)[:：]\s*(\d+)\s*(?:kcal|大卡)?', caseSensitive: false).firstMatch(block);
+        final calMatch = RegExp(r'(?:预估热量|热量|能量)[:：约约为\s]*(\d+)\s*(?:kcal|大卡)?', caseSensitive: false).firstMatch(block);
         final cal = calMatch != null ? int.tryParse(calMatch.group(1) ?? '') ?? 0 : 0;
 
-        final portionMatch = RegExp(r'(?:预估克数|克数|重量|份量)[:：]\s*([^\n\r\/，,]+)', caseSensitive: false).firstMatch(block);
+        final portionMatch = RegExp(r'(?:预估克数|克数|重量|份量)[:：约约为\s]*([^\n\r]+)').firstMatch(block);
         final portion = portionMatch?.group(1)?.trim() ?? '';
 
         if (cal > 0 || portion.isNotEmpty) {
           blockResults.add(FoodBreakdownItem(name: name, portion: portion, calories: cal));
         }
+
       }
       if (blockResults.isNotEmpty) {
         return blockResults;

@@ -1,6 +1,7 @@
 import { db } from '../db.js';
 import { authenticate } from '../auth.js';
 import crypto from 'node:crypto';
+import { parseMealText } from '../utils/textParser.js';
 
 export default async function inboxRoutes(fastify, options) {
   // 1. QQ 机器人写入待录入信箱 (仅限 127.0.0.1 访问)
@@ -26,7 +27,15 @@ export default async function inboxRoutes(fastify, options) {
 
     const entryId = crypto.randomUUID();
     const now = Math.floor(Date.now() / 1000);
-    const itemsJson = items ? JSON.stringify(items) : null;
+    let finalItems = items;
+    if ((!finalItems || finalItems.length === 0) && detail) {
+      const parsed = parseMealText(detail);
+      if (parsed.items && parsed.items.length > 0) {
+        finalItems = parsed.items;
+      }
+    }
+    const itemsJson = finalItems ? JSON.stringify(finalItems) : null;
+
 
     db.prepare(`
       INSERT INTO pending_entries (
@@ -130,13 +139,9 @@ export default async function inboxRoutes(fastify, options) {
       });
     }
 
-    // 从 AI 助手的结构化回复文本中解析总卡路里
+    // 从 AI 助手的完整回复长文本中精准解析所有食物项、总热量、餐次及三大营养素
     const text = lastAssistantMessage || '';
-    let calories = 500;
-    const match = text.match(/(\d{2,4})\s*(?:kcal|大卡|卡路里|千卡)/i);
-    if (match && match[1]) {
-      calories = parseInt(match[1], 10);
-    }
+    const parsed = parseMealText(text);
 
     // 本地日期 (避免 UTC 导致的东八区早 8 点前跨天问题)
     const d = new Date();
@@ -145,42 +150,40 @@ export default async function inboxRoutes(fastify, options) {
     const day = String(d.getDate()).padStart(2, '0');
     const today = `${year}-${month}-${day}`;
 
-    // 智能识别餐次 (早/中/晚/加餐)
-    let slot = 'lunch';
-    let content = '午餐打卡';
-    const hour = d.getHours();
-    if (text.includes('早餐') || text.includes('早饭') || (!text.includes('午') && !text.includes('晚') && hour >= 4 && hour < 10)) {
-      slot = 'breakfast';
-      content = '早餐打卡';
-    } else if (text.includes('晚餐') || text.includes('晚饭') || (!text.includes('午') && hour >= 16 && hour < 22)) {
-      slot = 'dinner';
-      content = '晚餐打卡';
-    } else if (text.includes('加餐') || text.includes('下午茶') || text.includes('零食') || hour >= 22 || hour < 4) {
-      slot = 'snack';
-      content = '加餐打卡';
-    }
-
     const entryId = crypto.randomUUID();
     const now = Math.floor(Date.now() / 1000);
+    const itemsJson = (parsed.items && parsed.items.length > 0) ? JSON.stringify(parsed.items) : null;
 
     db.prepare(`
       INSERT INTO pending_entries (
         id, user_id, date, slot, content, calories, protein, carbs, fat, detail, items_json, source, created_at, is_consumed
-      ) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, ?, null, 'qq_bot', ?, 0)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'qq_bot', ?, 0)
     `).run(
       entryId,
       binding.user_id,
       today,
-      slot,
-      content,
-      calories,
+      parsed.slot,
+      parsed.content,
+      parsed.calories,
+      parsed.protein || 0,
+      parsed.carbs || 0,
+      parsed.fat || 0,
       text,
+      itemsJson,
       now
     );
 
+    let summaryNote = `已自动存入知轻待录入信箱：【${parsed.content}】`;
+    if (parsed.items && parsed.items.length > 0) {
+      summaryNote += `包含 ${parsed.items.length} 项，总热量 ${parsed.calories} kcal ✨`;
+    } else {
+      summaryNote += `${parsed.calories} kcal ✨`;
+    }
+
     return {
       success: true,
-      note: `已自动存入知轻待录入信箱 (${content} ${calories} kcal) ✨`
+      note: summaryNote
     };
   });
+
 }

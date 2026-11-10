@@ -1,8 +1,9 @@
-import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/records.dart';
 import '../providers/record_provider.dart';
+import 'ai_service.dart';
+
 
 /// 云端账号与收件箱同步服务 (单例)
 class SyncService {
@@ -151,11 +152,11 @@ class SyncService {
         final item = Map<String, dynamic>.from(raw);
         final id = item['id'] as String;
         final date = item['date'] as String;
-        final content = item['content'] as String? ?? '餐品打卡';
-        final calories = item['calories'] as int? ?? 0;
-        final protein = item['protein'] as int?;
-        final carbs = item['carbs'] as int?;
-        final fat = item['fat'] as int?;
+        String content = item['content'] as String? ?? '餐品打卡';
+        int calories = item['calories'] as int? ?? 0;
+        int? protein = item['protein'] as int?;
+        int? carbs = item['carbs'] as int?;
+        int? fat = item['fat'] as int?;
         final slot = item['slot'] as String? ?? 'lunch';
         final detail = item['detail'] as String?;
 
@@ -165,6 +166,29 @@ class SyncService {
               .map((e) => e is Map ? FoodBreakdownItem.fromJson(Map<String, dynamic>.from(e)) : null)
               .whereType<FoodBreakdownItem>()
               .toList();
+        }
+
+        // 统一双重兜底：若服务端未能解出 items 但有 detail 文本，在客户端使用知轻一致的 AiService 规则进行整段文案解析
+        if ((breakdownItems == null || breakdownItems.isEmpty) && detail != null && detail.isNotEmpty) {
+          final parsed = AiService.parseBreakdownFromText(detail);
+          if (parsed.isNotEmpty) {
+            breakdownItems = parsed;
+          }
+        }
+
+        // 若总热量为 0 或未解析，而 breakdownItems 存在，自动计算合计
+        if (calories <= 0 && breakdownItems != null && breakdownItems.isNotEmpty) {
+          calories = breakdownItems.fold<int>(0, (sum, it) => sum + it.calories);
+        }
+
+        // 若标题依然是通用打卡且有具体菜品项，自动提炼具体餐品名（如：米饭、煎鸡胸肉、炒绿豆芽）
+        if ((content == '餐品打卡' || content.endsWith('打卡')) &&
+            breakdownItems != null &&
+            breakdownItems.isNotEmpty) {
+          final names = breakdownItems.map((e) => e.name).where((n) => n.isNotEmpty).take(3).join('、');
+          if (names.isNotEmpty) {
+            content = breakdownItems.length > 3 ? '$names等' : names;
+          }
         }
 
         // 调用本地 RecordProvider 原生录入为事实源并自动打卡
@@ -182,6 +206,7 @@ class SyncService {
           source: 'qq_bot',
           autoCheck: true,
         );
+
 
         ackIds.add(id);
       }
