@@ -1,6 +1,8 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/records.dart';
+import '../models/settings.dart';
 import '../providers/record_provider.dart';
 import 'ai_service.dart';
 
@@ -133,7 +135,12 @@ class SyncService {
   }
 
   /// 拉取收件箱并自动注入本地打卡事实源 (核心无感同步方法)
-  Future<int> syncInboxToLocal(RecordProvider recordProvider) async {
+  /// 支持可选传入知轻 [aiConfig]，套用知轻原汁原味的中国营养学会专业提示词 (kCalorieSys) 请 AI 进行结构化语义转换录入
+  Future<int> syncInboxToLocal(
+    RecordProvider recordProvider, {
+    AiConfig? aiConfig,
+    void Function(Map<String, dynamic>)? onUsage,
+  }) async {
     if (!isLoggedIn) return 0;
     try {
       final res = await _dio.get(
@@ -168,12 +175,60 @@ class SyncService {
               .toList();
         }
 
-        // 统一双重兜底：若服务端未能解出 items 但有 detail 文本，在客户端使用知轻一致的 AiService 规则进行整段文案解析
+        // 若云端信箱尚未解析出明细食材 (breakdownItems 为空) 且手机端配置了 AI 服务，在客户端套用提示词进行容灾转换
+        final bool needClientAiParse = (breakdownItems == null || breakdownItems.isEmpty || calories <= 0) &&
+            aiConfig != null &&
+            AiService.instance.hasConfig(aiConfig) &&
+            detail != null &&
+            detail.trim().length > 15;
+
+        if (needClientAiParse) {
+          try {
+            final aiRes = await AiService.instance.queryCalorie(
+              aiConfig,
+              detail,
+              onUsage: onUsage,
+            );
+            final aiCal = aiRes['calories'] as int? ?? 0;
+            if (aiCal != 0) {
+              calories = aiCal;
+              protein = aiRes['protein'] as int? ?? protein;
+              carbs = aiRes['carbs'] as int? ?? carbs;
+              fat = aiRes['fat'] as int? ?? fat;
+              final aiName = aiRes['name'] as String?;
+              if (aiName != null && aiName.isNotEmpty && aiName != '食物') {
+                content = aiName;
+              }
+              final aiItems = aiRes['items'] as List<FoodBreakdownItem>?;
+              if (aiItems != null && aiItems.isNotEmpty) {
+                breakdownItems = aiItems;
+              }
+            }
+          } catch (e) {
+            debugPrint('[SyncService] 客户端 AI 转换兜底异常: $e');
+          }
+        }
+
+        // 统一双重兜底：若未能解出 items 但有 detail 文本，在客户端使用知轻一致的 AiService 规则进行整段文案解析
         if ((breakdownItems == null || breakdownItems.isEmpty) && detail != null && detail.isNotEmpty) {
           final parsed = AiService.parseBreakdownFromText(detail);
           if (parsed.isNotEmpty) {
             breakdownItems = parsed;
           }
+        }
+
+        // 统一宏量营养素双重兜底：若服务端返回宏量为 0 但 detail 文本中有总结数据，在客户端进行正则提取
+        if ((protein == null || protein == 0) &&
+            (carbs == null || carbs == 0) &&
+            (fat == null || fat == 0) &&
+            detail != null &&
+            detail.isNotEmpty) {
+          final pMatch = RegExp(r'(?:蛋白质|蛋白|P)\s*[:：约约为\s]*(\d+(?:\.\d+)?)\s*g?', caseSensitive: false).firstMatch(detail);
+          if (pMatch != null) protein = double.tryParse(pMatch.group(1) ?? '')?.round();
+          final cMatch = RegExp(r'(?:碳水化合物|碳水|C)\s*[:：约约为\s]*(\d+(?:\.\d+)?)\s*g?', caseSensitive: false).firstMatch(detail);
+          if (cMatch != null) carbs = double.tryParse(cMatch.group(1) ?? '')?.round();
+          final fMatch = RegExp(r'(?:脂肪|油脂|F)\s*[:：约约为\s]*(\d+(?:\.\d+)?)\s*g?', caseSensitive: false).firstMatch(detail);
+          if (fMatch != null) fat = double.tryParse(fMatch.group(1) ?? '')?.round();
         }
 
         // 若总热量为 0 或未解析，而 breakdownItems 存在，自动计算合计

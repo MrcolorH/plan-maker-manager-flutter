@@ -154,7 +154,13 @@ class _CloudSyncPageState extends State<CloudSyncPage> {
   Future<void> _manualSync() async {
     setState(() => _isLoading = true);
     final recordProvider = context.read<RecordProvider>();
-    final count = await _syncService.syncInboxToLocal(recordProvider);
+    final settings = context.read<SettingsProvider>().settings;
+    final usage = context.read<UsageProvider>();
+    final count = await _syncService.syncInboxToLocal(
+      recordProvider,
+      aiConfig: settings.ai,
+      onUsage: usage.addUsage,
+    );
     setState(() => _isLoading = false);
 
     if (count > 0) {
@@ -194,7 +200,8 @@ class _CloudSyncPageState extends State<CloudSyncPage> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('从云端恢复数据'),
-        content: const Text('从云端拉取全量快照将覆盖本地现有的计划与记录。确定要继续恢复吗？（恢复前本地数据会自动在手机保存一份备份）'),
+        content: const Text(
+            '从云端拉取全量快照将覆盖本地现有的计划与记录。\n• 为保障资产安全，云端快照不含 API Key 密钥，本地已有密钥将受到保护自动保留。\n• 恢复前本地数据会自动在手机留底保存一份。确定要继续恢复吗？'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
           ElevatedButton(
@@ -392,7 +399,7 @@ class _CloudSyncPageState extends State<CloudSyncPage> {
                     const Divider(height: 28),
                     const Text('全量云端备份与恢复', style: TextStyle(fontWeight: FontWeight.bold)),
                     const SizedBox(height: 6),
-                    const Text('将本机所有计划、历史打卡、设置及预设整体加密备份至云端；换机或误删时可一键恢复。', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                    const Text('将本机计划、历史打卡、基础设置及预设安全备份至云端（已自动排除 API Key 敏感信息）；换机或误删时可一键恢复。', style: TextStyle(fontSize: 12, color: Colors.grey)),
                     const SizedBox(height: 12),
                     Row(
                       children: [

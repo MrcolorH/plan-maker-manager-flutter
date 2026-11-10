@@ -1,4 +1,4 @@
-import { db } from '../db.js';
+import { db, cleanseSnapshotPayloadString } from '../db.js';
 import { authenticate, comparePassword } from '../auth.js';
 
 export default async function syncRoutes(fastify, options) {
@@ -11,7 +11,9 @@ export default async function syncRoutes(fastify, options) {
       return reply.status(400).send({ error: { code: 'BAD_REQUEST', message: 'payload 不能为空' } });
     }
 
-    const payloadStr = typeof payload === 'string' ? payload : JSON.stringify(payload);
+    // 服务端强制安全脱敏清洗：杜绝任何 API Key 敏感信息落库
+    const rawPayloadStr = typeof payload === 'string' ? payload : JSON.stringify(payload);
+    const payloadStr = cleanseSnapshotPayloadString(rawPayloadStr);
     // 限制单次快照大小不超过 3MB
     if (Buffer.byteLength(payloadStr, 'utf8') > 3 * 1024 * 1024) {
       return reply.status(413).send({ error: { code: 'PAYLOAD_TOO_LARGE', message: '数据包大小超过 3MB 上限' } });
@@ -164,18 +166,21 @@ export default async function syncRoutes(fastify, options) {
     }
 
     db.transaction(() => {
-      // 抹除前仍自动归档一份，标记为 before_destroy (给后悔药留底)
+      // 抹除前仍自动归档一份，标记为 before_destroy (给后悔药留底，同时严格脱敏)
       const current = db.prepare('SELECT * FROM sync_snapshots WHERE user_id = ?').get(userId);
       if (current) {
         db.prepare(`
           INSERT INTO sync_snapshot_history (user_id, payload, device_name, server_updated_at, snapshot_reason)
           VALUES (?, ?, ?, ?, 'before_destroy')
-        `).run(userId, current.payload, current.device_name, current.server_updated_at);
+        `).run(userId, cleanseSnapshotPayloadString(current.payload), current.device_name, current.server_updated_at);
       }
 
       // 清空当前快照与收件箱
       db.prepare('DELETE FROM sync_snapshots WHERE user_id = ?').run(userId);
       db.prepare('DELETE FROM pending_entries WHERE user_id = ?').run(userId);
+      if (request.body?.clearHistory === true) {
+        db.prepare('DELETE FROM sync_snapshot_history WHERE user_id = ?').run(userId);
+      }
     })();
 
     return {

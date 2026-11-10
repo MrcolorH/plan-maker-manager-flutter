@@ -13,11 +13,8 @@ import '../../providers/onboarding_provider.dart';
 import '../../providers/plan_provider.dart';
 import '../../providers/record_provider.dart';
 import '../../providers/settings_provider.dart';
-import '../../providers/usage_provider.dart';
 import '../../providers/theme_provider.dart';
 import '../../services/app_update_service.dart';
-import '../../services/auto_backup_service.dart';
-import '../../services/backup_service.dart';
 import '../../theme/app_theme.dart';
 import '../../utils/calorie_utils.dart';
 import '../../utils/date_utils.dart';
@@ -54,27 +51,10 @@ class SettingsPage extends StatelessWidget {
               ),
             ),
             const _GroupLabel('热量'),
-            // 两行仅展示：点击不再弹窗，统一走下方「更新数据」按钮
-            _Row('基础消耗(TDEE)', '${settings.tdee} kcal'),
-            _Row('每日目标摄入', '${settings.dailyCalorieTarget} kcal'),
-            if (_profileSummary(profile) != null)
-              _Row('基础信息', _profileSummary(profile)!),
-            Padding(
-              padding: const EdgeInsets.only(left: 16, right: 16, bottom: 8),
-              child: SizedBox(
-                width: double.infinity,
-                height: 40,
-                child: OutlinedButton(
-                  onPressed: () => _openCalorieDialog(context),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.primary,
-                    backgroundColor: Colors.white,
-                    side: const BorderSide(color: AppColors.primary),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  ),
-                  child: const Text('更新数据', style: TextStyle(fontSize: 14)),
-                ),
-              ),
+            _CalorieInfoCard(
+              tdee: settings.tdee,
+              profileSummary: _profileSummary(profile),
+              onTap: () => _openCalorieDialog(context),
             ),
             _Row('体重记录', _weightSummary(records), onTap: () => _openWeightDialog(context)),
             const _GroupLabel('AI 服务'),
@@ -86,16 +66,11 @@ class SettingsPage extends StatelessWidget {
                 onTap: () => Navigator.of(context).push(
                     AppRoutes.fade<void>(const AiConfigPage()))),
             const _GroupLabel('数据与备份'),
-            _SwitchRow(
-              '自动备份',
-              settings.autoBackupEnabled,
-              (v) => context.read<SettingsProvider>().update({'autoBackupEnabled': v}),
-              subtitle: settings.autoBackupEnabled
-                  ? '数据变更或退出时自动备份到 Download 目录'
-                  : '已关闭：开启后自动备份到系统 Download 目录',
+            _Row(
+              '本地备份与恢复',
+              '自动备份 · 导入 · 导出',
+              onTap: () => _openBackup(context),
             ),
-            _Row('导出备份', '分享 / 保存 .txt 文件', onTap: () => _openBackup(context, 'export')),
-            _Row('导入备份', '增量合并 / 覆盖恢复', onTap: () => _openBackup(context, 'import')),
             _Row(
               '云端同步与 QQ 绑定',
               '云端备份 · 机器人打卡收件箱',
@@ -209,7 +184,7 @@ class SettingsPage extends StatelessWidget {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('已复制 QQ：$qq')));
   }
 
-  void _openBackup(BuildContext context, String mode) {
+  void _openBackup(BuildContext context, [String? mode]) {
     Navigator.of(context).push(
       AppRoutes.fade<void>(BackupPage(mode: mode)),
     );
@@ -245,18 +220,73 @@ class SettingsPage extends StatelessWidget {
       if (!context.mounted) return;
       Navigator.of(context).pop(); // 关闭加载弹窗
       await UpdateDialog.show(context, info);
-    } catch (e) {
+    } catch (_) {
       if (!context.mounted) return;
       Navigator.of(context).pop(); // 关闭加载弹窗
+      const releaseUrl = 'https://github.com/MrcolorH/plan-maker-manager-flutter/releases';
       showDialog<void>(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: const Text('检查更新提示', style: TextStyle(fontSize: 16)),
-          content: Text('$e\n\n您也可以直接访问 GitHub Releases 页面下载安装。'),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+          actionsPadding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+          title: const Row(
+            children: [
+              Icon(Icons.info_outline_rounded, color: AppColors.primary, size: 22),
+              SizedBox(width: 8),
+              Text('版本更新提示', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: 6),
+              const Text(
+                '暂无法自动获取最新版本信息，您可以前往 Release 页面查看并手动下载最新版本：',
+                style: TextStyle(fontSize: 13, color: AppColors.text, height: 1.5),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                width: double.maxFinite,
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.grey.shade200),
+                ),
+                child: const SelectableText(
+                  releaseUrl,
+                  style: TextStyle(fontSize: 12, color: AppColors.primary, fontWeight: FontWeight.w500),
+                ),
+              ),
+            ],
+          ),
           actions: [
             TextButton(
+              onPressed: () {
+                Clipboard.setData(const ClipboardData(text: releaseUrl));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('已复制 Release 链接到剪贴板')),
+                );
+              },
+              child: const Text('复制链接'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              onPressed: () {
+                AppUpdateService.openBrowser(releaseUrl);
+              },
+              child: const Text('浏览器打开'),
+            ),
+            TextButton(
               onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('知道了'),
+              child: const Text('关闭', style: TextStyle(color: AppColors.textSub)),
             ),
           ],
         ),
@@ -351,19 +381,22 @@ class _Row extends StatelessWidget {
   }
 }
 
-class _SwitchRow extends StatelessWidget {
-  final String label;
-  final String? subtitle; // 开关下方小字说明（如自动备份的保存位置/状态）
-  final bool value;
-  final ValueChanged<bool> onChanged;
-  const _SwitchRow(this.label, this.value, this.onChanged, {this.subtitle});
+class _CalorieInfoCard extends StatelessWidget {
+  final int tdee;
+  final String? profileSummary;
+  final VoidCallback onTap;
+
+  const _CalorieInfoCard({
+    required this.tdee,
+    required this.profileSummary,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
     final themeConfig = context.themeConfig;
     return Container(
       margin: const EdgeInsets.only(left: 16, right: 16, bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: themeConfig.cardOpacity),
         borderRadius: BorderRadius.circular(10),
@@ -376,26 +409,57 @@ class _SwitchRow extends StatelessWidget {
           ),
         ],
       ),
-      child: Row(
-        children: [
-          Expanded(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(10),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(label, style: const TextStyle(fontSize: 14)),
-                if (subtitle != null && subtitle!.isNotEmpty) ...[
-                  const SizedBox(height: 2),
-                  Text(subtitle!, style: const TextStyle(fontSize: 11, color: AppColors.textSub, height: 1.4)),
-                ],
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text('每日消耗', style: TextStyle(fontSize: 14)),
+                    ),
+                    Text(
+                      tdee > 0 ? '$tdee kcal' : '未设置',
+                      style: const TextStyle(fontSize: 13, color: AppColors.textSub),
+                    ),
+                    const SizedBox(width: 4),
+                    const Icon(Icons.chevron_right, size: 16, color: AppColors.textSub),
+                  ],
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Divider(
+                    height: 1,
+                    thickness: 0.6,
+                    color: Colors.grey.withValues(alpha: 0.15),
+                  ),
+                ),
+                Row(
+                  children: [
+                    const Text('基础信息', style: TextStyle(fontSize: 14)),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        profileSummary ?? '未完善（点击设置）',
+                        textAlign: TextAlign.right,
+                        style: const TextStyle(fontSize: 13, color: AppColors.textSub),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    const Icon(Icons.chevron_right, size: 16, color: AppColors.textSub),
+                  ],
+                ),
               ],
             ),
           ),
-          Switch(
-            value: value,
-            onChanged: onChanged,
-            activeThumbColor: context.primaryColor,
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -501,7 +565,7 @@ class _CalorieSheetState extends State<_CalorieSheet> {
       age: age,
     );
     setState(() {
-      _msg = '已估算：BMR = $bmr · TDEE = $tdee · 目标 = $target kcal\n'
+      _msg = '已估算：BMR = $bmr · 每日消耗 = $tdee · 目标 = $target kcal\n'
           '减脂期每日摄入标准：蛋白质 ${macros.protein}g · 碳水 ${macros.carbs}g · 脂肪 ${macros.fat}g';
       _msgError = false;
     });
@@ -590,7 +654,7 @@ class _CalorieSheetState extends State<_CalorieSheet> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _numField(_tdeeCtrl, '基础消耗 TDEE（kcal）'),
+                  _numField(_tdeeCtrl, '每日消耗（TDEE，kcal）'),
                   const SizedBox(height: 8),
                   _numField(_targetCtrl, '每日目标摄入（kcal）'),
                   const SizedBox(height: 12),

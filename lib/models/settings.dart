@@ -24,12 +24,20 @@ class AiConfig {
         model: _str(json['model'], 'deepseek-flash'),
       );
 
-  Map<String, dynamic> toJson() => {
+  Map<String, dynamic> toJson({bool includeSensitive = true}) => {
         'provider': provider,
         'endpoint': endpoint,
-        'apiKey': apiKey,
+        'apiKey': includeSensitive ? apiKey : '',
         'model': model,
       };
+
+  /// 剔除敏感密钥 apiKey 的只读副本（安全导出与云端同步用）
+  AiConfig copyWithSanitizedApiKey() => AiConfig(
+        provider: provider,
+        endpoint: endpoint,
+        apiKey: '',
+        model: model,
+      );
 
   bool get hasConfig => apiKey.isNotEmpty && endpoint.isNotEmpty;
 
@@ -75,6 +83,16 @@ class AiProfile {
         createdAt: createdAt,
       );
 
+  /// 剔除敏感密钥 apiKey（安全备份/云端同步脱敏用）
+  AiProfile copyWithSanitizedApiKey() => AiProfile(
+        id: id,
+        provider: provider,
+        endpoint: endpoint,
+        apiKey: '',
+        model: model,
+        createdAt: createdAt,
+      );
+
   factory AiProfile.fromJson(Map<String, dynamic> json) => AiProfile(
         id: _str(json['id']),
         provider: _str(json['provider'], 'deepseek'),
@@ -84,11 +102,11 @@ class AiProfile {
         createdAt: _int(json['createdAt'], 0),
       );
 
-  Map<String, dynamic> toJson() => {
+  Map<String, dynamic> toJson({bool includeSensitive = true}) => {
         'id': id,
         'provider': provider,
         'endpoint': endpoint,
-        'apiKey': apiKey,
+        'apiKey': includeSensitive ? apiKey : '',
         'model': model,
         'createdAt': createdAt,
       };
@@ -309,13 +327,32 @@ class AppSettings {
     );
   }
 
-  Map<String, dynamic> toJson() {
+  /// 剔除所有 AI 密钥的只读副本（安全导出与云端同步用）
+  AppSettings copyWithSanitizedApiKeys() {
+    return AppSettings(
+      tdee: tdee,
+      bmr: bmr,
+      dailyCalorieTarget: dailyCalorieTarget,
+      reminderEnabled: reminderEnabled,
+      reminderAdvance: reminderAdvance,
+      autoBackupEnabled: autoBackupEnabled,
+      aiProfiles: aiProfiles.map((p) => p.copyWithSanitizedApiKey()).toList(),
+      activeAiProfileId: activeAiProfileId,
+    );
+  }
+
+  Map<String, dynamic> toJson({bool includeSensitive = true}) {
     // 冗余写出激活档案为旧字段 ai：老版本 App 读新备份时字段不缺（降级兼容）；
     // 同时让各调用点（today/stats/food/import 直接引用 settings.ai）零改动。
     final p = activeProfile;
     final legacyAi = p == null
-        ? AiConfig().toJson()
-        : AiConfig(provider: p.provider, endpoint: p.endpoint, apiKey: p.apiKey, model: p.model).toJson();
+        ? AiConfig().toJson(includeSensitive: includeSensitive)
+        : AiConfig(
+            provider: p.provider,
+            endpoint: p.endpoint,
+            apiKey: p.apiKey,
+            model: p.model,
+          ).toJson(includeSensitive: includeSensitive);
     return {
       'tdee': tdee,
       'bmr': bmr,
@@ -324,7 +361,7 @@ class AppSettings {
       'reminderAdvance': reminderAdvance,
       'autoBackupEnabled': autoBackupEnabled,
       'ai': legacyAi,
-      'aiProfiles': aiProfiles.map((x) => x.toJson()).toList(),
+      'aiProfiles': aiProfiles.map((x) => x.toJson(includeSensitive: includeSensitive)).toList(),
       'activeAiProfileId': activeAiProfileId,
     };
   }

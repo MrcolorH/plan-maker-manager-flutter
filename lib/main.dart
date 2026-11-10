@@ -71,9 +71,13 @@ class _JianfeiDaziAppState extends State<JianfeiDaziApp> with WidgetsBindingObse
       usage: usageProvider,
     )..attach();
 
-    // 启动后静默尝试拉取云端待录入收件箱 (来自 QQ 机器人等)
+    // 启动后静默尝试拉取云端待录入收件箱 (来自 QQ 机器人等，支持套用知轻 AI 提示词智能转换)
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      SyncService().syncInboxToLocal(recordProvider);
+      SyncService().syncInboxToLocal(
+        recordProvider,
+        aiConfig: settingsProvider.settings.ai,
+        onUsage: usageProvider.addUsage,
+      );
     });
   }
 
@@ -86,7 +90,11 @@ class _JianfeiDaziAppState extends State<JianfeiDaziApp> with WidgetsBindingObse
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      SyncService().syncInboxToLocal(recordProvider);
+      SyncService().syncInboxToLocal(
+        recordProvider,
+        aiConfig: settingsProvider.settings.ai,
+        onUsage: usageProvider.addUsage,
+      );
     }
   }
 

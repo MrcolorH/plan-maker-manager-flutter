@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../services/app_update_service.dart';
 import '../theme/app_theme.dart';
@@ -48,7 +49,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
     final apkUrl = widget.info.apkUrl;
     if (apkUrl == null || apkUrl.isEmpty) {
       setState(() {
-        _errorMessage = '未找到可用的 APK 安装包资产文件';
+        _errorMessage = '未检测到直连安装包，您可以直接前往 Release 发布页下载：';
       });
       return;
     }
@@ -103,11 +104,11 @@ class _UpdateDialogState extends State<UpdateDialog> {
           _progressText = '已保存到: ${file.path}';
         });
       }
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
       setState(() {
         _downloading = false;
-        _errorMessage = '下载失败: $e';
+        _errorMessage = '自动下载安装包失败，您可以直接前往 Release 发布页下载：';
       });
     }
   }
@@ -235,10 +236,89 @@ class _UpdateDialogState extends State<UpdateDialog> {
             ],
 
             if (_errorMessage != null) ...[
-              const SizedBox(height: 8),
-              Text(
-                _errorMessage!,
-                style: const TextStyle(fontSize: 12, color: AppColors.danger),
+              const SizedBox(height: 10),
+              Container(
+                width: double.maxFinite,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.amber.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.amber.withValues(alpha: 0.3)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.info_outline_rounded, size: 15, color: Colors.orange),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            _errorMessage!,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF92400E),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      width: double.maxFinite,
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: Colors.grey.shade300),
+                      ),
+                      child: SelectableText(
+                        info.htmlUrl.isNotEmpty
+                            ? info.htmlUrl
+                            : 'https://github.com/MrcolorH/plan-maker-manager-flutter/releases',
+                        style: const TextStyle(fontSize: 11, color: AppColors.primary),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton.icon(
+                          style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                          icon: const Icon(Icons.copy_rounded, size: 14),
+                          label: const Text('复制链接', style: TextStyle(fontSize: 12)),
+                          onPressed: () {
+                            final targetUrl = info.htmlUrl.isNotEmpty
+                                ? info.htmlUrl
+                                : 'https://github.com/MrcolorH/plan-maker-manager-flutter/releases';
+                            Clipboard.setData(ClipboardData(text: targetUrl));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('已复制 Release 页面链接')),
+                            );
+                          },
+                        ),
+                        const SizedBox(width: 4),
+                        ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                            visualDensity: VisualDensity.compact,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                          ),
+                          icon: const Icon(Icons.open_in_browser_rounded, size: 14),
+                          label: const Text('浏览器打开', style: TextStyle(fontSize: 12)),
+                          onPressed: () {
+                            final targetUrl = info.htmlUrl.isNotEmpty
+                                ? info.htmlUrl
+                                : 'https://github.com/MrcolorH/plan-maker-manager-flutter/releases';
+                            AppUpdateService.openBrowser(targetUrl);
+                          },
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ],
           ],
@@ -250,20 +330,22 @@ class _UpdateDialogState extends State<UpdateDialog> {
             onPressed: () => Navigator.of(context).pop(),
             child: Text(info.hasUpdate ? '稍后再说' : '关闭', style: const TextStyle(color: AppColors.textSub)),
           ),
-        if (!_downloading)
+        if (!_downloading && info.apkUrl != null)
           ElevatedButton(
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primary,
               foregroundColor: Colors.white,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             ),
-            onPressed: info.apkUrl != null ? _startDownload : null,
+            onPressed: _startDownload,
             child: Text(
-              info.hasUpdate ? '立即更新' : '重新安装当前版',
+              _errorMessage != null
+                  ? '重试自动更新'
+                  : (info.hasUpdate ? '立即更新' : '重新安装当前版'),
               style: const TextStyle(fontWeight: FontWeight.bold),
             ),
           )
-        else
+        else if (_downloading)
           TextButton(
             onPressed: () {
               _cancelToken?.cancel();

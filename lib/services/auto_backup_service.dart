@@ -46,7 +46,7 @@ BackupData captureBackupData({
     weightRecords: rec.weightRecords.toJson(),
     userPresets: storage.readMap(StorageService.kUserPresets),
     userFoods: storage.readMap(StorageService.kUserFoods),
-    settings: settings.settings,
+    settings: settings.settings.copyWithSanitizedApiKeys(),
     onboardingState: onboarding.state,
     apiUsage: usage.usage,
   );

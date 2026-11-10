@@ -2,10 +2,61 @@
 import os
 import sys
 import json
+import re
+import subprocess
 import urllib.request
 import urllib.error
 
 SERVER_BASE = "http://127.0.0.1:3000"
+
+# 知轻中国营养学会专业营养师标准结构化转换提示词 (与知轻 App 内置 kCalorieSys 严格同源)
+ZHIQING_AI_PROMPT = """你是中国营养学会专业营养师。请把用户输入的餐食描述或AI助手的长文估算回复，精准转换为标准的纯 JSON 对象。
+
+【核心规则】
+1. 语义理解与抗噪：
+   - 彻底剔除任何客套寒暄（如“萌萌看清楚啦”、“👉 请核对以上识别是否有误”）、中间计算折算说明、总计小结及宏量汇总等非食物描述；
+   - items 数组中必须包含所有真实食材清单（包括烹饪用油、面条、肉类、蔬菜、主食等），严禁遗漏任何食材；
+   - 真实烹饪用油（如家常炒菜5-12g油）必须作为独立食材列入 items（如 {"name":"烹调油","portion":"5g","calories":45}）；
+2. 给出整餐规范食物名（概括，如：番茄鸡蛋荞麦焖面）、实际总热量（kcal）、蛋白质（g）、碳水化合物（g）、脂肪（g）；
+3. 严格遵循能量守恒：总热量 ≈ 蛋白质*4 + 碳水*4 + 脂肪*9。
+
+严格只返回一个标准 JSON 对象，不要输出任何其他文字、解释或 markdown 代码块：
+{"name":"规范食物名","calories":总热量整数kcal,"protein":蛋白质整数g,"carbs":碳水整数g,"fat":脂肪整数g,"items":[{"name":"食物名","portion":"重量或份量","calories":该项热量整数}],"detail":"一句话拆解"}"""
+
+def convert_via_ai(text):
+    """在 QQ 侧套用知轻专业提示词，调用本地 AI 引擎进行高精度结构化转换"""
+    if not text or len(text.strip()) < 10:
+        return None
+
+    agy_path = "/Users/colorh/.local/bin/agy"
+    home_dir = os.path.expanduser("~")
+    if not os.path.exists(agy_path):
+        return None
+
+    full_prompt = f"{ZHIQING_AI_PROMPT}\n\n待转换的餐品与热量描述：\n{text.strip()}"
+    env = os.environ.copy()
+    env["HOME"] = home_dir
+
+    try:
+        res = subprocess.run(
+            [agy_path, "-p", full_prompt, "--dangerously-skip-permissions"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=25
+        )
+        if res.returncode == 0 and res.stdout:
+            out = res.stdout.strip()
+            # 正则提取 JSON
+            m = re.search(r'\{[\s\S]*\}', out)
+            if m:
+                obj = json.loads(m.group(0))
+                if isinstance(obj, dict) and "calories" in obj:
+                    return obj
+    except Exception:
+        pass
+
+    return None
 
 def is_matrix_owner(qq_id):
     """判断当前发送者是否为 QQMatrix 机器人主人 (Owner)"""
@@ -137,24 +188,62 @@ def handle_sync(qq_id, args, sender_name):
         print("💡 请长按引用某条包含餐品热量的消息并回复【导入知轻】，或在刚估算完热量后直接发送【导入知轻】即可同步至云端！")
         return
 
+    # 1. 在 QQ 侧优先套用知轻专业提示词交由本地 AI 完成高精度结构化转换
+    ai_result = convert_via_ai(candidate_text)
+
+    # 2. 组装发送给知轻云端服务的负载
     url = f"{SERVER_BASE}/internal/hooks/skill-exit"
-    payload = json.dumps({
+    payload_dict = {
         "event": "skill_exit",
         "skillId": "zhiqing_import_cloud",
         "userId": qq_id,
         "senderName": sender_name,
         "lastUserMessage": "导入知轻",
         "lastAssistantMessage": candidate_text
-    }).encode("utf-8")
+    }
 
+    if ai_result:
+        payload_dict["content"] = ai_result.get("name")
+        payload_dict["calories"] = ai_result.get("calories")
+        payload_dict["protein"] = ai_result.get("protein")
+        payload_dict["carbs"] = ai_result.get("carbs")
+        payload_dict["fat"] = ai_result.get("fat")
+        payload_dict["items"] = ai_result.get("items")
+        if ai_result.get("detail"):
+            payload_dict["detail"] = ai_result.get("detail")
+
+    payload = json.dumps(payload_dict).encode("utf-8")
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
 
     try:
-        with urllib.request.urlopen(req, timeout=3) as resp:
+        with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             if data.get("success"):
-                note = data.get("note", "已成功存入知轻待录入信箱")
-                print(f"🎉 导入成功！\n{note}\n📱 打开知轻 App 首页点击右上角「云同步」即可一键确认入账。")
+                entry = data.get("entry") or {}
+                meal_name = entry.get("content") or payload_dict.get("content") or "餐品打卡"
+                cal = entry.get("calories") if entry.get("calories") is not None else payload_dict.get("calories", 0)
+                p = entry.get("protein") if entry.get("protein") is not None else payload_dict.get("protein", 0)
+                f = entry.get("fat") if entry.get("fat") is not None else payload_dict.get("fat", 0)
+                c = entry.get("carbs") if entry.get("carbs") is not None else payload_dict.get("carbs", 0)
+                items = entry.get("items") or payload_dict.get("items") or []
+
+                lines = [
+                    f"🎉 成功导入知轻！",
+                    f"🍽️【{meal_name}】",
+                    f"🔥 总热量：{cal} kcal",
+                    f"🥩 蛋白质：{p}g | 🧈 脂肪：{f}g | 🍚 碳水：{c}g"
+                ]
+                if items:
+                    lines.append("🥗 食材清单：")
+                    for it in items[:6]:
+                        p_str = f" ({it.get('portion')})" if it.get('portion') else ""
+                        c_str = f" {it.get('calories')} kcal" if it.get('calories') else ""
+                        lines.append(f"  • {it.get('name')}{p_str}{c_str}")
+                    if len(items) > 6:
+                        lines.append(f"  ...等共 {len(items)} 项食材")
+
+                lines.append("\n📱 打开手机知轻 App 即可秒级查看入账（云端已预先解析就绪，无需二次等待）✨")
+                print("\n".join(lines))
             else:
                 note = data.get("note", "导入失败")
                 print(f"{note}\n👉 请在知轻 App [设置 -> 云端同步] 点击【绑定 QQ 快捷录入】获取 6 位数字码，并在本窗口发送：/bind <绑定码>")
@@ -165,8 +254,8 @@ def handle_sync(qq_id, args, sender_name):
             print(f"❌ 导入失败: {msg}")
         except Exception:
             print(f"❌ 服务端响应错误: {e.code}")
-    except Exception:
-        print("⚠️ 无法连接到本地知轻服务端，请确保知轻微服务守护进程正常运行 (127.0.0.1:3000)")
+    except Exception as e:
+        print(f"⚠️ 无法连接到本地知轻服务端，请确保知轻微服务守护进程正常运行 (127.0.0.1:3000): {e}")
 
 def main():
     qq_id = os.environ.get("QQMATRIX_USER_ID", "").strip()

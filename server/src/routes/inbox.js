@@ -139,9 +139,39 @@ export default async function inboxRoutes(fastify, options) {
       });
     }
 
-    // 从 AI 助手的完整回复长文本中精准解析所有食物项、总热量、餐次及三大营养素
+    // 从 AI 助手的完整回复长文本中解析或直接使用插件已结构化的餐品数据
     const text = lastAssistantMessage || '';
-    const parsed = parseMealText(text);
+    
+    // 优先采用调用方 (如 QQ 插件已通过知轻提示词转换好) 的结构化数据
+    const bodyContent = request.body.content;
+    const bodyCalories = request.body.calories;
+    const bodyProtein = request.body.protein;
+    const bodyCarbs = request.body.carbs;
+    const bodyFat = request.body.fat;
+    const bodyItems = request.body.items;
+    const bodySlot = request.body.slot;
+
+    let finalContent = bodyContent;
+    let finalCalories = bodyCalories;
+    let finalProtein = bodyProtein !== undefined ? bodyProtein : null;
+    let finalCarbs = bodyCarbs !== undefined ? bodyCarbs : null;
+    let finalFat = bodyFat !== undefined ? bodyFat : null;
+    let finalItems = bodyItems;
+    let finalSlot = bodySlot;
+
+    // 若未预先结构化，回退使用本地高精度文本解析器提取
+    if (!finalContent || finalCalories === undefined) {
+      const parsed = parseMealText(text);
+      finalContent = parsed.content;
+      finalCalories = parsed.calories;
+      finalProtein = parsed.protein;
+      finalCarbs = parsed.carbs;
+      finalFat = parsed.fat;
+      finalItems = parsed.items;
+      finalSlot = parsed.slot;
+    }
+
+    if (!finalSlot) finalSlot = 'lunch';
 
     // 本地日期 (避免 UTC 导致的东八区早 8 点前跨天问题)
     const d = new Date();
@@ -152,7 +182,7 @@ export default async function inboxRoutes(fastify, options) {
 
     const entryId = crypto.randomUUID();
     const now = Math.floor(Date.now() / 1000);
-    const itemsJson = (parsed.items && parsed.items.length > 0) ? JSON.stringify(parsed.items) : null;
+    const itemsJson = (finalItems && finalItems.length > 0) ? JSON.stringify(finalItems) : null;
 
     db.prepare(`
       INSERT INTO pending_entries (
@@ -162,27 +192,36 @@ export default async function inboxRoutes(fastify, options) {
       entryId,
       binding.user_id,
       today,
-      parsed.slot,
-      parsed.content,
-      parsed.calories,
-      parsed.protein || 0,
-      parsed.carbs || 0,
-      parsed.fat || 0,
+      finalSlot,
+      finalContent,
+      finalCalories,
+      finalProtein || 0,
+      finalCarbs || 0,
+      finalFat || 0,
       text,
       itemsJson,
       now
     );
 
-    let summaryNote = `已自动存入知轻待录入信箱：【${parsed.content}】`;
-    if (parsed.items && parsed.items.length > 0) {
-      summaryNote += `包含 ${parsed.items.length} 项，总热量 ${parsed.calories} kcal ✨`;
+    let summaryNote = `已自动存入知轻待录入信箱：【${finalContent}】`;
+    if (finalItems && finalItems.length > 0) {
+      summaryNote += `包含 ${finalItems.length} 项，总热量 ${finalCalories} kcal ✨`;
     } else {
-      summaryNote += `${parsed.calories} kcal ✨`;
+      summaryNote += `${finalCalories} kcal ✨`;
     }
 
     return {
       success: true,
-      note: summaryNote
+      note: summaryNote,
+      entry: {
+        id: entryId,
+        content: finalContent,
+        calories: finalCalories,
+        protein: finalProtein || 0,
+        carbs: finalCarbs || 0,
+        fat: finalFat || 0,
+        items: finalItems || []
+      }
     };
   });
 

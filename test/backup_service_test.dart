@@ -109,7 +109,7 @@ void main() {
   });
 
   group('parseBackupText（校验）', () {
-    test('正常往返：编码 → 解析 → 数据一致', () {
+    test('正常往返：编码 → 解析 → 数据一致（敏感 apiKey 已脱敏）', () {
       final src = buildData(aiKey: 'sk-test');
       final r = BackupService.instance.parseBackupText(encodeBackup(src));
       expect(r.ok, true);
@@ -119,7 +119,7 @@ void main() {
       expect(d.planData.meta.planName, '测试计划');
       expect(d.checkRecords.keys.toSet(), {'2026-09-01', '2026-09-02'});
       expect(d.settings.tdee, 2000);
-      expect(d.settings.ai.apiKey, 'sk-test');
+      expect(d.settings.ai.apiKey, ''); // 备份编码已安全脱敏，不输出明文密钥
       expect(d.onboardingState.done, true);
       expect(d.apiUsage.calls, 2);
       expect(r.exportedAt, isNotNull);

@@ -1272,7 +1272,7 @@ class AiService {
         final calMatch = RegExp(r'(?:预估热量|热量|能量)[:：约约为\s]*(\d+)\s*(?:kcal|大卡)?', caseSensitive: false).firstMatch(block);
         final cal = calMatch != null ? int.tryParse(calMatch.group(1) ?? '') ?? 0 : 0;
 
-        final portionMatch = RegExp(r'(?:预估克数|克数|重量|份量)[:：约约为\s]*([^\n\r]+)').firstMatch(block);
+        final portionMatch = RegExp(r'(?:预估克数|克数|重量|份量)[:：约约为\s]*([^\n\r|｜]+)').firstMatch(block);
         final portion = portionMatch?.group(1)?.trim() ?? '';
 
         if (cal > 0 || portion.isNotEmpty) {

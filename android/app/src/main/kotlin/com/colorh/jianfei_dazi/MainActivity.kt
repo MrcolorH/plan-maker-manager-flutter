@@ -70,6 +70,22 @@ class MainActivity : FlutterActivity() {
                         installApk(File(filePath), result)
                     }
 
+                    "openUrl" -> {
+                        val url = call.argument<String>("url")
+                        if (url.isNullOrEmpty()) {
+                            result.error("ARG", "url 不能为空", null)
+                            return@setMethodCallHandler
+                        }
+                        try {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            startActivity(intent)
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.error("OPEN_FAILED", e.message ?: "无法打开链接", null)
+                        }
+                    }
+
                     else -> result.notImplemented()
                 }
             }

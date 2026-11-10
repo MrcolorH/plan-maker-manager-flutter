@@ -150,7 +150,11 @@ class TodayPage extends StatelessWidget {
       child: RefreshIndicator(
         onRefresh: () async {
           context.read<AppProvider>().refreshToday();
-          await SyncService().syncInboxToLocal(context.read<RecordProvider>());
+          await SyncService().syncInboxToLocal(
+            context.read<RecordProvider>(),
+            aiConfig: context.read<SettingsProvider>().settings.ai,
+            onUsage: context.read<UsageProvider>().addUsage,
+          );
         },
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),

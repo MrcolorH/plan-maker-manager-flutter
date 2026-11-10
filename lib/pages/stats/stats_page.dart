@@ -534,7 +534,7 @@ class _StatsPageState extends State<StatsPage> {
             ),
           ),
           const SizedBox(height: 8),
-          const Text('向上=缺口（掉秤方向），向下=超标；点柱子看当天数值',
+          const Text('绿色=缺口（掉秤方向），黄色=超标；点柱子看当天数值',
               style: TextStyle(fontSize: 10, color: AppColors.textFaint)),
         ],
       ),

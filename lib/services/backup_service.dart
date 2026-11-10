@@ -52,7 +52,7 @@ class BackupData {
     this.legacy = false,
   });
 
-  Map<String, dynamic> toJson() => {
+  Map<String, dynamic> toJson({bool includeSensitive = false}) => {
         'planData': planData.toJson(),
         'checkRecords': checkRecords,
         'mealAdjust': mealAdjust,
@@ -62,7 +62,7 @@ class BackupData {
         'weightRecords': weightRecords,
         'userPresets': userPresets,
         'userFoods': userFoods,
-        'settings': settings.toJson(),
+        'settings': settings.toJson(includeSensitive: includeSensitive),
         'onboardingState': onboardingState.toJson(),
         'apiUsage': apiUsage.toJson(),
       };
@@ -88,6 +88,7 @@ class BackupSummary {
   final int entryCount; // 当日条目快照条数
   final int weightCount; // 体重记录条数
   final bool hasAiKey;
+  final bool hasAiConfig;
   const BackupSummary({
     required this.meals,
     required this.exercises,
@@ -97,6 +98,7 @@ class BackupSummary {
     required this.entryCount,
     required this.weightCount,
     required this.hasAiKey,
+    this.hasAiConfig = false,
   });
 }
 
@@ -387,6 +389,7 @@ class BackupService {
       entryCount: entryCount,
       weightCount: weightCount,
       hasAiKey: data.settings.ai.apiKey.isNotEmpty,
+      hasAiConfig: data.settings.activeProfile != null || data.settings.aiProfiles.isNotEmpty,
     );
   }
 

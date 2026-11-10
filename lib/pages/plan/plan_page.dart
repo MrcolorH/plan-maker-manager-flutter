@@ -7,7 +7,6 @@ import 'package:provider/provider.dart';
 
 import '../../models/plan_data.dart';
 import '../../providers/plan_provider.dart';
-import '../../providers/settings_provider.dart';
 import '../../theme/app_theme.dart';
 import '../../utils/date_utils.dart';
 import '../../widgets/meal_card.dart';
@@ -65,100 +64,10 @@ class _PlanPageState extends State<PlanPage> {
         child: Column(
           children: [
             const AppPageTitle(),
-            _header(context, plan),
             Expanded(child: _body(context, plan)),
           ],
         ),
       ),
-    );
-  }
-
-  Widget _header(BuildContext context, PlanData plan) {
-    final meta = plan.meta;
-    final hasPlan = plan.hasPlan;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-      child: AppCard(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Text(
-                    meta.planName.isNotEmpty ? meta.planName : '减脂计划',
-                    style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600, height: 1.3),
-                  ),
-                ),
-                if (hasPlan && !_selectMode)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 2),
-                    child: Text('长按可多选删除', style: TextStyle(fontSize: 11, color: AppColors.textFaint)),
-                  ),
-                if (_selectMode)
-                  GestureDetector(
-                    onTap: () => _deleteSelected(_section),
-                    child: const Padding(
-                      padding: EdgeInsets.only(top: 2),
-                      child: Text('删除选中', style: TextStyle(fontSize: 12, color: AppColors.danger)),
-                    ),
-                  ),
-              ],
-            ),
-            if (hasPlan) ...[
-              if (meta.startDate.isNotEmpty || meta.endDate.isNotEmpty) ...[
-                const SizedBox(height: 6),
-                Text(
-                  '${meta.startDate} ~ ${meta.endDate}',
-                  style: const TextStyle(fontSize: 12, color: AppColors.textSub),
-                ),
-              ],
-              const SizedBox(height: 14),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Expanded(
-                    child: _numCol(
-                      meta.baseWeight != null ? '${meta.baseWeight!.round()}' : '--',
-                      '起始 kg',
-                    ),
-                  ),
-                  const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 6),
-                    child: Text('→', style: TextStyle(color: AppColors.textSub, fontSize: 16)),
-                  ),
-                  Expanded(
-                    child: _numCol(
-                      meta.targetWeight != null ? '${meta.targetWeight!.round()}' : '--',
-                      '目标 kg',
-                    ),
-                  ),
-                  Expanded(
-                    child: _numCol(
-                      '${context.watch<SettingsProvider>().settings.dailyCalorieTarget}',
-                      '每日目标 kcal',
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// 大数字 + 下方小标签（老版：数字不带单位，单位在标签里）
-  Widget _numCol(String value, String label) {
-    return Column(
-      children: [
-        Text(value,
-            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: AppColors.text)),
-        const SizedBox(height: 3),
-        Text(label, style: const TextStyle(fontSize: 11, color: AppColors.textSub)),
-      ],
     );
   }
 
@@ -197,6 +106,25 @@ class _PlanPageState extends State<PlanPage> {
             ),
           ),
         ),
+        if (_selectMode)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+            child: Row(
+              children: [
+                Text('已选 ${_selected.length} 项',
+                    style: const TextStyle(fontSize: 13, color: AppColors.textSub)),
+                const Spacer(),
+                TextButton(
+                  onPressed: _exitSelectMode,
+                  child: const Text('取消', style: TextStyle(fontSize: 13, color: AppColors.textSub)),
+                ),
+                TextButton(
+                  onPressed: _selected.isEmpty ? null : () => _deleteSelected(_section),
+                  child: const Text('删除选中', style: TextStyle(fontSize: 13, color: AppColors.danger)),
+                ),
+              ],
+            ),
+          ),
         Expanded(
           child: ListView(
             padding: const EdgeInsets.only(bottom: 96),

@@ -43,7 +43,7 @@ class AppUpdateService {
   AppUpdateService._();
   static final AppUpdateService instance = AppUpdateService._();
 
-  static const String currentVersion = '1.5.0';
+  static const String currentVersion = '1.5.1';
   static const String defaultRepo = 'MrcolorH/plan-maker-manager-flutter';
   static const MethodChannel _channel = MethodChannel('com.colorh.jianfei_dazi/backup');
 
@@ -111,26 +111,20 @@ class AppUpdateService {
         apkSize: apkSize,
         htmlUrl: htmlUrl,
       );
-    } on DioException catch (e) {
-      if (e.response?.statusCode == 404) {
-        // 尝试从知轻云端服务中继接口获取更新（解决 GitHub 私有仓库 404 问题）
-        try {
-          return await _checkUpdateFromCloudServer();
-        } catch (_) {}
-        throw Exception('未找到版本发布信息（若仓库为私有，请在 GitHub 设置中设为公开 Public）');
-      }
-      throw Exception('网络连接超时或无法访问 GitHub: ${e.message ?? e.type.name}');
-    } catch (e) {
+    } catch (_) {
+      // 当 GitHub 访问受限（如私有仓库返回 404、国内网络超时阻断等），自动尝试从知轻云端中继接口获取更新
       try {
         return await _checkUpdateFromCloudServer();
-      } catch (_) {}
-      throw Exception('检查更新失败: $e');
+      } catch (cloudErr) {
+        throw Exception('暂无法获取最新版本信息');
+      }
     }
   }
 
   /// 从知轻云端服务中继接口获取最新版本信息 (当 GitHub 为私有仓库或网络受阻时的智能兜底)
   Future<AppUpdateInfo> _checkUpdateFromCloudServer() async {
-    final serverUrl = SyncService().serverUrl;
+    final rawUrl = SyncService().serverUrl;
+    final serverUrl = rawUrl.trim().isNotEmpty ? rawUrl.trim() : SyncService.defaultServerUrl;
     final res = await _dio.get<Map<String, dynamic>>('$serverUrl/api/v1/app/latest');
     final data = res.data;
     if (data == null) throw Exception('服务端未返回版本数据');
@@ -213,6 +207,18 @@ class AppUpdateService {
       return ok ?? false;
     } on PlatformException catch (e) {
       throw Exception('调起安装程序失败: ${e.message}');
+    }
+  }
+
+  /// 使用系统浏览器打开网页链接（如 GitHub Release 或下载链接）
+  static Future<bool> openBrowser(String url) async {
+    if (url.trim().isEmpty) return false;
+    if (!Platform.isAndroid) return false;
+    try {
+      final ok = await _channel.invokeMethod<bool>('openUrl', {'url': url.trim()});
+      return ok ?? false;
+    } catch (_) {
+      return false;
     }
   }
 }

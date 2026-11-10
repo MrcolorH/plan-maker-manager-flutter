@@ -91,4 +91,78 @@ export function initDatabase() {
     );
     console.log(`[Database] 初始可用邀请码已创建: ${defaultInvite}`);
   }
+
+  // 历史快照安全清洗：确保数据库中存留的任何历史版本快照中的 API Key 均脱敏为空
+  cleanseHistoricalSnapshotApiKeys();
+}
+
+/// 快照 payload 安全脱敏清洗（递归剔除所有 API Key、Secret 等凭据敏感信息）
+export function cleanseSnapshotPayloadString(payloadStr) {
+  try {
+    const obj = JSON.parse(payloadStr);
+    let dirty = false;
+
+    // 递归深度脱敏
+    function sanitize(node) {
+      if (!node || typeof node !== 'object') return;
+      if (Array.isArray(node)) {
+        for (const item of node) sanitize(item);
+        return;
+      }
+      for (const [key, val] of Object.entries(node)) {
+        const lowerKey = key.toLowerCase();
+        // 匹配 apiKey, api_key, accesskey, token, secret 等凭据字段
+        if (
+          (lowerKey === 'apikey' ||
+            lowerKey === 'api_key' ||
+            lowerKey === 'key' ||
+            lowerKey.endsWith('key') ||
+            lowerKey.endsWith('secret') ||
+            lowerKey.endsWith('token')) &&
+          typeof val === 'string' &&
+          val.trim().length > 0
+        ) {
+          // 例外：如果是常规非敏感字段（如 id, planKey 等不是密钥的排除）
+          if (lowerKey !== 'id' && lowerKey !== 'plankey' && lowerKey !== 'category' && lowerKey !== 'type') {
+            node[key] = '';
+            dirty = true;
+          }
+        } else if (typeof val === 'object') {
+          sanitize(val);
+        }
+      }
+    }
+
+    if (obj?.data?.settings) {
+      sanitize(obj.data.settings);
+    }
+    return dirty ? JSON.stringify(obj) : payloadStr;
+  } catch {
+    return payloadStr;
+  }
+}
+
+/// 批量清洗现有数据库中历史留存的快照数据
+function cleanseHistoricalSnapshotApiKeys() {
+  try {
+    const snapshots = db.prepare('SELECT user_id, payload FROM sync_snapshots').all();
+    const updateSnapshot = db.prepare('UPDATE sync_snapshots SET payload = ? WHERE user_id = ?');
+    for (const row of snapshots) {
+      const cleaned = cleanseSnapshotPayloadString(row.payload);
+      if (cleaned !== row.payload) {
+        updateSnapshot.run(cleaned, row.user_id);
+      }
+    }
+
+    const histories = db.prepare('SELECT id, payload FROM sync_snapshot_history').all();
+    const updateHistory = db.prepare('UPDATE sync_snapshot_history SET payload = ? WHERE id = ?');
+    for (const row of histories) {
+      const cleaned = cleanseSnapshotPayloadString(row.payload);
+      if (cleaned !== row.payload) {
+        updateHistory.run(cleaned, row.id);
+      }
+    }
+  } catch (err) {
+    console.error('[Database] 快照脱敏清洗异常:', err);
+  }
 }

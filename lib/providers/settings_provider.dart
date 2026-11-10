@@ -136,7 +136,7 @@ class SettingsProvider extends ChangeNotifier {
     await _persist();
   }
 
-  /// 覆盖替换整个设置（历史备份「覆盖导入」使用；默认值深度合并补缺）
+  /// 覆盖替换整个设置（历史备份「覆盖导入」或云端快照恢复使用；默认值深度合并补缺）
   Future<void> replaceSettings(AppSettings data) async {
     // data 来自备份解析（AppSettings.fromJson），其 aiProfiles 已含旧单 ai 迁移与 activeId 校验
     final profiles = List<AiProfile>.from(data.aiProfiles);
@@ -146,6 +146,34 @@ class SettingsProvider extends ChangeNotifier {
       final m = p.model.trim();
       if (kRetiredModelMap.containsKey(m)) profiles[i] = p.copyWithModel(kRetiredModelMap[m]!);
     }
+
+    // 安全保护：若导入的 profile 缺少 apiKey（安全脱敏备份），智能继承当前本地已有的有效 Key
+    final localKeyById = {
+      for (final p in settings.aiProfiles)
+        if (p.apiKey.trim().isNotEmpty) p.id: p.apiKey.trim()
+    };
+    final localKeyByProvider = {
+      for (final p in settings.aiProfiles)
+        if (p.apiKey.trim().isNotEmpty) p.provider: p.apiKey.trim()
+    };
+
+    for (var i = 0; i < profiles.length; i++) {
+      final p = profiles[i];
+      if (p.apiKey.trim().isEmpty) {
+        final existingKey = localKeyById[p.id] ?? localKeyByProvider[p.provider];
+        if (existingKey != null && existingKey.isNotEmpty) {
+          profiles[i] = AiProfile(
+            id: p.id,
+            provider: p.provider,
+            endpoint: p.endpoint,
+            apiKey: existingKey,
+            model: p.model,
+            createdAt: p.createdAt,
+          );
+        }
+      }
+    }
+
     var activeId = data.activeAiProfileId;
     if (activeId.isNotEmpty && !profiles.any((p) => p.id == activeId)) activeId = '';
     if (activeId.isEmpty && profiles.isNotEmpty) activeId = profiles.first.id;
