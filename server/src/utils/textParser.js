@@ -445,17 +445,30 @@ export function parseMealText(text) {
     slot = 'snack';
   }
 
-  // 6. 构造 content (标题)
-  let content = '';
-  if (items.length > 0) {
-    const validNames = items.map(it => it.name).filter(Boolean);
-    if (validNames.length <= 3) {
-      content = validNames.join('、');
-    } else {
-      content = validNames.slice(0, 3).join('、') + `等${validNames.length}项`;
-    }
+  // 6. 构造 content (丰满详实的输入框内容，保留完整菜品与全部食材，绝不省略截断)
+  let mealName = '';
+  const mDish = clean.match(/这(?:道|顿|餐|份)(.+?)(?:的搭配|很|非常|做好了|理出来)/);
+  if (mDish) {
+    mealName = mDish[1].replace(/[:：]/g, '').trim();
   }
-  if (!content) {
+
+  let content = '';
+  const contentParts = [];
+  if (mealName) {
+    contentParts.push(`【${mealName}】`);
+  }
+
+  if (items.length > 0) {
+    const itemStrings = items.map(it => {
+      const p = it.portion ? ` (${it.portion})` : '';
+      return `${it.name}${p}`;
+    });
+    contentParts.push(mealName ? ('食材明细：' + itemStrings.join('、')) : itemStrings.join('、'));
+  }
+
+  if (contentParts.length > 0) {
+    content = contentParts.join('\n');
+  } else {
     const slotNames = { breakfast: '早餐打卡', lunch: '午餐打卡', dinner: '晚餐打卡', snack: '加餐打卡' };
     content = slotNames[slot] || '餐品打卡';
   }

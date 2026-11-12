@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import '../../models/records.dart';
 import '../../providers/onboarding_provider.dart';
 import '../../providers/plan_provider.dart';
 import '../../providers/preset_provider.dart';
@@ -165,6 +164,8 @@ class _CloudSyncPageState extends State<CloudSyncPage> {
 
     if (count > 0) {
       _showToast('成功同步 $count 条来自 QQ 机器人的打卡记录！');
+    } else if (_syncService.lastSyncError != null) {
+      _showToast('同步未完成: ${_syncService.lastSyncError}');
     } else {
       _showToast('云端收件箱暂无新的待录入记录');
     }
@@ -319,15 +320,30 @@ class _CloudSyncPageState extends State<CloudSyncPage> {
                     ),
                   ),
                   const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: ElevatedButton(
-                      onPressed: () async {
-                        await _syncService.setServerUrl(_serverUrlController.text);
-                        _showToast('服务器地址已更新');
-                      },
-                      child: const Text('保存地址'),
-                    ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      OutlinedButton.icon(
+                        icon: const Icon(Icons.network_check, size: 16),
+                        onPressed: () async {
+                          setState(() => _isLoading = true);
+                          final res = await _syncService.testConnection();
+                          if (mounted) {
+                            setState(() => _isLoading = false);
+                            _showToast(res['message']?.toString() ?? '测试完成');
+                          }
+                        },
+                        label: const Text('测试连接'),
+                      ),
+                      const SizedBox(width: 8),
+                      ElevatedButton(
+                        onPressed: () async {
+                          await _syncService.setServerUrl(_serverUrlController.text);
+                          _showToast('服务器地址已更新');
+                        },
+                        child: const Text('保存地址'),
+                      ),
+                    ],
                   ),
                 ],
               ),

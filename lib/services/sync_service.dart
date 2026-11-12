@@ -32,6 +32,7 @@ class SyncService {
   String? _username;
   String _serverUrl = defaultServerUrl;
   int _lastSyncAt = 0;
+  String? lastSyncError;
 
   bool get isLoggedIn => _token != null && _token!.isNotEmpty;
   String? get currentUsername => _username;
@@ -50,6 +51,30 @@ class SyncService {
     _serverUrl = url.trim().replaceAll(RegExp(r'/+$'), '');
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_keyServerUrl, _serverUrl);
+  }
+
+  /// 一键检测云端微服务与 Cloudflare 隧道连接健康度
+  Future<Map<String, dynamic>> testConnection() async {
+    try {
+      final res = await _dio.get(
+        '$_serverUrl/health',
+        options: Options(
+          receiveTimeout: const Duration(seconds: 5),
+          sendTimeout: const Duration(seconds: 5),
+        ),
+      );
+      if (res.statusCode == 200) {
+        return {'success': true, 'message': '云端微服务与安全隧道畅通 ✅'};
+      }
+      return {'success': false, 'message': '服务响应异常 (HTTP ${res.statusCode}) ⚠️'};
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 530) {
+        return {'success': false, 'message': 'Cloudflare 隧道未就绪 (530)，请确认电脑守护进程已开启 ❌'};
+      }
+      return {'success': false, 'message': '连接失败 (${e.response?.statusCode ?? e.type.name}) ❌'};
+    } catch (e) {
+      return {'success': false, 'message': '探测异常: $e'};
+    }
   }
 
   /// 账号注册 (需有效邀请码)
@@ -236,13 +261,13 @@ class SyncService {
           calories = breakdownItems.fold<int>(0, (sum, it) => sum + it.calories);
         }
 
-        // 若标题依然是通用打卡且有具体菜品项，自动提炼具体餐品名（如：米饭、煎鸡胸肉、炒绿豆芽）
+        // 若标题依然是通用打卡且有具体菜品项，提炼所有食材名称作为兜底标题（绝不粗暴缩略为“等几项”）
         if ((content == '餐品打卡' || content.endsWith('打卡')) &&
             breakdownItems != null &&
             breakdownItems.isNotEmpty) {
-          final names = breakdownItems.map((e) => e.name).where((n) => n.isNotEmpty).take(3).join('、');
+          final names = breakdownItems.map((e) => e.name).where((n) => n.isNotEmpty).join('、');
           if (names.isNotEmpty) {
-            content = breakdownItems.length > 3 ? '$names等' : names;
+            content = names;
           }
         }
 
@@ -276,17 +301,23 @@ class SyncService {
       }
 
       _lastSyncAt = DateTime.now().millisecondsSinceEpoch;
+      lastSyncError = null;
       final prefs = await SharedPreferences.getInstance();
       await prefs.setInt(_keyLastSyncAt, _lastSyncAt);
 
       return ackIds.length;
     } on DioException catch (e) {
       if (e.response?.statusCode == 401) {
+        lastSyncError = '登录凭据已失效，请重新登录';
         await logout();
+      } else if (e.response?.statusCode == 530) {
+        lastSyncError = 'Cloudflare 隧道离线 (530)，微服务重连中';
+      } else {
+        lastSyncError = '网络请求异常 (${e.response?.statusCode ?? e.type.name})';
       }
       return 0;
-    } catch (_) {
-      // 网络或服务器异常静默跳过，绝不阻断 App 运行
+    } catch (e) {
+      lastSyncError = '同步异常: $e';
       return 0;
     }
   }

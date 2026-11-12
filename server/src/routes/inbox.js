@@ -159,19 +159,45 @@ export default async function inboxRoutes(fastify, options) {
     let finalItems = bodyItems;
     let finalSlot = bodySlot;
 
-    // 若未预先结构化，回退使用本地高精度文本解析器提取
-    if (!finalContent || finalCalories === undefined) {
+    // 若未完全预先结构化，回退使用本地高精度文本解析器补全缺失字段
+    if (!finalContent || finalCalories === undefined || !finalItems || finalItems.length === 0) {
       const parsed = parseMealText(text);
-      finalContent = parsed.content;
-      finalCalories = parsed.calories;
-      finalProtein = parsed.protein;
-      finalCarbs = parsed.carbs;
-      finalFat = parsed.fat;
-      finalItems = parsed.items;
-      finalSlot = parsed.slot;
+      if (!finalContent) {
+        finalContent = parsed.content;
+      }
+      if (finalCalories === undefined) {
+        finalCalories = parsed.calories;
+      }
+      if (finalProtein === null || finalProtein === undefined) {
+        finalProtein = parsed.protein;
+      }
+      if (finalCarbs === null || finalCarbs === undefined) {
+        finalCarbs = parsed.carbs;
+      }
+      if (finalFat === null || finalFat === undefined) {
+        finalFat = parsed.fat;
+      }
+      if (!finalItems || finalItems.length === 0) {
+        finalItems = parsed.items;
+      }
+      if (!finalSlot) {
+        finalSlot = parsed.slot;
+      }
     }
 
     if (!finalSlot) finalSlot = 'lunch';
+
+    // 如果 content 中尚未包含食材明细，且具备食材项列表，智能追加食材明细行，确保输入框内容详尽完备
+    if (finalItems && finalItems.length > 0 && finalContent && !finalContent.includes('食材明细')) {
+      const itemStrings = finalItems.map(it => {
+        const p = it.portion ? ` (${it.portion})` : '';
+        return `${it.name}${p}`;
+      });
+      // 避免重复追加
+      if (!finalContent.includes(finalItems[0].name)) {
+        finalContent = `${finalContent}\n食材明细：${itemStrings.join('、')}`;
+      }
+    }
 
     // 本地日期 (避免 UTC 导致的东八区早 8 点前跨天问题)
     const d = new Date();
