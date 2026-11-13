@@ -43,7 +43,7 @@ class AppUpdateService {
   AppUpdateService._();
   static final AppUpdateService instance = AppUpdateService._();
 
-  static const String currentVersion = '1.5.1';
+  static const String currentVersion = '1.5.2';
   static const String defaultRepo = 'MrcolorH/plan-maker-manager-flutter';
   static const MethodChannel _channel = MethodChannel('com.colorh.jianfei_dazi/backup');
 
