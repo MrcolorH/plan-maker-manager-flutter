@@ -36,6 +36,19 @@ class RecordProvider extends ChangeNotifier {
     _deduplicateAllDayEntries();
   }
 
+  /// 智能清洗指定日期（或今日）的重复脏数据并自动固化
+  bool cleanDuplicates(String date) {
+    final list = store.dayEntries[date];
+    if (list == null || list.isEmpty) return false;
+    if (_deduplicateDayEntriesInPlace(date, list)) {
+      _persistEntries();
+      _persistCheck();
+      notifyListeners();
+      return true;
+    }
+    return false;
+  }
+
   /// 扫描清洗存量脏数据：对所有日期快照执行去重合并，防止历史重复计划项残留
   void _deduplicateAllDayEntries() {
     var dirty = false;
@@ -46,6 +59,7 @@ class RecordProvider extends ChangeNotifier {
     });
     if (dirty) {
       _persistEntries();
+      _persistCheck();
     }
   }
 
@@ -285,6 +299,7 @@ class RecordProvider extends ChangeNotifier {
   bool _deduplicateDayEntriesInPlace(String date, List<DayEntry> list) {
     if (list.length <= 1) return false;
     final seenPlanKeys = <String, int>{};
+    final seenQqBotKeys = <String>{};
     final kept = <DayEntry>[];
     var changed = false;
 
@@ -360,6 +375,19 @@ class RecordProvider extends ChangeNotifier {
           kept.add(e);
         }
       } else {
+        // 场景 3：外部机器人/云端同步录入项 (source == 'qq_bot') 完全相同（同餐次、同内容、同热量）的重复脏数据 → 自动清洗去重
+        if (e.source == 'qq_bot') {
+          final firstLine = e.content.split('\n').first.trim();
+          final qqKey = '${e.slot}:${e.calories}:${firstLine.isNotEmpty ? firstLine : e.content}';
+          if (seenQqBotKeys.contains(qqKey)) {
+            changed = true;
+            // 清理多余重复项的打卡记录
+            final kE = checkKeyOf(e);
+            store.checkRecords[date]?.remove(kE);
+            continue;
+          }
+          seenQqBotKeys.add(qqKey);
+        }
         kept.add(e);
       }
     }

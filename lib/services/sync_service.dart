@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -17,14 +18,15 @@ class SyncService {
   static const String _keyToken = 'cloud_sync_token';
   static const String _keyUsername = 'cloud_sync_username';
   static const String _keyLastSyncAt = 'cloud_sync_last_at';
+  static const String _keyProcessedInboxIds = 'cloud_sync_processed_inbox_ids';
 
   // 默认指向正式域名 (待解析生效后即连)，开发期可切换为本地 http://10.0.2.2:3000 或内网IP
   static const String defaultServerUrl = 'https://api.zhiqing.fun';
 
   final Dio _dio = Dio(
     BaseOptions(
-      connectTimeout: const Duration(seconds: 15),
-      receiveTimeout: const Duration(seconds: 15),
+      connectTimeout: const Duration(seconds: 8),
+      receiveTimeout: const Duration(seconds: 10),
     ),
   );
 
@@ -33,6 +35,12 @@ class SyncService {
   String _serverUrl = defaultServerUrl;
   int _lastSyncAt = 0;
   String? lastSyncError;
+
+  // 客户端已消费信箱 ID 集合 (内存 + 本地持久化，实现强幂等防重)
+  final Set<String> _processedInboxIds = {};
+
+  // 同步任务活跃 Future 锁 (单例防抖，并发时合并为一个请求)
+  Future<int>? _activeSyncFuture;
 
   bool get isLoggedIn => _token != null && _token!.isNotEmpty;
   String? get currentUsername => _username;
@@ -45,6 +53,19 @@ class SyncService {
     _token = prefs.getString(_keyToken);
     _username = prefs.getString(_keyUsername);
     _lastSyncAt = prefs.getInt(_keyLastSyncAt) ?? 0;
+    final savedIds = prefs.getStringList(_keyProcessedInboxIds);
+    if (savedIds != null) {
+      _processedInboxIds.addAll(savedIds);
+    }
+  }
+
+  Future<void> _saveProcessedInboxIds() async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = _processedInboxIds.toList();
+    if (list.length > 500) {
+      list.removeRange(0, list.length - 500);
+    }
+    await prefs.setStringList(_keyProcessedInboxIds, list);
   }
 
   Future<void> setServerUrl(String url) async {
@@ -165,8 +186,30 @@ class SyncService {
     RecordProvider recordProvider, {
     AiConfig? aiConfig,
     void Function(Map<String, dynamic>)? onUsage,
+  }) {
+    if (!isLoggedIn) return Future.value(0);
+
+    // 并发合并互斥锁：如果当前已有同步任务正在进行中，直接复用同一个 Future，杜绝并发竞争与重复拉取
+    if (_activeSyncFuture != null) {
+      return _activeSyncFuture!;
+    }
+
+    final future = _doSyncInboxToLocal(
+      recordProvider,
+      aiConfig: aiConfig,
+      onUsage: onUsage,
+    );
+    _activeSyncFuture = future;
+    return future.whenComplete(() {
+      _activeSyncFuture = null;
+    });
+  }
+
+  Future<int> _doSyncInboxToLocal(
+    RecordProvider recordProvider, {
+    AiConfig? aiConfig,
+    void Function(Map<String, dynamic>)? onUsage,
   }) async {
-    if (!isLoggedIn) return 0;
     try {
       final res = await _dio.get(
         '$_serverUrl/api/v1/inbox/pending',
@@ -178,6 +221,7 @@ class SyncService {
       if (entriesData == null || entriesData.isEmpty) return 0;
 
       final ackIds = <String>[];
+      int newlyAddedCount = 0;
 
       for (final raw in entriesData) {
         if (raw is! Map) continue;
@@ -191,6 +235,26 @@ class SyncService {
         int? fat = item['fat'] as int?;
         final slot = item['slot'] as String? ?? 'lunch';
         final detail = item['detail'] as String?;
+
+        // 1. 本地信箱 ID 幂等去重检查：若本地已消费记录过，坚决跳过本地录入
+        if (_processedInboxIds.contains(id)) {
+          ackIds.add(id);
+          continue;
+        }
+
+        // 2. 本地记录内容与热量双重兜底去重：若当天已有完全相同的 QQ 机器人录入记录，跳过重复添加
+        final existingEntries = recordProvider.store.dayEntries[date] ?? [];
+        final firstLine = content.split('\n').first.trim();
+        final isDuplicated = existingEntries.any((e) =>
+            e.source == 'qq_bot' &&
+            e.slot == slot &&
+            e.calories == calories &&
+            (e.content == content || (firstLine.isNotEmpty && e.content.contains(firstLine))));
+        if (isDuplicated) {
+          _processedInboxIds.add(id);
+          ackIds.add(id);
+          continue;
+        }
 
         List<FoodBreakdownItem>? breakdownItems;
         if (item['items'] is List) {
@@ -287,17 +351,27 @@ class SyncService {
           autoCheck: true,
         );
 
-
+        _processedInboxIds.add(id);
         ackIds.add(id);
+        newlyAddedCount++;
       }
 
-      // 批量向服务端确认已消费
+      // 异步持久化已处理 ID 集合
+      if (_processedInboxIds.isNotEmpty) {
+        unawaited(_saveProcessedInboxIds());
+      }
+
+      // 批量向服务端确认已消费 (后台非阻塞静默发送，解耦下拉刷新等待，极速完成界面收起)
       if (ackIds.isNotEmpty) {
-        await _dio.post(
+        final toAck = List<String>.from(ackIds);
+        unawaited(_dio.post(
           '$_serverUrl/api/v1/inbox/ack',
-          data: {'ids': ackIds},
+          data: {'ids': toAck},
           options: _authOptions(),
-        );
+        ).catchError((e) {
+          debugPrint('[SyncService] 后台异步确认消费异常: $e');
+          return Response(requestOptions: RequestOptions(), statusCode: 500);
+        }));
       }
 
       _lastSyncAt = DateTime.now().millisecondsSinceEpoch;
@@ -305,7 +379,7 @@ class SyncService {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setInt(_keyLastSyncAt, _lastSyncAt);
 
-      return ackIds.length;
+      return newlyAddedCount;
     } on DioException catch (e) {
       if (e.response?.statusCode == 401) {
         lastSyncError = '登录凭据已失效，请重新登录';

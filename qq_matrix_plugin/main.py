@@ -11,7 +11,7 @@ import urllib.error
 SERVER_BASE = "http://127.0.0.1:3000"
 
 def check_service_status():
-    """检查微服务与公网隧道状态，若异常则自动无感唤醒 daemon 守护进程"""
+    """检查本地微服务状态，若未运行则唤醒守护进程"""
     local_ok = False
     try:
         with urllib.request.urlopen("http://127.0.0.1:3000/health", timeout=0.8) as r:
@@ -20,17 +20,8 @@ def check_service_status():
     except Exception:
         local_ok = False
 
-    public_ok = False
-    if local_ok:
-        try:
-            with urllib.request.urlopen("https://api.zhiqing.fun/health", timeout=1.0) as r:
-                if r.getcode() == 200:
-                    public_ok = True
-        except Exception:
-            public_ok = False
-
-    # 若任一服务未就绪，自动唤醒当前插件目录下的 daemon.sh 守护进程
-    if not local_ok or not public_ok:
+    # 若本地微服务未就绪，唤醒 daemon 守护进程拉起服务
+    if not local_ok:
         daemon_sh = os.path.join(os.path.dirname(os.path.abspath(__file__)), "daemon.sh")
         if os.path.exists(daemon_sh):
             try:
@@ -40,12 +31,11 @@ def check_service_status():
                     stderr=subprocess.DEVNULL,
                     preexec_fn=os.setpgrp
                 )
-                for _ in range(6):
+                for _ in range(8):
                     time.sleep(0.5)
                     try:
-                        with urllib.request.urlopen("https://api.zhiqing.fun/health", timeout=0.8) as r:
+                        with urllib.request.urlopen("http://127.0.0.1:3000/health", timeout=0.8) as r:
                             if r.getcode() == 200:
-                                public_ok = True
                                 local_ok = True
                                 break
                     except Exception:
@@ -53,7 +43,7 @@ def check_service_status():
             except Exception:
                 pass
 
-    return local_ok, public_ok
+    return local_ok
 
 # 知轻中国营养学会专业营养师标准结构化转换提示词 (输入框保留完整菜名、做法与全部食材，不限字数，绝不省略)
 ZHIQING_AI_PROMPT = """你是中国营养学会专业营养师。请把用户输入的餐食描述及AI助手的长文估算回复，精准转换为标准的纯 JSON 对象，用于录入到“知轻”健康 App 的记录输入框中。
@@ -349,19 +339,7 @@ def handle_sync(qq_id, args, sender_name):
                         lines.append(f"  • {it.get('name')}{p_str}{c_str}")
 
                 lines.append("📝 做法与食材明细已完整保留。")
-                # 轻量探测一次公网隧道是否畅通 (超时 1.2s，不阻断主流程)
-                tunnel_ok = True
-                try:
-                    with urllib.request.urlopen("https://api.zhiqing.fun/health", timeout=1.2) as test_resp:
-                        if test_resp.getcode() != 200:
-                            tunnel_ok = False
-                except Exception:
-                    tunnel_ok = False
-
-                if tunnel_ok:
-                    lines.append("📱 打开手机知轻 App 首页（或下拉刷新），即可自动同步入账✨")
-                else:
-                    lines.append("⚠️ 数据已安全暂存本机信箱，公网隧道正自动自愈中，稍后打开 App 下拉刷新即可完成入账✨")
+                lines.append("📱 打开手机知轻 App 首页（或下拉刷新），即可自动同步入账✨")
                 print("\n".join(lines))
             else:
                 note = data.get("note", "导入失败")

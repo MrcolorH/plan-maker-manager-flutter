@@ -150,6 +150,7 @@ class TodayPage extends StatelessWidget {
       child: RefreshIndicator(
         onRefresh: () async {
           context.read<AppProvider>().refreshToday();
+          context.read<RecordProvider>().cleanDuplicates(today);
           await SyncService().syncInboxToLocal(
             context.read<RecordProvider>(),
             aiConfig: context.read<SettingsProvider>().settings.ai,
