@@ -54,10 +54,78 @@ ZHIQING_AI_PROMPT = """你是中国营养学会专业营养师。请把用户输
    - 坚决剔除：任何 AI 客套寒暄与问候（如“这道菜很健康”、“萌萌这就帮主人整理出来啦”、“👉 请核对以上识别是否有误”等）、中间折算计算说明、以及营养建议废话；
    - 严禁粗暴缩略为“xxxx等几项”！
 2. items 数组包含所有独立食材项（含烹调油、面条、肉类、蔬菜、主食等）及该项热量；
-3. 输出总热量整数（kcal）、蛋白质（g）、碳水化合物（g）、脂肪（g）。
+3. 输出总热量整数（kcal）、蛋白质（g）、碳水化合物（g）、脂肪（g）；
+4. slot 字段：根据用户描述中的餐次时间词（如早/中/晚/下午茶/夜宵）或食物属性（如奶茶/咖啡/小零食/水果等加餐）智能判定为 "breakfast"、"lunch"、"dinner" 或 "snack"。
 
 严格只返回一个标准 JSON 对象，不要输出任何其他文字、解释或 markdown 代码块：
-{"name":"规范菜名","content":"输入框完整详实描述（含菜名、做法步骤与具体食材清单）","calories":总热量整数kcal,"protein":蛋白质整数g,"carbs":碳水整数g,"fat":脂肪整数g,"items":[{"name":"食物名","portion":"重量或份量","calories":该项热量整数}],"detail":"一句话拆解"}"""
+{"name":"规范菜名","slot":"breakfast|lunch|dinner|snack","content":"输入框完整详实描述（含菜名、做法步骤与具体食材清单）","calories":总热量整数kcal,"protein":蛋白质整数g,"carbs":碳水整数g,"fat":脂肪整数g,"items":[{"name":"食物名","portion":"重量或份量","calories":该项热量整数}],"detail":"一句话拆解"}"""
+
+def _resolve_meal_slot(cmd="", args="", ai_slot=None, candidate_text="", user_raw=""):
+    """
+    按三级优先级判定餐次 slot (breakfast / lunch / dinner / snack):
+    1. 第一级（显式指令优先）：检测 cmd 或 args 开头关键词
+       含 '早' -> breakfast
+       含 '午' 或 '中' -> lunch
+       含 '晚' -> dinner
+       含 '加餐' 或 '零食' -> snack
+    2. 第二级（AI 语义识别）：若一级未指定且 ai_slot 合法，则采用该值
+    3. 第三级（本地当前时间兜底）：
+       05:00 ~ 10:29 -> breakfast
+       10:30 ~ 14:29 -> lunch
+       14:30 ~ 16:59 -> snack
+       17:00 ~ 20:59 -> dinner
+       21:00 ~ 04:59 -> snack
+    """
+    valid_slots = {"breakfast", "lunch", "dinner", "snack"}
+
+    def _match_keyword(text):
+        if not text:
+            return None
+        t = text.lower().strip()
+        # 优先检测加餐/零食，避免与正餐冲突
+        if "加餐" in t or "零食" in t:
+            return "snack"
+        if "早" in t:
+            return "breakfast"
+        if "午" in t or "中" in t:
+            return "lunch"
+        if "晚" in t:
+            return "dinner"
+        return None
+
+    # 第一级：检测 cmd
+    slot = _match_keyword(cmd)
+    if slot:
+        return slot
+
+    # 检测 args 开头关键词 (前 15 字符或第一个分词)
+    if args:
+        first_word = args.strip().split()[0] if args.strip() else ""
+        slot = _match_keyword(first_word)
+        if slot:
+            return slot
+        if len(args.strip()) <= 15:
+            slot = _match_keyword(args.strip())
+            if slot:
+                return slot
+
+    # 第二级：AI 语义识别结果
+    if ai_slot and str(ai_slot).lower().strip() in valid_slots:
+        return str(ai_slot).lower().strip()
+
+    # 第三级：本地当前系统时间兜底
+    now = time.localtime()
+    minutes = now.tm_hour * 60 + now.tm_min
+    if 300 <= minutes <= 629:      # 05:00 ~ 10:29
+        return "breakfast"
+    elif 630 <= minutes <= 869:    # 10:30 ~ 14:29
+        return "lunch"
+    elif 870 <= minutes <= 1019:   # 14:30 ~ 16:59
+        return "snack"
+    elif 1020 <= minutes <= 1259:  # 17:00 ~ 20:59
+        return "dinner"
+    else:                          # 21:00 ~ 04:59
+        return "snack"
 
 def get_last_user_message(qq_id):
     """从 QQMatrix 运行日志中检索用户最近发送的一条真实餐品做法或食物描述"""
@@ -118,33 +186,73 @@ def convert_via_ai(text, user_raw=""):
     if not text or len(text.strip()) < 10:
         return None
 
-    agy_path = "/Users/colorh/.local/bin/agy"
-    home_dir = os.path.expanduser("~")
-    if not os.path.exists(agy_path):
-        return None
-
     user_ctx = f"\n用户原始输入/做菜描述：{user_raw}" if user_raw else ""
     full_prompt = f"{ZHIQING_AI_PROMPT}\n\n待转换的餐品描述与估算回复：{user_ctx}\n{text.strip()}"
-    env = os.environ.copy()
-    env["HOME"] = home_dir
+
+    # 1. 优先调用本地 AI 网关 (QQMatrix Gemini Sidecar / OpenAI 兼容接口，响应仅需 3~6 秒)
+    api_url = "http://127.0.0.1:8080/v1/chat/completions"
+    api_model = "gemini-4-hydrogen"
+    config_path = os.path.expanduser("~/.qqmatrix/config.json")
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+                base = cfg.get("apiBaseUrl", "").rstrip("/")
+                if base:
+                    api_url = f"{base}/chat/completions"
+                api_model = cfg.get("apiModel") or api_model
+        except Exception:
+            pass
 
     try:
-        res = subprocess.run(
-            [agy_path, "-p", full_prompt, "--dangerously-skip-permissions"],
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=15
+        req_data = {
+            "model": api_model,
+            "user": "zhiqing_sync",
+            "messages": [{"role": "user", "content": full_prompt}],
+            "temperature": 0.2
+        }
+        req = urllib.request.Request(
+            api_url,
+            data=json.dumps(req_data).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST"
         )
-        if res.returncode == 0 and res.stdout:
-            out = res.stdout.strip()
-            m = re.search(r'\{[\s\S]*\}', out)
-            if m:
-                obj = json.loads(m.group(0))
-                if isinstance(obj, dict) and "calories" in obj:
-                    return obj
+        with urllib.request.urlopen(req, timeout=25) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            choices = data.get("choices", [])
+            if choices:
+                out = choices[0].get("message", {}).get("content", "")
+                m = re.search(r'\{[\s\S]*\}', out)
+                if m:
+                    obj = json.loads(m.group(0))
+                    if isinstance(obj, dict) and "calories" in obj:
+                        return obj
     except Exception:
         pass
+
+    # 2. 回退调用 agy CLI
+    agy_path = "/Users/colorh/.local/bin/agy"
+    home_dir = os.path.expanduser("~")
+    if os.path.exists(agy_path):
+        env = os.environ.copy()
+        env["HOME"] = home_dir
+        try:
+            res = subprocess.run(
+                [agy_path, "-p", full_prompt, "--dangerously-skip-permissions"],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            if res.returncode == 0 and res.stdout:
+                out = res.stdout.strip()
+                m = re.search(r'\{[\s\S]*\}', out)
+                if m:
+                    obj = json.loads(m.group(0))
+                    if isinstance(obj, dict) and "calories" in obj:
+                        return obj
+        except Exception:
+            pass
 
     return None
 
@@ -261,7 +369,7 @@ def handle_bind(qq_id, args):
     except Exception:
         print("⚠️ 无法连接到本地知轻服务端，请确保知轻微服务已启动 (127.0.0.1:3000)")
 
-def handle_sync(qq_id, args, sender_name):
+def handle_sync(qq_id, args, sender_name, cmd=""):
     # 候选文本提取优先级：
     # 1. 显式引用回复的消息 (QQMATRIX_QUOTED_TEXT)
     # 2. 会话历史中助手的上一条消息 (QQMATRIX_PRECEDING_TEXT)
@@ -277,37 +385,43 @@ def handle_sync(qq_id, args, sender_name):
     # 1. 检索用户最近输入的一条真实菜品与做法描述 (如："两个番茄两个鸡蛋5g油炒...")
     user_raw_desc = get_last_user_message(qq_id)
 
-    # 2. 尝试套用知轻专业提示词交由 AI 完成高精度结构化转换
+    # 2. 套用知轻专业提示词交由 AI 完成高精度结构化转换
     ai_result = convert_via_ai(candidate_text, user_raw=user_raw_desc)
 
-    # 3. 组装发送给知轻云端服务的负载
+    if not ai_result:
+        print("❌ AI 结构化解析失败：未能成功将餐品估算长文转换为有效营养数据，已取消本次导入。请检查大模型网关状态后重试。")
+        return
+
+    # 3. 智能判定餐次 slot (显式指令 > AI语义 > 当前时间兜底)
+    ai_slot = ai_result.get("slot") if ai_result else None
+    resolved_slot = _resolve_meal_slot(cmd, args, ai_slot, candidate_text, user_raw_desc)
+
+    # 4. 组装发送给知轻云端服务的负载 (纯由 AI 结构化解析结果与 slot 判定驱动)
     url = f"{SERVER_BASE}/internal/hooks/skill-exit"
+    meal_name = ai_result.get("name") or ""
+    content_text = ai_result.get("content") or ""
+    if meal_name and not content_text.startswith(f"【{meal_name}】"):
+        rich_content = f"【{meal_name}】\n{content_text}".strip()
+    else:
+        rich_content = content_text or meal_name or "餐品打卡"
+
     payload_dict = {
         "event": "skill_exit",
         "skillId": "zhiqing_import_cloud",
         "userId": qq_id,
         "senderName": sender_name,
         "lastUserMessage": "导入知轻",
-        "lastAssistantMessage": candidate_text
+        "lastAssistantMessage": candidate_text,
+        "slot": resolved_slot,
+        "content": rich_content,
+        "calories": ai_result.get("calories", 0),
+        "protein": ai_result.get("protein", 0),
+        "carbs": ai_result.get("carbs", 0),
+        "fat": ai_result.get("fat", 0),
+        "items": ai_result.get("items", []),
     }
-
-    if ai_result:
-        # 优先使用 AI 生成的完整输入框描述 (包含菜名、做法步骤、具体食材)
-        rich_content = ai_result.get("content") or build_rich_content_local(candidate_text, user_raw_desc, ai_result.get("items"))
-        payload_dict["content"] = rich_content
-        payload_dict["calories"] = ai_result.get("calories")
-        payload_dict["protein"] = ai_result.get("protein")
-        payload_dict["carbs"] = ai_result.get("carbs")
-        payload_dict["fat"] = ai_result.get("fat")
-        payload_dict["items"] = ai_result.get("items")
-        if ai_result.get("detail"):
-            payload_dict["detail"] = ai_result.get("detail")
-    else:
-        # AI 超时或不可用时，使用本地算法构建完整的输入框描述并传递给服务端
-        # 先快速调一次本地正则提取 items
-        from urllib.parse import urljoin
-        # 组装本地富文本
-        payload_dict["content"] = build_rich_content_local(candidate_text, user_raw_desc, None)
+    if ai_result.get("detail"):
+        payload_dict["detail"] = ai_result.get("detail")
 
     payload = json.dumps(payload_dict).encode("utf-8")
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
@@ -318,15 +432,23 @@ def handle_sync(qq_id, args, sender_name):
             if data.get("success"):
                 entry = data.get("entry") or {}
                 content_text = entry.get("content") or payload_dict.get("content") or "餐品打卡"
+                final_slot = entry.get("slot") or resolved_slot
                 cal = entry.get("calories") if entry.get("calories") is not None else payload_dict.get("calories", 0)
                 p = entry.get("protein") if entry.get("protein") is not None else payload_dict.get("protein", 0)
                 f = entry.get("fat") if entry.get("fat") is not None else payload_dict.get("fat", 0)
                 c = entry.get("carbs") if entry.get("carbs") is not None else payload_dict.get("carbs", 0)
                 items = entry.get("items") or payload_dict.get("items") or []
 
+                slot_cn_names = {
+                    "breakfast": "早餐",
+                    "lunch": "午餐",
+                    "dinner": "晚餐",
+                    "snack": "加餐"
+                }
+                slot_title = slot_cn_names.get(final_slot, "餐品")
                 first_line = content_text.splitlines()[0] if content_text else "餐品打卡"
                 lines = [
-                    f"🎉 成功导入知轻！",
+                    f"🎉 成功导入知轻【{slot_title}】！",
                     f"{first_line}",
                     f"🔥 总热量：{cal} kcal",
                     f"🥩 蛋白质：{p}g | 🧈 脂肪：{f}g | 🍚 碳水：{c}g"
@@ -369,7 +491,13 @@ def main():
             cmd = first_arg.lower()
 
     bind_commands = ["bind", "绑定"]
-    sync_commands = ["sync", "导入", "导入知轻", "同步知轻", "记入知轻", "导入云端", "同步到知轻", "导入知青", "同步知青", "记入知青"]
+    sync_commands = [
+        "sync", "导入", "导入知轻", "同步知轻", "记入知轻", "导入云端", "同步到知轻", "导入知青", "同步知青", "记入知青",
+        "导入早餐", "记入早餐", "同步早餐",
+        "导入午餐", "记入午餐", "同步午餐", "导入中饭", "记入中饭",
+        "导入晚餐", "记入晚餐", "同步晚餐", "导入晚饭", "记入晚饭",
+        "导入加餐", "记入加餐", "同步加餐"
+    ]
     invite_commands = ["invite", "邀请码", "生成邀请码", "创建邀请码"]
 
     if cmd in bind_commands:
@@ -377,12 +505,12 @@ def main():
     elif cmd in invite_commands or any(cmd.startswith(s) for s in invite_commands):
         handle_invite(qq_id, args)
     elif cmd in sync_commands or any(cmd.startswith(s) for s in sync_commands):
-        handle_sync(qq_id, args, sender_name)
+        handle_sync(qq_id, args, sender_name, cmd=cmd)
     else:
         if args.isdigit() and len(args) == 6:
             handle_bind(qq_id, args)
         else:
-            handle_sync(qq_id, args, sender_name)
+            handle_sync(qq_id, args, sender_name, cmd=cmd)
 
 if __name__ == "__main__":
     main()

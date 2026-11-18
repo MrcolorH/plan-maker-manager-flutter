@@ -616,6 +616,206 @@ class RecordProvider extends ChangeNotifier {
     await _persistEntries();
   }
 
+  /// 导入外部餐食条目（如 QQ 机器人同步）：
+  /// 1. 正餐（breakfast/lunch/dinner）：
+  ///    - 优先匹配当天未替换的同餐次计划餐（!detached），执行核销替换，保持 source: 'plan' 并自动打卡；
+  ///    - 若已替换（detached），执行同餐次二次追加合并（累加数值、拼接内容与明细）；
+  ///    - 若无计划但存在同餐次空白正餐骨架，填充该骨架并自动打卡；
+  /// 2. 加餐（snack）或无匹配项：
+  ///    - 作为计划外加餐直接新增条目并自动打卡。
+  Future<void> importExternalMealEntry(
+    String date, {
+    required String slot,
+    required String content,
+    required int calories,
+    int? protein,
+    int? carbs,
+    int? fat,
+    String? detail,
+    List<FoodBreakdownItem>? items,
+    String source = 'qq_bot',
+  }) async {
+    final normSlot = slot.toLowerCase().trim();
+    final isMainMeal = normSlot == 'breakfast' || normSlot == 'lunch' || normSlot == 'dinner';
+
+    if (isMainMeal) {
+      final list = store.dayEntries.putIfAbsent(date, () => []);
+
+      // 1. 查找当天同餐次的计划餐：优先未脱钩（!detached），次选已脱钩（detached）
+      final unDetachedIdx = list.indexWhere(
+        (e) => e.isPlan && e.kind == 'meal' && e.slot == normSlot && !e.detached,
+      );
+
+      if (unDetachedIdx != -1) {
+        // 2. 首次核销替换：必须保留 id, planItemId, slot, time 且保持 source: 'plan'
+        final old = list[unDetachedIdx];
+        final oldPlanContent = old.content.trim();
+        final noteText = oldPlanContent.isNotEmpty
+            ? 'QQ机器人同步（原计划：$oldPlanContent）'
+            : 'QQ机器人同步';
+
+        list[unDetachedIdx] = DayEntry(
+          id: old.id,
+          kind: 'meal',
+          slot: normSlot,
+          time: old.time.isNotEmpty ? old.time : nowTimeStr(),
+          content: content,
+          calories: calories,
+          protein: protein,
+          carbs: carbs,
+          fat: fat,
+          note: noteText,
+          source: 'plan', // 保持 plan 身份以确保参与完成度计算
+          planItemId: old.planItemId,
+          detached: true,
+          caloriesDirty: true,
+          detail: detail,
+          items: items,
+        );
+
+        // 自动写入计划打卡记录
+        final checkMap = store.checkRecords.putIfAbsent(date, () => {});
+        checkMap['meal:${old.planItemId}'] = CheckEntry(
+          checkedAt: DateTime.now().millisecondsSinceEpoch,
+        );
+        await _persistCheck();
+
+        sortDayEntries(list);
+        notifyListeners();
+        await _persistEntries();
+        return;
+      }
+
+      final detachedIdx = list.indexWhere(
+        (e) => e.isPlan && e.kind == 'meal' && e.slot == normSlot && e.detached,
+      );
+
+      if (detachedIdx != -1) {
+        // 3. 同餐次二次追加合并：多段录入不覆盖，累加数值并拼接内容
+        final old = list[detachedIdx];
+        final mergedContent = old.content.trim().isNotEmpty
+            ? '${old.content}\n$content'
+            : content;
+        final mergedCalories = (old.calories ?? 0) + calories;
+
+        final mergedProtein = (old.protein != null || protein != null)
+            ? ((old.protein ?? 0) + (protein ?? 0))
+            : null;
+        final mergedCarbs = (old.carbs != null || carbs != null)
+            ? ((old.carbs ?? 0) + (carbs ?? 0))
+            : null;
+        final mergedFat = (old.fat != null || fat != null)
+            ? ((old.fat ?? 0) + (fat ?? 0))
+            : null;
+
+        List<FoodBreakdownItem>? mergedItems;
+        if (old.items != null || items != null) {
+          mergedItems = [
+            if (old.items != null) ...old.items!,
+            if (items != null) ...items,
+          ];
+        }
+
+        String? mergedDetail;
+        if (old.detail != null && old.detail!.isNotEmpty) {
+          if (detail != null && detail.isNotEmpty) {
+            mergedDetail = '${old.detail}\n$detail';
+          } else {
+            mergedDetail = old.detail;
+          }
+        } else {
+          mergedDetail = detail;
+        }
+
+        list[detachedIdx] = DayEntry(
+          id: old.id,
+          kind: 'meal',
+          slot: normSlot,
+          time: old.time.isNotEmpty ? old.time : nowTimeStr(),
+          content: mergedContent,
+          calories: mergedCalories,
+          protein: mergedProtein,
+          carbs: mergedCarbs,
+          fat: mergedFat,
+          note: old.note.isNotEmpty ? old.note : 'QQ机器人同步',
+          source: 'plan',
+          planItemId: old.planItemId,
+          detached: true,
+          caloriesDirty: true,
+          detail: mergedDetail,
+          items: mergedItems,
+        );
+
+        // 保持打卡状态为已打卡
+        final checkMap = store.checkRecords.putIfAbsent(date, () => {});
+        checkMap['meal:${old.planItemId}'] ??= CheckEntry(
+          checkedAt: DateTime.now().millisecondsSinceEpoch,
+        );
+        await _persistCheck();
+
+        sortDayEntries(list);
+        notifyListeners();
+        await _persistEntries();
+        return;
+      }
+
+      // 4. 无计划骨架填充：若当天无计划，但存在同餐次的空白正餐骨架
+      final blankIdx = list.indexWhere(
+        (e) => !e.isPlan && e.kind == 'meal' && e.slot == normSlot && e.content.trim().isEmpty && e.calories == null,
+      );
+
+      if (blankIdx != -1) {
+        final blank = list[blankIdx];
+        list[blankIdx] = DayEntry(
+          id: blank.id,
+          kind: 'meal',
+          slot: normSlot,
+          time: blank.time.isNotEmpty ? blank.time : nowTimeStr(),
+          content: content,
+          calories: calories,
+          protein: protein,
+          carbs: carbs,
+          fat: fat,
+          note: 'QQ机器人同步',
+          source: source,
+          planItemId: '',
+          detached: true,
+          caloriesDirty: true,
+          detail: detail,
+          items: items,
+        );
+
+        final checkMap = store.checkRecords.putIfAbsent(date, () => {});
+        checkMap['temp:${blank.id}'] = CheckEntry(
+          checkedAt: DateTime.now().millisecondsSinceEpoch,
+        );
+        await _persistCheck();
+
+        sortDayEntries(list);
+        notifyListeners();
+        await _persistEntries();
+        return;
+      }
+    }
+
+    // 分支 B：加餐（snack）或上述条件均未命中时，直接作为新条目新增并自动打卡
+    await addDayEntry(
+      date,
+      kind: 'meal',
+      slot: normSlot.isNotEmpty ? normSlot : 'snack',
+      content: content,
+      calories: calories,
+      protein: protein,
+      carbs: carbs,
+      fat: fat,
+      note: 'QQ机器人同步',
+      source: source,
+      detail: detail,
+      items: items,
+      autoCheck: true,
+    );
+  }
+
   /// 更新某天某条快照的内容（编辑弹窗保存）；不触碰打卡状态（由调用方决定是否 toggleCheck）
   Future<void> updateDayEntry(String date, DayEntry updated) async {
     final list = store.dayEntries[date];

@@ -45,6 +45,25 @@ const textSingleLine = `盘子里的菜品萌萌看清楚啦，按份量帮主�
 // Case 3: 逗号分隔单行 (历史格式)
 const textCommaLine = `经过分析，本餐菜品：米饭 150g (175 kcal), 煎鸡胸肉 150g (300 kcal), 炒绿豆芽 100g (50 kcal)。预估【总热量】: 525 kcal，三大营养素配比均衡。`;
 
+// Case 4: 带有问候语包含“营养成分”与“三大宏量营养素总量”的案例
+const textGreetingWithNutrient = `主人还加了半份外卖米饭呀~ 
+
+萌萌马上把米饭补上，重新给主人算一下这顿饭的总热量和营养成分哦：
+
+1. 番茄炒鸡蛋：约 180克 | 预估热量 185 大卡 | 蛋白质 9.2克 / 脂肪 12.5克 / 碳水 7.0克
+2. 糖醋里脊：约 120克 | 预估热量 310 大卡 | 蛋白质 15.0克 / 脂肪 16.0克 / 碳水 24.0克
+3. 香酥鸡块：约 100克 | 预估热量 280 大卡 | 蛋白质 16.0克 / 脂肪 18.0克 / 碳水 12.0克
+4. 蒸蛋羹：约 150克 | 预估热量 120 大卡 | 蛋白质 8.5克 / 脂肪 7.0克 / 碳水 4.5克
+5. 外卖米饭（半份）：约 100克 | 预估热量 116 大卡 | 蛋白质 2.6克 / 脂肪 0.3克 / 碳水 25.5克
+
+本餐预估总热量约为 1011 大卡
+三大宏量营养素总量：蛋白质约 51.3克，脂肪约 53.8克，碳水化合物约 73.0克
+
+萌萌小贴士：
+加上米饭后，碳水和总热量就更充足啦！这一顿蛋白质满满，能量绝对管够。
+
+👉 请核对以上识别是否有误？如果您知道某道菜或整盒饭菜的实际称重（克数），也可以告诉我，我将按真实重量为您重新精细计算！`;
+
 console.log('--- 测试 Case 1 (跨行块模式) ---');
 const res1 = parseMealText(textMultiLine);
 console.log('Result 1:', JSON.stringify(res1, null, 2));
@@ -56,3 +75,13 @@ console.log('Result 2:', JSON.stringify(res2, null, 2));
 console.log('--- 测试 Case 3 (逗号分隔单行) ---');
 const res3 = parseMealText(textCommaLine);
 console.log('Result 3:', JSON.stringify(res3, null, 2));
+
+console.log('--- 测试 Case 4 (开头问候含“营养成分” + 5项菜品 + 三大宏量总量) ---');
+const res4 = parseMealText(textGreetingWithNutrient);
+console.log('Result 4:', JSON.stringify(res4, null, 2));
+assert.strictEqual(res4.items.length, 5, '应该识别出 5 项菜品');
+assert.strictEqual(res4.calories, 1011, '总热量应为 1011');
+assert.strictEqual(res4.protein, 51, '蛋白质应为 51g');
+assert.strictEqual(res4.fat, 54, '脂肪应为 54g');
+assert.strictEqual(res4.carbs, 73, '碳水应为 73g');
+console.log('✅ Case 4 测试完全通过！');

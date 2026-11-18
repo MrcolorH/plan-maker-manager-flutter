@@ -91,12 +91,28 @@ export function parseMealText(text) {
   }
 
   // 截取总结段与清单段 (兼容带与不带【】方括号的各类总计与小结格式)
+  // 注意：必须避免误命中开头问候寒暄（如“重新给主人算一下这顿饭的总热量和营养成分哦：”）
+  // 总结段必须出现在第一个食物块/菜品之后，或者位于明确的独立换行处
   let foodListSection = clean;
   let summarySection = '';
-  const summarySplit = clean.search(/(?:(?:【?\s*(?:总计|营养小结|营养总计|营养数据|营养成分|营养分析|总结|小结|整餐统计|三大营养素|三大宏量|宏量数据)(?:与[^\n:：]+)?\s*】?[:：]?)|小结与建议|这一餐的搭配|👉)/i);
-  if (summarySplit !== -1) {
-    foodListSection = clean.substring(0, summarySplit).trim();
-    summarySection = clean.substring(summarySplit).trim();
+
+  // 1. 查找第一个可能出现的菜品/食物条目序号位置 (如 1. 2. 等)
+  let firstItemIdx = -1;
+  const firstBlockMatch = clean.match(/(?:^|\n)\s*(?:\d+[\.、]|\([0-9]+\)|（[0-9]+）)\s*/);
+  if (firstBlockMatch) {
+    firstItemIdx = firstBlockMatch.index;
+  }
+
+  // 2. 总结段起始标识（必须在换行处，或带【】包围，或是“本餐预估总热量/三大宏量”等明确汇总结尾）
+  const summaryHeaderRegex = /(?:^|\n)\s*(?:[-—]{2,}\s*)?(?:【\s*(?:总计|营养小结|营养总计|营养数据|整餐统计|三大营养素|三大宏量|宏量数据|修正后)[^】]*】|(?:本餐|整餐|本次)?(?:预估总热量|总热量预估|预估总计|修正后总计|总计与营养小结|营养小结|三大宏量营养素总量|三大营养素总量|三大宏量总量|三大宏量|三大营养素|整餐统计|小结与建议|总热量|总计)(?:[:：约约为\s]|$)|👉)/i;
+
+  const searchStart = firstItemIdx >= 0 ? firstItemIdx : 0;
+  const subText = clean.substring(searchStart);
+  const matchSum = subText.match(summaryHeaderRegex);
+  if (matchSum) {
+    const splitIndex = searchStart + matchSum.index;
+    foodListSection = clean.substring(0, splitIndex).trim();
+    summarySection = clean.substring(splitIndex).trim();
   }
 
   // 2. 提取三大营养素 (优先从总结段提取，若未找到则回退到全文匹配)
@@ -107,11 +123,22 @@ export function parseMealText(text) {
   function extractMacrosFromText(sourceText) {
     let p = 0, c = 0, f = 0;
     if (!sourceText) return { p, c, f };
-    const pMatch = sourceText.match(/(?:蛋白质|蛋白|P)\s*[:：约约为\s]*(\d+(?:\.\d+)?)\s*g?/i);
+
+    // 优先匹配显式的总量描述行 (如 "三大宏量营养素总量：蛋白质约 51.3克，脂肪约 53.8克，碳水化合物约 73.0克")
+    const totalLineMatch = sourceText.match(/(?:三大宏量|三大营养素|宏量营养素|宏量总量|总量|总计|修正后)[^\n]*?(?:蛋白质|蛋白|P)\s*[:：约约为\s]*(\d+(?:\.\d+)?)\s*g?[，,、/|\s]*(?:脂肪|油脂|F)\s*[:：约约为\s]*(\d+(?:\.\d+)?)\s*g?[，,、/|\s]*(?:碳水化合物|碳水|C)\s*[:：约约为\s]*(\d+(?:\.\d+)?)\s*g?/i);
+    if (totalLineMatch) {
+      return {
+        p: Math.round(parseFloat(totalLineMatch[1])),
+        f: Math.round(parseFloat(totalLineMatch[2])),
+        c: Math.round(parseFloat(totalLineMatch[3]))
+      };
+    }
+
+    const pMatch = sourceText.match(/(?:蛋白质总量|总蛋白质|(?:^|\n)[^\n]*?(?:三大宏量|三大营养素|总计)[^\n]*?蛋白质|蛋白质|蛋白|P)\s*[:：约约为\s]*(\d+(?:\.\d+)?)\s*g?/i);
     if (pMatch) p = Math.round(parseFloat(pMatch[1]));
-    const cMatch = sourceText.match(/(?:碳水化合物|碳水|C)\s*[:：约约为\s]*(\d+(?:\.\d+)?)\s*g?/i);
+    const cMatch = sourceText.match(/(?:碳水总量|总碳水|(?:^|\n)[^\n]*?(?:三大宏量|三大营养素|总计)[^\n]*?碳水|碳水化合物|碳水|C)\s*[:：约约为\s]*(\d+(?:\.\d+)?)\s*g?/i);
     if (cMatch) c = Math.round(parseFloat(cMatch[1]));
-    const fMatch = sourceText.match(/(?:脂肪|油脂|F)\s*[:：约约为\s]*(\d+(?:\.\d+)?)\s*g?/i);
+    const fMatch = sourceText.match(/(?:脂肪总量|总脂肪|(?:^|\n)[^\n]*?(?:三大宏量|三大营养素|总计)[^\n]*?脂肪|脂肪|油脂|F)\s*[:：约约为\s]*(\d+(?:\.\d+)?)\s*g?/i);
     if (fMatch) f = Math.round(parseFloat(fMatch[1]));
     return { p, c, f };
   }
@@ -418,10 +445,16 @@ export function parseMealText(text) {
     }
   }
 
-  // 3. 校准三大宏量 (若宏量依然为 0，尝试使用子项累计作为兜底)
-  if (protein === 0 && itemProteinSum > 0) protein = itemProteinSum;
-  if (carbs === 0 && itemCarbsSum > 0) carbs = itemCarbsSum;
-  if (fat === 0 && itemFatSum > 0) fat = itemFatSum;
+  // 3. 校准三大宏量 (若宏量依然为 0，或总结提取值明显与子项累加严重偏离[误抓单菜品]，使用子项累计作为纠偏)
+  if (protein === 0 || (itemProteinSum > 0 && protein < itemProteinSum * 0.5)) {
+    if (itemProteinSum > 0) protein = Math.round(itemProteinSum);
+  }
+  if (carbs === 0 || (itemCarbsSum > 0 && carbs < itemCarbsSum * 0.5)) {
+    if (itemCarbsSum > 0) carbs = Math.round(itemCarbsSum);
+  }
+  if (fat === 0 || (itemFatSum > 0 && fat < itemFatSum * 0.5)) {
+    if (itemFatSum > 0) fat = Math.round(itemFatSum);
+  }
 
   // 4. 校准总热量
   if (calories === 0) {

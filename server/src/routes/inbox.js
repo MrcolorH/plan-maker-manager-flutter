@@ -150,6 +150,7 @@ export default async function inboxRoutes(fastify, options) {
     const bodyFat = request.body.fat;
     const bodyItems = request.body.items;
     const bodySlot = request.body.slot;
+    const validSlots = ['breakfast', 'lunch', 'dinner', 'snack'];
 
     let finalContent = bodyContent;
     let finalCalories = bodyCalories;
@@ -157,31 +158,35 @@ export default async function inboxRoutes(fastify, options) {
     let finalCarbs = bodyCarbs !== undefined ? bodyCarbs : null;
     let finalFat = bodyFat !== undefined ? bodyFat : null;
     let finalItems = bodyItems;
-    let finalSlot = bodySlot;
+    let finalSlot = (bodySlot && validSlots.includes(bodySlot)) ? bodySlot : null;
 
-    // 若未完全预先结构化，回退使用本地高精度文本解析器补全缺失字段
-    if (!finalContent || finalCalories === undefined || !finalItems || finalItems.length === 0) {
-      const parsed = parseMealText(text);
-      if (!finalContent) {
+    let parsed = null;
+    // 若餐次未有效提供，或未完全预先结构化，调用本地文本解析器
+    const needParse = !finalSlot ||
+      (!finalContent || finalCalories === undefined || !finalItems || finalItems.length === 0);
+
+    if (needParse) {
+      parsed = parseMealText(text);
+      if (!finalSlot && parsed && parsed.slot && validSlots.includes(parsed.slot)) {
+        finalSlot = parsed.slot;
+      }
+      if (!finalContent && parsed) {
         finalContent = parsed.content;
       }
-      if (finalCalories === undefined) {
+      if (finalCalories === undefined && parsed) {
         finalCalories = parsed.calories;
       }
-      if (finalProtein === null || finalProtein === undefined) {
+      if ((finalProtein === null || finalProtein === undefined) && parsed) {
         finalProtein = parsed.protein;
       }
-      if (finalCarbs === null || finalCarbs === undefined) {
+      if ((finalCarbs === null || finalCarbs === undefined) && parsed) {
         finalCarbs = parsed.carbs;
       }
-      if (finalFat === null || finalFat === undefined) {
+      if ((finalFat === null || finalFat === undefined) && parsed) {
         finalFat = parsed.fat;
       }
-      if (!finalItems || finalItems.length === 0) {
+      if ((!finalItems || finalItems.length === 0) && parsed) {
         finalItems = parsed.items;
-      }
-      if (!finalSlot) {
-        finalSlot = parsed.slot;
       }
     }
 
@@ -241,6 +246,7 @@ export default async function inboxRoutes(fastify, options) {
       note: summaryNote,
       entry: {
         id: entryId,
+        slot: finalSlot,
         content: finalContent,
         calories: finalCalories,
         protein: finalProtein || 0,

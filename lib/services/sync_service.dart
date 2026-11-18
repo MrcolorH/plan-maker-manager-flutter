@@ -246,7 +246,7 @@ class SyncService {
         final existingEntries = recordProvider.store.dayEntries[date] ?? [];
         final firstLine = content.split('\n').first.trim();
         final isDuplicated = existingEntries.any((e) =>
-            e.source == 'qq_bot' &&
+            (e.source == 'qq_bot' || (e.isPlan && e.detached && e.note.contains('QQ机器人'))) &&
             e.slot == slot &&
             e.calories == calories &&
             (e.content == content || (firstLine.isNotEmpty && e.content.contains(firstLine))));
@@ -335,10 +335,9 @@ class SyncService {
           }
         }
 
-        // 调用本地 RecordProvider 原生录入为事实源并自动打卡
-        await recordProvider.addDayEntry(
+        // 调用本地 RecordProvider 原生录入/核销替换并自动打卡
+        await recordProvider.importExternalMealEntry(
           date,
-          kind: 'meal',
           slot: slot,
           content: content,
           calories: calories,
@@ -348,7 +347,6 @@ class SyncService {
           detail: detail,
           items: breakdownItems,
           source: 'qq_bot',
-          autoCheck: true,
         );
 
         _processedInboxIds.add(id);

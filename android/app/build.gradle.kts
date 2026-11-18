@@ -24,11 +24,6 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
-        ndk {
-            // 瘦身优化：仅保留现代主流真机 64 位 ABI（arm64-v8a），剔除老旧 32 位与 x86_64，
-            // 包体积从 ~42MB 骤降至 ~23MB（99% 现代 Android 手机均采用 64 位架构）。
-            abiFilters += listOf("arm64-v8a")
-        }
     }
 
     signingConfigs {

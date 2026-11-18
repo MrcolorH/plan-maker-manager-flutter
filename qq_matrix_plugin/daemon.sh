@@ -73,11 +73,13 @@ while true; do
     fi
 
     # [检测 2] Cloudflare 隧道进程存活保障 (如崩溃则自动重新拉起)
-    if ! kill -0 "$TUNNEL_PID" 2>/dev/null || ! pgrep -f "cloudflared tunnel run zhiqing-tunnel" >/dev/null 2>&1; then
+    if ! pgrep -f "cloudflared tunnel run zhiqing-tunnel" >/dev/null 2>&1; then
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Zhiqing-Daemon] ⚠️ Cloudflare 隧道进程已退出，正在拉起..."
         cloudflared tunnel run zhiqing-tunnel &
         TUNNEL_PID=$!
         sleep 2
+    else
+        TUNNEL_PID=$(pgrep -f "cloudflared tunnel run zhiqing-tunnel" | head -n 1)
     fi
 
     # [检测 3] 公网隧道高容错探活 (每 30 秒探测一次，给予 8 秒充分超时)
