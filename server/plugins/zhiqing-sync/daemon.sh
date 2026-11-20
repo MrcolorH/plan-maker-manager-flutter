@@ -8,10 +8,12 @@ SERVER_DIR="/Library/Code-Res/plan-maker-manager-flutter/server"
 node "$SERVER_DIR/src/server.js" &
 SERVER_PID=$!
 
-# 2. 启动 Cloudflare 隧道
-cloudflared tunnel run zhiqing-tunnel &
-TUNNEL_PID=$!
+# 2. 启动或复用 Cloudflare 隧道 (跨服务共享)
+if ! pgrep -f "cloudflared.*zhiqing-tunnel" >/dev/null 2>&1; then
+  cloudflared tunnel run zhiqing-tunnel &
+  TUNNEL_PID=$!
+fi
 
-trap "kill $SERVER_PID $TUNNEL_PID 2>/dev/null; exit 0" INT TERM HUP EXIT
+trap "kill $SERVER_PID 2>/dev/null; exit 0" INT TERM HUP EXIT
 
 wait

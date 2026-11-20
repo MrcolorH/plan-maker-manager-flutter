@@ -34,24 +34,26 @@ else
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Zhiqing-Daemon] ✅ 本地 Node 微服务已启动 (PID: $SERVER_PID)"
 fi
 
-# 3. 启动或复用 Cloudflare 隧道 (api.zhiqing.fun)
-if pgrep -f "cloudflared tunnel run zhiqing-tunnel" >/dev/null 2>&1; then
-    TUNNEL_PID=$(pgrep -f "cloudflared tunnel run zhiqing-tunnel" | head -n 1)
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Zhiqing-Daemon] 🌐 Cloudflare 隧道已在运行 (PID: $TUNNEL_PID)"
+# 3. 启动或复用 Cloudflare 隧道 (api.zhiqing.fun 与 zhiqing.fun 共享隧道)
+# 使用宽泛正则匹配，无论启动时是否包含 --protocol http2 都能正确识别，杜绝重复多开
+if pgrep -f "cloudflared.*zhiqing-tunnel" >/dev/null 2>&1; then
+    TUNNEL_PID=$(pgrep -f "cloudflared.*zhiqing-tunnel" | head -n 1)
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Zhiqing-Daemon] 🌐 Cloudflare 隧道已在运行 (PID: $TUNNEL_PID)，安全复用"
 else
     cloudflared tunnel run zhiqing-tunnel &
     TUNNEL_PID=$!
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Zhiqing-Daemon] 🌐 Cloudflare 安全隧道已启动 (PID: $TUNNEL_PID)"
 fi
 
-# 4. 退出清理：当 QQMatrix 关闭插件或退出时，清理 PID 锁和关联子进程
+# 4. 退出清理：当 QQMatrix 关闭插件或退出时，清理 PID 锁和知轻专属 Node 微服务
+# ⚠️ 注意：Cloudflare 隧道为系统跨服务共享组件 (同时承载语C服务与知轻同步)，退出时绝不粗暴误杀外部隧道！
 cleanup() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Zhiqing-Daemon] 🛑 收到退出信号，正在安全退出微服务与隧道..."
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Zhiqing-Daemon] 🛑 收到退出信号，安全退出知轻本地微服务..."
     rm -f "$PID_FILE" 2>/dev/null
-    kill -9 "$SERVER_PID" "$TUNNEL_PID" 2>/dev/null
+    kill -9 "$SERVER_PID" 2>/dev/null
     pkill -9 -P "$MY_PID" 2>/dev/null
     pkill -9 -f "server/src/server.js" 2>/dev/null
-    pkill -9 -f "cloudflared tunnel run zhiqing-tunnel" 2>/dev/null
+    # 保持 Cloudflare 隧道长效常驻，保护多业务外网可用性，严禁粗暴 pkill 外部共享隧道
     exit 0
 }
 trap cleanup INT TERM HUP EXIT
@@ -72,18 +74,18 @@ while true; do
         SERVER_PID=$!
     fi
 
-    # [检测 2] Cloudflare 隧道进程存活保障 (如崩溃则自动重新拉起)
-    if ! pgrep -f "cloudflared tunnel run zhiqing-tunnel" >/dev/null 2>&1; then
+    # [检测 2] Cloudflare 隧道进程存活保障 (如退出则自动拉起)
+    if ! pgrep -f "cloudflared.*zhiqing-tunnel" >/dev/null 2>&1; then
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Zhiqing-Daemon] ⚠️ Cloudflare 隧道进程已退出，正在拉起..."
         cloudflared tunnel run zhiqing-tunnel &
         TUNNEL_PID=$!
         sleep 2
     else
-        TUNNEL_PID=$(pgrep -f "cloudflared tunnel run zhiqing-tunnel" | head -n 1)
+        TUNNEL_PID=$(pgrep -f "cloudflared.*zhiqing-tunnel" | head -n 1)
     fi
 
     # [检测 3] 公网隧道高容错探活 (每 30 秒探测一次，给予 8 秒充分超时)
-    # cloudflared 具备原生断线重连能力，仅在连续 4 次 (2 分钟) 持续异常且本地正常时才做软重启
+    # cloudflared 具备原生断线重连与双向冗余能力，仅在连续 4 次 (2 分钟) 持续异常且没有任何隧道进程时才做补偿拉起
     if [ $((CHECK_COUNTER % 6)) -eq 0 ]; then
         HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -m 8 https://api.zhiqing.fun/health 2>/dev/null)
         if [ "$HTTP_CODE" = "200" ]; then
@@ -91,12 +93,11 @@ while true; do
         else
             CONSECUTIVE_FAILS=$((CONSECUTIVE_FAILS + 1))
             if [ "$CONSECUTIVE_FAILS" -ge 4 ]; then
-                echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Zhiqing-Daemon] 🚨 公网隧道持续无法访问 (HTTP $HTTP_CODE)，执行软重连..."
-                kill -9 "$TUNNEL_PID" 2>/dev/null
-                pkill -9 -f "cloudflared tunnel run zhiqing-tunnel" 2>/dev/null
-                sleep 2
-                cloudflared tunnel run zhiqing-tunnel &
-                TUNNEL_PID=$!
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] [Zhiqing-Daemon] 🚨 公网隧道持续无法访问 (HTTP $HTTP_CODE)..."
+                if ! pgrep -f "cloudflared.*zhiqing-tunnel" >/dev/null 2>&1; then
+                    cloudflared tunnel run zhiqing-tunnel &
+                    TUNNEL_PID=$!
+                fi
                 CONSECUTIVE_FAILS=0
             fi
         fi

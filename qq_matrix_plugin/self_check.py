@@ -147,7 +147,7 @@ class ZhiqingPluginSelfCheck:
 
     def check_cloudflare_tunnel(self):
         try:
-            res = subprocess.run(["pgrep", "-f", "cloudflared tunnel run zhiqing-tunnel"], capture_output=True, text=True)
+            res = subprocess.run(["pgrep", "-f", "cloudflared.*zhiqing-tunnel"], capture_output=True, text=True)
             pids = [p for p in res.stdout.strip().split() if p.isdigit()]
             if pids:
                 self.add_result("Cloudflare 安全穿透隧道", "PASS", f"隧道进程在线 (PID: {', '.join(pids)})")
